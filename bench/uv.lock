@@ -58,8 +58,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "faultline-brain", directory = "../faultline/brain" },
-    { name = "faultline-contracts", directory = "../contracts" },
+    { name = "faultline-brain", editable = "../faultline/brain" },
+    { name = "faultline-contracts", editable = "../contracts" },
 ]
 
 [package.metadata.requires-dev]
@@ -68,7 +68,7 @@ dev = [{ name = "pytest", specifier = ">=8" }]
 [[package]]
 name = "faultline-brain"
 version = "0.1.0"
-source = { directory = "../faultline/brain" }
+source = { editable = "../faultline/brain" }
 dependencies = [
     { name = "faultline-contracts" },
     { name = "pydantic" },
@@ -76,7 +76,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "faultline-contracts", directory = "../contracts" },
+    { name = "faultline-contracts", editable = "../contracts" },
     { name = "pydantic", specifier = ">=2" },
 ]
 
@@ -86,7 +86,7 @@ dev = [{ name = "pytest", specifier = ">=8" }]
 [[package]]
 name = "faultline-contracts"
 version = "0.1.0"
-source = { directory = "../contracts" }
+source = { editable = "../contracts" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },

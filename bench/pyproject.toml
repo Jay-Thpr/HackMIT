@@ -6,8 +6,8 @@ requires-python = ">=3.11"
 dependencies = ["faultline-contracts", "faultline-brain"]
 
 [tool.uv.sources]
-faultline-contracts = { path = "../contracts" }
-faultline-brain = { path = "../faultline/brain" }
+faultline-contracts = { path = "../contracts", editable = true }
+faultline-brain = { path = "../faultline/brain", editable = true }
 
 [dependency-groups]
 dev = ["pytest>=8"]
