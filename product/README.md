@@ -22,8 +22,19 @@ For live sandbox telemetry and control:
 ```bash
 cd sandbox && docker compose up -d --build
 # trigger a storm from the bench side (Owner 3 / demo script), then:
-cd ../product && uv run faultline watch --telemetry sandbox --levers sandbox --incident live-1
+cd ../product
+uv run faultline watch \
+  --telemetry sandbox \
+  --levers sandbox \
+  --brain live \
+  --canary-context /path/to/patched/checkout \
+  --incident live-1
 ```
+
+Sandbox telemetry and levers are an atomic live profile. Live mode automatically selects
+the measured Brain planner/judge and refuses fixture evidence. The canary checkout is built
+as orders-v2 before traffic shifts; if it cannot be prepared or measured, the run is reported
+as escalated rather than successful.
 
 Runtime orchestration depends on the shared `LeverAdapter`, `TelemetrySource`, and
 `AuditSink` contracts. Owner 2's live telemetry/Elasticsearch sink and Owner 4's

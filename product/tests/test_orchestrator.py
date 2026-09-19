@@ -2,12 +2,14 @@ import pytest
 from faultline_contracts import EventKind, JsonlSink, LeverError, Stage
 from faultline_product.adapters import (
     FixtureBrain,
+    FixtureCanaryDeployer,
     FixtureClock,
     FixtureDevinAdapter,
     FixtureLeverAdapter,
 )
 from faultline_product.fixtures import load_fixture
 from faultline_product.orchestrator import BudgetExceeded, Orchestrator
+from faultline_product.ports import CanaryTarget
 from faultline_product.renderer import TerminalRenderer
 
 
@@ -24,6 +26,7 @@ def _orchestrator(tmp_path, *, experiment=None, telemetry=None, budget=5, levers
             levers,
             audit,
             FixtureDevinAdapter(),
+            FixtureCanaryDeployer(),
             TerminalRenderer(output.append),
             telemetry,
             brain,
@@ -61,6 +64,10 @@ def test_kept_mitigation_has_mitigate_action_id(tmp_path):
         event.stage == Stage.mitigate and event.kind == EventKind.action_apply and event.action_id
         for event in events
     )
+    assert any(
+        event.stage == Stage.mitigate and event.kind == EventKind.action_undo and event.action_id
+        for event in events
+    )
 
 
 class BreachedTelemetry:
@@ -71,18 +78,44 @@ class BreachedTelemetry:
         return self.source.first_breach()
 
     def series(self, start, end, step_s=5):
-        return self.source.series(start, end, step_s)
+        return [self.source.first_breach()]
 
 
 def test_canary_regression_auto_undoes_and_refuses(tmp_path):
     bundle = load_fixture("storm")
     orchestrator, audit, _ = _orchestrator(tmp_path, telemetry=BreachedTelemetry(bundle.telemetry))
-    orchestrator.run("regression", bundle.experiment_start)
+    result = orchestrator.run("regression", bundle.experiment_start)
     events = audit.query("regression")
     assert any(
         event.kind == EventKind.action_undo and event.stage == Stage.canary for event in events
     )
     assert any(event.kind == EventKind.refused and event.stage == Stage.canary for event in events)
+    assert result.canary.status.value == "regressed"
+    assert events[-1].summary == "incident escalated: canary regressed"
+
+
+def test_canary_version_evidence_fails_closed():
+    bundle = load_fixture("storm")
+    healthy = next(
+        fp
+        for fp in bundle.telemetry.series(
+            bundle.experiment_start, bundle.telemetry.last_window_end
+        )
+        if not any(slo.breached for slo in fp.slos)
+    )
+    target = CanaryTarget("patch", "v2", "abc123", service_name="orders_v2")
+
+    assert Orchestrator._canary_regression([healthy], target) == "missing orders_v2 telemetry"
+
+    v1 = healthy.services["orders"]
+    failing_v2 = v1.model_copy(update={"error_rate": (v1.error_rate or 0) + 0.1})
+    with_v2 = healthy.model_copy(
+        update={"services": {**healthy.services, "orders_v2": failing_v2}}
+    )
+    assert (
+        Orchestrator._canary_regression([with_v2], target)
+        == "orders-v2 error rate exceeds orders-v1"
+    )
 
 
 class CanaryRefusingLevers:
@@ -120,7 +153,10 @@ def test_canary_refusal_finishes_run_and_pages_human(tmp_path):
     assert [event.kind for event in canary_events] == [EventKind.refused, EventKind.page_human]
     assert not any(event.kind == EventKind.action_apply for event in canary_events)
     assert events[-1].kind == EventKind.report
+    assert events[-1].summary == "incident escalated: canary refused"
+    assert result.canary.status.value == "refused"
     assert "[canary] canary_weight refused: orders-v2 is not running — paged human" in output
+    assert output[-1].startswith("[report] escalated:")
 
 
 class NoExperimentBrain(FixtureBrain):

@@ -1,6 +1,6 @@
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 
 from faultline_contracts import (
@@ -22,7 +22,16 @@ from faultline_contracts import (
     utcnow,
 )
 
-from .ports import Brain, PatchAdapter, PatchProposal
+from .ports import (
+    Brain,
+    CanaryDeployer,
+    CanaryPreparationError,
+    CanaryResult,
+    CanaryStatus,
+    CanaryTarget,
+    PatchAdapter,
+    PatchProposal,
+)
 from .renderer import TerminalRenderer
 
 BASELINE_S = 120
@@ -37,6 +46,7 @@ class RunResult:
     incident_id: str
     diagnosis: str
     patch: PatchProposal | None
+    canary: CanaryResult | None = None
 
 
 class Orchestrator:
@@ -45,6 +55,7 @@ class Orchestrator:
         levers: LeverAdapter,
         audit: AuditSink,
         patches: PatchAdapter,
+        canary_deployer: CanaryDeployer,
         renderer: TerminalRenderer,
         telemetry: TelemetrySource,
         brain: Brain,
@@ -53,6 +64,7 @@ class Orchestrator:
         action_budget: int = 5,
     ):
         self._levers, self._audit, self._patches = levers, audit, patches
+        self._canary_deployer = canary_deployer
         self._renderer, self._telemetry, self._brain = renderer, telemetry, brain
         self._clock, self._sleep, self._action_budget = clock, sleep, action_budget
         self._actions = 0
@@ -87,19 +99,33 @@ class Orchestrator:
                 {},
             )
             return RunResult(incident_id, verdict.diagnosis, None)
-        self.mitigate(incident_id, triage, experiment, verdict)
+        mitigation = self.mitigate(incident_id, triage, experiment, verdict)
         patch = self.patch(incident_id, verdict, triage)
-        self.canary(incident_id, patch)
+        canary = self.canary(incident_id, patch, mitigation)
+        report_ready = canary.status == CanaryStatus.passed
+        report_summary = (
+            "incident report ready"
+            if report_ready
+            else f"incident escalated: canary {canary.status.value}"
+        )
         self._record(
             incident_id,
             Stage.report,
             EventKind.report,
             Actor.orchestrator,
-            "incident report ready",
-            {"diagnosis": verdict.diagnosis, "patch_reference": patch.reference},
+            report_summary,
+            {
+                "diagnosis": verdict.diagnosis,
+                "patch_reference": patch.reference,
+                "canary_status": canary.status.value,
+                "canary_detail": canary.detail,
+            },
         )
-        self._renderer.event("report", f"ready: faultline report --incident {incident_id}")
-        return RunResult(incident_id, verdict.diagnosis, patch)
+        report_label = "ready" if report_ready else "escalated"
+        self._renderer.event(
+            "report", f"{report_label}: faultline report --incident {incident_id}"
+        )
+        return RunResult(incident_id, verdict.diagnosis, patch, canary)
 
     def detect(self, incident_id: str, now: datetime) -> Fingerprint:
         fp = self._telemetry.window(now - timedelta(seconds=WINDOW_S), now)
@@ -275,7 +301,7 @@ class Orchestrator:
 
     def mitigate(
         self, incident_id: str, triage: TriageResult, experiment: Experiment, verdict: Verdict
-    ) -> None:
+    ) -> ActionHandle | None:
         confirming = next(
             (
                 p
@@ -318,6 +344,7 @@ class Orchestrator:
                 action_id=action.action_id,
                 experiment_id=experiment.id,
             )
+            return action
         else:
             self._record(
                 incident_id,
@@ -328,6 +355,7 @@ class Orchestrator:
                 {"lever_id": experiment.lever_id},
                 experiment_id=experiment.id,
             )
+            return None
 
     def patch(self, incident_id: str, verdict: Verdict, triage: TriageResult) -> PatchProposal:
         patch = self._patches.propose(incident_id, verdict, triage)
@@ -342,8 +370,28 @@ class Orchestrator:
         self._renderer.event("patch", f"{patch.provider} patch prepared")
         return patch
 
-    def canary(self, incident_id: str, patch: PatchProposal) -> None:
-        del patch
+    def canary(
+        self,
+        incident_id: str,
+        patch: PatchProposal,
+        mitigation: ActionHandle | None = None,
+    ) -> CanaryResult:
+        try:
+            target = self._canary_deployer.prepare(patch)
+        except CanaryPreparationError as exc:
+            return self._refuse_canary(incident_id, f"patch target unavailable: {exc}")
+
+        if mitigation is not None:
+            released_mitigation = self._levers.undo(mitigation)
+            self._record(
+                incident_id,
+                Stage.mitigate,
+                EventKind.action_undo,
+                Actor.adapter,
+                "released emergency mitigation before canary verification",
+                released_mitigation.model_dump(mode="json"),
+                action_id=mitigation.action_id,
+            )
         try:
             canary = self._apply(
                 incident_id,
@@ -353,36 +401,21 @@ class Orchestrator:
                 Stage.canary,
             )
         except LeverError as exc:
-            self._record(
-                incident_id,
-                Stage.canary,
-                EventKind.refused,
-                Actor.orchestrator,
-                f"canary_weight refused: {exc}",
-                {"lever_id": "canary_weight", "params": {"v2_weight": 0.05}},
-            )
-            self._record(
-                incident_id,
-                Stage.canary,
-                EventKind.page_human,
-                Actor.orchestrator,
-                "canary unavailable; page human",
-                {},
-            )
-            self._renderer.event("canary", f"canary_weight refused: {exc} — paged human")
-            return
+            return self._refuse_canary(incident_id, f"canary_weight refused: {exc}", target)
         self._record(
             incident_id,
             Stage.canary,
             EventKind.action_apply,
             Actor.adapter,
             "applied canary_weight",
-            canary.model_dump(mode="json"),
+            {**canary.model_dump(mode="json"), "target": asdict(target)},
             action_id=canary.action_id,
         )
         spec = next(spec for spec in self._levers.catalog() if spec.id == "canary_weight")
+        canary_start = self._clock()
         self._sleep(spec.default_watch_s)
-        fp = self._telemetry.window(self._clock() - timedelta(seconds=WINDOW_S), self._clock())
+        canary_end = self._clock()
+        fingerprints = self._telemetry.series(canary_start, canary_end)
         released = self._levers.undo(canary)
         self._record(
             incident_id,
@@ -393,14 +426,15 @@ class Orchestrator:
             released.model_dump(mode="json"),
             action_id=canary.action_id,
         )
-        if any(slo.breached for slo in fp.slos):
+        regression = self._canary_regression(fingerprints, target)
+        if regression is not None:
             self._record(
                 incident_id,
                 Stage.canary,
                 EventKind.refused,
                 Actor.orchestrator,
-                "canary regression, auto-rolled back",
-                {},
+                f"canary regression, auto-rolled back: {regression}",
+                {"reason": regression, "target": asdict(target)},
                 action_id=canary.action_id,
             )
             self._record(
@@ -411,17 +445,79 @@ class Orchestrator:
                 "canary regression; page human",
                 {},
             )
-            return
+            self._renderer.event("canary", f"regression: {regression} — paged human")
+            return CanaryResult(CanaryStatus.regressed, regression, target)
         self._record(
             incident_id,
             Stage.canary,
             EventKind.canary_update,
             Actor.orchestrator,
             "5% canary verified",
-            {"v2_weight": 0.05},
+            {"v2_weight": 0.05, "target": asdict(target)},
             action_id=canary.action_id,
         )
         self._renderer.event("canary", "canary_weight v2=0.05 verified and released")
+        return CanaryResult(CanaryStatus.passed, "5% canary verified", target)
+
+    def _refuse_canary(
+        self,
+        incident_id: str,
+        detail: str,
+        target: CanaryTarget | None = None,
+    ) -> CanaryResult:
+        payload = {"lever_id": "canary_weight", "params": {"v2_weight": 0.05}}
+        if target is not None:
+            payload["target"] = asdict(target)
+        self._record(
+            incident_id,
+            Stage.canary,
+            EventKind.refused,
+            Actor.orchestrator,
+            detail,
+            payload,
+        )
+        self._record(
+            incident_id,
+            Stage.canary,
+            EventKind.page_human,
+            Actor.orchestrator,
+            "canary unavailable; page human",
+            {},
+        )
+        self._renderer.event("canary", f"{detail} — paged human")
+        return CanaryResult(CanaryStatus.refused, detail, target)
+
+    @staticmethod
+    def _canary_regression(
+        fingerprints: list[Fingerprint], target: CanaryTarget
+    ) -> str | None:
+        if not fingerprints:
+            return "no telemetry collected during canary"
+        if any(slo.breached for fp in fingerprints for slo in fp.slos):
+            return "checkout SLO breached"
+        if target.service_name is None:
+            return None
+        pairs = [
+            (fp.services.get("orders"), fp.services.get(target.service_name), fp)
+            for fp in fingerprints
+            if fp.services.get("orders") is not None
+            and fp.services.get(target.service_name) is not None
+        ]
+        if not pairs:
+            return f"missing {target.service_name} telemetry"
+        v1_errors = [v1.error_rate for v1, _, _ in pairs if v1.error_rate is not None]
+        v2_errors = [v2.error_rate for _, v2, _ in pairs if v2.error_rate is not None]
+        if not v1_errors or not v2_errors:
+            return "missing version-specific error rates"
+        if sum(v2_errors) / len(v2_errors) > sum(v1_errors) / len(v1_errors):
+            return "orders-v2 error rate exceeds orders-v1"
+        thresholds = [slo.threshold for _, _, fp in pairs for slo in fp.slos if slo.name == "checkout"]
+        v2_p99 = [v2.p99_ms for _, v2, _ in pairs if v2.p99_ms is not None]
+        if not thresholds or not v2_p99:
+            return "missing version-specific latency evidence"
+        if sum(v2_p99) / len(v2_p99) > min(thresholds):
+            return "orders-v2 p99 exceeds checkout threshold"
+        return None
 
     def _apply(
         self,
