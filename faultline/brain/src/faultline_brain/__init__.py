@@ -24,6 +24,12 @@ from .telemetry import (
     read_window,
 )
 from .triage import DEFAULT_MODEL, SYSTEM_PROMPT, TriageValidationError, run_triage
+from .elastic_investigation import (
+    AGENT_ID as ELASTIC_INVESTIGATION_AGENT_ID,
+    INFERENCE_ID as ELASTIC_INVESTIGATION_INFERENCE_ID,
+    OWNER2_TOOL_IDS as ELASTIC_INVESTIGATION_TOOL_IDS,
+    agent_definition as elastic_investigation_agent_definition,
+)
 
 __all__ = [
     # Telemetry
@@ -63,4 +69,9 @@ __all__ = [
     "score_experiment",
     "plan_experiment",
     "confirmation_experiment",
+    # Elastic Agent Builder explanation sidecar
+    "ELASTIC_INVESTIGATION_AGENT_ID",
+    "ELASTIC_INVESTIGATION_INFERENCE_ID",
+    "ELASTIC_INVESTIGATION_TOOL_IDS",
+    "elastic_investigation_agent_definition",
 ]

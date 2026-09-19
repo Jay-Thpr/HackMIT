@@ -44,5 +44,41 @@
 - Product integration must supply the C2 judge with a complete telemetry series,
   C4-derived experiment windows, and separate healthy/incident baselines.
 
+## Elastic Agent Builder: read-only Investigation agent
+
+`faultline_brain.elastic_investigation` defines a deliberately non-C2 agent:
+**Faultline Investigation** (`faultline-investigation`). Its sole purpose is
+to turn bounded, observable evidence into a human explanation. It never
+proposes or confirms a diagnosis, selects an experiment, or calls a control
+surface; Brain C2 and the noise-model judge retain those responsibilities.
+
+Owner 2 must provide exactly these custom read tools (and no generic index
+search tool) before deployment:
+
+- `faultline.incident_timeline`
+- `faultline.clone_vs_production`
+- `faultline.similar_incidents`
+- `faultline.incident_context`
+
+Each must be a parameterized, read-only query over only its intended evidence
+indices. Do not expose `faultline-audit` records containing action controls,
+C5/controller documents, hidden world labels, fault-trigger timestamps, or
+benchmark metadata.
+
+With a deployment management key, run:
+
+```bash
+PYTHONPATH=contracts/src:faultline/brain/src \
+ELASTICSEARCH_URL=https://... KIBANA_URL=https://... \
+ELASTIC_API_KEY=... OPENAI_API_KEY=... OPENAI_MODEL=... \
+python faultline/brain/scripts/deploy_elastic_investigation_agent.py
+```
+
+The script creates the `faultline-openai-investigation` OpenAI
+`chat_completion` inference endpoint, verifies the four tool IDs, then creates
+or updates the agent. `--dry-run` validates the configuration and both hero
+fixtures without credentials. Deployment credentials are intentionally not
+committed to this repository.
+
 See `DEVPOST_NOTES.md` for evidence-bounded OpenAI, Token Company, and Codex
 write-up copy.
