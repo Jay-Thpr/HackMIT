@@ -13,6 +13,7 @@ inspection. Never touches the production fault controller. Exit code 1 if any ch
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import time
@@ -143,6 +144,18 @@ class Run:
                       "SELECT count(*) FROM payments WHERE created_at < now() - interval '5 minutes'").strip()
         check("clone DB has no production history", rows == "0", f"{rows} old rows")
         self.baseline()
+        # OTel: the clone's collector must carry workload spans and no hidden-state leaks.
+        logs = subprocess.run(["docker", "logs", f"{project}-otel-collector-1"],
+                              capture_output=True, text=True)
+        out = logs.stdout + logs.stderr
+        got = {svc for svc in ("orders", "payments") if re.search(rf"service\.name\s*:\s*Str\({svc}\)", out)}
+        check("collector saw spans from orders and payments", got == {"orders", "payments"}, f"found={sorted(got)}")
+        leaked = [w for w in ("io_profile", "fault", "/internal", "/admin", "world", "trigger",
+                              "db.statement", "db.query.text", "faultctl") if w in out]
+        check("collector output carries no hidden state", not leaked, f"leaked={leaked}")
+        envs = set(re.findall(r"deployment\.environment\S*\s*:\s*Str\((\S+)\)", out))
+        check("spans tagged deployment.environment=clone-<slot>", envs == {f"clone-{project.rsplit('-', 1)[1]}"},
+              str(envs))
         self.destroy()
 
     def scenario_storm(self, delay_ms: int = 800, duration_s: int = 20, persist_s: int = 45, cap_s: int = 20,

@@ -7,6 +7,7 @@
 #   8101/8102/8103  orders/payments/loadgen GET /stats (app telemetry, for diagnostics)
 #
 # Tunables: override any ${VAR} from the shell or a .env file next to this file.
+# Compose reads `sandbox/.env` only; to reuse the root .env run `ln -sf ../.env sandbox/.env`.
 #
 # Clones (C6): the lab manager (services/lab, :9910) starts this same file under another project
 # name (`-p faultline-clone-<slot>`) with PORT_* shifted by 1000*slot and WITHOUT faultctl.
@@ -23,6 +24,18 @@ x-tunables: &tunables
   PAYMENTS_CPU_WORK_MS: ${PAYMENTS_CPU_WORK_MS:-1}
   DB_ACQUIRE_TIMEOUT_MS: ${DB_ACQUIRE_TIMEOUT_MS:-1000}
   RESET_TIMEOUT_S: ${RESET_TIMEOUT_S:-120}
+
+# OTel auto-instrumentation (env + `opentelemetry-instrument` wrapper; no code changes).
+# Only the workload paths /checkout and /pay stay instrumented; control-plane routes are excluded.
+# Kill switch: OTEL_SDK_DISABLED=true. Sink: local debug output unless FAULTLINE_OTLP_ENDPOINT is set.
+x-otel: &otel
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+  OTEL_TRACES_EXPORTER: otlp_proto_http
+  OTEL_METRICS_EXPORTER: otlp_proto_http
+  OTEL_LOGS_EXPORTER: none
+  OTEL_PYTHON_EXCLUDED_URLS: ://[^/]+/(internal|admin|stats|healthz|rate)(/|\?|$)
+  OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
 
 # One image for all Python services. Only `payments` carries the build section: five services building
 # the same tag in parallel race on `docker tag` ("already exists"). The others reuse the built image.
@@ -57,25 +70,30 @@ services:
     <<: *app
     build: {context: .., dockerfile: sandbox/Dockerfile}
     cpus: ${PAYMENTS_CPUS:-2}   # explicit limit so cpu_starve can restore it exactly
-    command: [uvicorn, services.payments.app:app, --host, 0.0.0.0, --port, "8000", --no-access-log, --timeout-keep-alive, "120"]
+    command: [opentelemetry-instrument, uvicorn, services.payments.app:app, --host, 0.0.0.0, --port, "8000", --no-access-log, --timeout-keep-alive, "120"]
     environment:
-      <<: *tunables
+      <<: [*tunables, *otel]
+      OTEL_SERVICE_NAME: payments
+      OTEL_RESOURCE_ATTRIBUTES: service.version=v1
       PRIMARY_DSN: postgresql://app@db-primary:5432/shop
       STANDBY_DSN: postgresql://app@db-standby:5432/shop
     ports: ["127.0.0.1:${PORT_PAYMENTS:-8102}:8000"]
     depends_on:
       db-primary: {condition: service_healthy}
       db-standby: {condition: service_healthy}
+      otel-collector: {condition: service_started}
 
   orders:
     <<: *app
-    command: [uvicorn, services.orders.app:app, --host, 0.0.0.0, --port, "8000", --no-access-log, --timeout-keep-alive, "120"]
+    command: [opentelemetry-instrument, uvicorn, services.orders.app:app, --host, 0.0.0.0, --port, "8000", --no-access-log, --timeout-keep-alive, "120"]
     environment:
-      <<: *tunables
+      <<: [*tunables, *otel]
+      OTEL_SERVICE_NAME: orders
+      OTEL_RESOURCE_ATTRIBUTES: service.version=v1
       SERVICE_VERSION: v1
       PAYMENTS_URL: http://envoy:8081/pay
     ports: ["127.0.0.1:${PORT_ORDERS:-8101}:8000"]
-    depends_on: [payments]
+    depends_on: [payments, otel-collector]
 
   # Canary build. Off by default; Owner 4 builds it from a patched checkout:
   #   ORDERS_V2_CONTEXT=/path/to/patched/repo docker compose --profile canary up -d --build orders-v2
@@ -84,13 +102,15 @@ services:
     restart: unless-stopped
     profiles: [canary]
     build: {context: "${ORDERS_V2_CONTEXT:-..}", dockerfile: sandbox/Dockerfile}
-    command: [uvicorn, services.orders.app:app, --host, 0.0.0.0, --port, "8000", --no-access-log, --timeout-keep-alive, "120"]
+    command: [opentelemetry-instrument, uvicorn, services.orders.app:app, --host, 0.0.0.0, --port, "8000", --no-access-log, --timeout-keep-alive, "120"]
     environment:
-      <<: *tunables
+      <<: [*tunables, *otel]
+      OTEL_SERVICE_NAME: orders
+      OTEL_RESOURCE_ATTRIBUTES: service.version=v2
       SERVICE_VERSION: v2
       PAYMENTS_URL: http://envoy:8081/pay
     ports: ["127.0.0.1:${PORT_ORDERS_V2:-8104}:8000"]
-    depends_on: [payments]
+    depends_on: [payments, otel-collector]
 
   envoy:
     image: envoyproxy/envoy:v1.31-latest
@@ -103,12 +123,14 @@ services:
 
   loadgen:
     <<: *app
-    command: [uvicorn, services.loadgen.app:app, --host, 0.0.0.0, --port, "8000", --no-access-log]
+    command: [opentelemetry-instrument, uvicorn, services.loadgen.app:app, --host, 0.0.0.0, --port, "8000", --no-access-log]
     environment:
-      <<: *tunables
+      <<: [*tunables, *otel]
+      OTEL_SERVICE_NAME: loadgen
+      OTEL_RESOURCE_ATTRIBUTES: service.version=v1
       TARGET_URL: http://envoy:8080/checkout
     ports: ["127.0.0.1:${PORT_LOADGEN:-8103}:8000"]
-    depends_on: [envoy]
+    depends_on: [envoy, otel-collector]
 
   control:
     <<: *app
@@ -134,3 +156,17 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     ports: ["127.0.0.1:9900:8000"]
     depends_on: [control, loadgen]
+
+  # OTLP receiver for the instrumented services. No host ports; the sink config is picked at
+  # compose-interpolation time: sink.yaml (local debug) or sink-elastic.yaml when
+  # FAULTLINE_OTLP_ENDPOINT is set.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.160.0
+    restart: unless-stopped
+    volumes:
+      - ./otel:/etc/otelcol:ro
+    environment:
+      OTEL_DEPLOYMENT_ENVIRONMENT: ${OTEL_DEPLOYMENT_ENVIRONMENT:-production}
+      FAULTLINE_OTLP_ENDPOINT: ${FAULTLINE_OTLP_ENDPOINT:-}
+      FAULTLINE_ELASTICSEARCH_API_KEY: ${FAULTLINE_ELASTICSEARCH_API_KEY:-}
+    command: ["--config=/etc/otelcol/collector.yaml", "--config=/etc/otelcol/sink${FAULTLINE_OTLP_ENDPOINT:+-elastic}.yaml"]

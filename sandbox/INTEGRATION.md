@@ -106,8 +106,19 @@ curl -s localhost:9901/admin/levers
   where the last count is +Inf) plus `t` (unix seconds). Take the delta between two snapshots.
   `services/common/probe.py:row()` is a reference implementation of every derived number below.
 * Container stdout from orders, payments, loadgen, envoy and control.
-* Envoy stats at `envoy:9902/stats/prometheus`, reachable only inside the Compose network (e.g. from an
-  OTel collector container you add to this compose project).
+* Envoy stats at `envoy:9902/stats/prometheus`, reachable only inside the Compose network (scraped by
+  the compose project's `otel-collector` every 5 s).
+* OTel auto-instrumentation: `payments`, `orders`, `orders-v2` and `loadgen` run under
+  `opentelemetry-instrument` (FastAPI + aiohttp-client + asyncpg) and ship OTLP http/protobuf to
+  `otel-collector` (`sandbox/otel/collector.yaml`). `control` and `faultctl` are **not** instrumented,
+  and `OTEL_PYTHON_EXCLUDED_URLS` plus collector `filter/fairness` keep `/internal/*`, `/admin/*`,
+  `/stats`, `/healthz`, `/rate` out of the telemetry; `transform/fairness` strips `db.statement` /
+  `db.query.text` (the hidden fault rides inside SQL). Spans carry `deployment.environment`
+  (`production` or `clone-<slot>`).
+* Sink: `FAULTLINE_OTLP_ENDPOINT` unset → local `debug` exporter (collector container logs); set →
+  OTLP http to Elastic Cloud APM with `FAULTLINE_ELASTICSEARCH_API_KEY`. Kill switch:
+  `OTEL_SDK_DISABLED=true` disables instrumentation in the services. Production picks this up only
+  when the production project is next recreated — the running containers still have the old image.
 
 **Must NOT ingest:** anything from `faultctl` (its logs name the faults), the `io_profile` table, Envoy
 `*.fault.*` stats (shed is implemented with Envoy's fault filter, and the word trips the fairness

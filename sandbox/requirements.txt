@@ -3,3 +3,8 @@ uvicorn[standard]==0.34.2
 aiohttp==3.11.18
 asyncpg==0.30.0
 httpx==0.28.1
+opentelemetry-distro==0.65b0
+opentelemetry-exporter-otlp-proto-http==1.44.0
+opentelemetry-instrumentation-fastapi==0.65b0
+opentelemetry-instrumentation-aiohttp-client==0.65b0
+opentelemetry-instrumentation-asyncpg==0.65b0

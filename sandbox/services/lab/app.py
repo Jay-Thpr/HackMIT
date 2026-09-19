@@ -44,7 +44,8 @@ COMPOSE_FILE = SANDBOX_DIR / "docker-compose.yml"
 CLONE_OVERRIDE = SANDBOX_DIR / "clone.override.yml"  # no masquerade: clones can't pose as host traffic
 PRODUCTION_PROJECT = "faultline-sandbox"
 CLONE_PROJECT_PREFIX = "faultline-clone-"
-CLONE_SERVICES = ["db-primary", "db-standby", "payments", "orders", "envoy", "loadgen", "control"]  # never faultctl
+CLONE_SERVICES = ["db-primary", "db-standby", "payments", "orders", "envoy", "loadgen", "control",
+                  "otel-collector"]  # never faultctl
 LAB_SERVICES = {"orders", "orders-v2", "payments"}
 MAX_CLONES_CFG = int(os.environ.get("LAB_MAX_CLONES", str(MAX_CLONES)))
 HOST = os.environ.get("LAB_CLONE_HOST", "127.0.0.1")
@@ -105,6 +106,7 @@ class Clone:
             "PORT_GATEWAY": str(self.ports["gateway"]), "PORT_ORDERS": str(self.ports["orders"]),
             "PORT_PAYMENTS": str(self.ports["payments"]), "PORT_LOADGEN": str(self.ports["loadgen"]),
             "PORT_ORDERS_V2": str(self.ports["orders-v2"]), "PORT_CONTROL": str(self.ports["control"]),
+            "OTEL_DEPLOYMENT_ENVIRONMENT": f"clone-{self.slot}",
         }
         if self.spec.patch_ref:
             e["ORDERS_V2_CONTEXT"] = str(Path(self.spec.patch_ref).expanduser().resolve())

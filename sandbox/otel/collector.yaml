@@ -1,0 +1,50 @@
+# Faultline OTel collector: OTLP in, fairness-filtered, sink chosen by a second --config file
+# (sink.yaml or sink-elastic.yaml, selected by compose interpolation of FAULTLINE_OTLP_ENDPOINT).
+receivers:
+  otlp:
+    protocols:
+      http: {endpoint: 0.0.0.0:4318}
+      grpc: {endpoint: 0.0.0.0:4317}
+  prometheus/envoy:
+    config:
+      scrape_configs:
+        - job_name: envoy
+          scrape_interval: 5s
+          metrics_path: /stats/prometheus
+          static_configs: [{targets: [envoy:9902]}]
+
+processors:
+  resource/env:
+    attributes:
+      - {key: deployment.environment, value: "${env:OTEL_DEPLOYMENT_ENVIRONMENT}", action: upsert}
+      - {key: deployment.environment.name, value: "${env:OTEL_DEPLOYMENT_ENVIRONMENT}", action: upsert}
+  # Fairness: drop control-plane spans and any statement text (the hidden fault is delivered through SQL).
+  filter/fairness:
+    error_mode: ignore
+    traces:
+      span:
+        - 'IsMatch(attributes["url.path"], "^/(internal|admin|stats|healthz)")'
+        - 'IsMatch(attributes["http.target"], "^/(internal|admin|stats|healthz)")'
+        - 'IsMatch(attributes["http.route"], "^/(internal|admin|stats|healthz)")'
+        - 'IsMatch(attributes["url.full"], "/(internal|admin)/")'
+        - 'IsMatch(attributes["http.url"], "/(internal|admin)/")'
+    metrics:
+      metric:
+        - 'IsMatch(name, "(?i)fault")'
+  transform/fairness:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - delete_key(span.attributes, "db.statement")
+          - delete_key(span.attributes, "db.query.text")
+          - set(span.name, "postgresql query") where span.attributes["db.system"] == "postgresql"
+  batch: {timeout: 2s}
+
+exporters:
+  debug: {verbosity: basic}
+
+service:
+  pipelines:
+    traces:  {receivers: [otlp], processors: [resource/env, filter/fairness, transform/fairness, batch], exporters: [debug]}
+    metrics: {receivers: [otlp, prometheus/envoy], processors: [resource/env, filter/fairness, batch], exporters: [debug]}

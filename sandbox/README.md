@@ -117,8 +117,21 @@ the client a longer timeout than its 5 s default: `HttpFaultController(timeout_s
 ## Telemetry notes for Owner 2
 
 `GET /stats` on orders (:8101), payments (:8102) and loadgen (:8103) returns cumulative counters, gauges and
-latency histograms. `services/common/probe.py` turns two snapshots into rates and quantiles. OTel is not
-wired yet. When it is, keep these choices, because they are what keeps World A and World B ambiguous:
+latency histograms. `services/common/probe.py` turns two snapshots into rates and quantiles.
+
+OTel auto-instrumentation is wired for `payments`, `orders`, `orders-v2` and `loadgen` via env +
+`opentelemetry-instrument` (no code changes; `control`/`faultctl` stay uninstrumented). All four ship
+OTLP http/protobuf to the compose project's `otel-collector` (`otel/collector.yaml`), which also scrapes
+Envoy `:9902/stats/prometheus`, tags every signal `deployment.environment=production|clone-<slot>`, and
+drops `/internal/*` `/admin/*` `/stats` `/healthz` `/rate` spans, `*fault*` metric names and all
+`db.statement`/`db.query.text` attributes before exporting. Sink is the local `debug` exporter unless
+`FAULTLINE_OTLP_ENDPOINT` (Elastic Cloud OTLP intake, not the ES URL) is set in `.env`;
+`OTEL_SDK_DISABLED=true` turns instrumentation off entirely. Compose reads `sandbox/.env` only —
+`ln -sf ../.env sandbox/.env` to share the root file. The running production containers keep the old
+image; this activates when the project is next recreated.
+
+Keep these choices in any OTel-derived telemetry too, because they are what keeps World A and World B
+ambiguous:
 
 * **DB query latency = client-side time from issuing the query to the result, including pool wait**
   (`db_query` histogram). Don't emit execution-only time (asyncpg auto-instrumentation spans or
@@ -169,6 +182,7 @@ services/orders      retry loop + runtime override          services/payments  p
 services/loadgen     open-loop Poisson client               services/control   :9901 levers
 services/faultctl    :9900 hidden faults + reset            services/common    stats + probe (shared with scripts)
 services/lab         :9910 clone manager (C6, host process) clone.override.yml clone-only network settings
+otel/                collector.yaml + sink.yaml/sink-elastic.yaml (OTLP → debug or Elastic Cloud)
 scripts/diag.py      live diagnostics                       scripts/validate.py scripted checks
 scripts/validate_lab.py  clone lab checks (fairness, api, storm, degraded, cpu)
 scripts/sweep_lab.py     benchmark cell sweep (rps × trigger), concurrent clones, LabPatchVerifier path

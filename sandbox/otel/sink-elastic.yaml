@@ -1,0 +1,10 @@
+# Elastic Cloud OTLP intake (used when FAULTLINE_OTLP_ENDPOINT is set). confmap merges maps and
+# replaces lists, so only the exporters of each pipeline change.
+exporters:
+  otlphttp/elastic:
+    endpoint: "${env:FAULTLINE_OTLP_ENDPOINT}"
+    headers: {Authorization: "ApiKey ${env:FAULTLINE_ELASTICSEARCH_API_KEY}"}
+service:
+  pipelines:
+    traces:  {exporters: [otlphttp/elastic]}
+    metrics: {exporters: [otlphttp/elastic]}
