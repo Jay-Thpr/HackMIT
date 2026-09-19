@@ -1,4 +1,6 @@
+import http.client
 import json
+import logging
 import threading
 import time
 import urllib.error
@@ -12,6 +14,7 @@ from faultline_contracts import WINDOW_S, Fingerprint
 from faultline_telemetry.fingerprint import fingerprint_from_stats
 
 Snapshot = dict[str, dict[str, Any]]
+log = logging.getLogger(__name__)
 
 
 class FingerprintWriter(Protocol):
@@ -52,10 +55,12 @@ def fingerprint_from_snapshots(
 
 def _get_json(url: str, timeout: float) -> dict:
     request = urllib.request.Request(url, method="GET")
+    # A container being (re)created binds its port before it listens and resets the
+    # connection (RemoteDisconnected, not URLError); every transport failure is "unavailable".
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read())
-    except urllib.error.URLError as exc:
+    except (OSError, http.client.HTTPException, json.JSONDecodeError) as exc:
         raise TelemetryUnavailable(f"telemetry unavailable at {url}") from exc
 
 
@@ -255,4 +260,6 @@ class LiveTelemetrySource:
                 self.snapshot()
             except TelemetryUnavailable:
                 pass
+            except Exception:  # noqa: BLE001 - the poller must outlive any single bad poll
+                log.exception("live telemetry poll failed")
             self._stop.wait(period_s)

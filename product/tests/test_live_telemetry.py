@@ -243,6 +243,34 @@ def test_wait_for_breach_requires_sustained_breach():
     assert fingerprint.slos[0].breached
 
 
+def test_connection_reset_is_unavailable_and_optional_v2_is_skipped(monkeypatch):
+    import http.client
+
+    from faultline_product.adapters import live_telemetry
+
+    def urlopen(request, timeout):
+        raise http.client.RemoteDisconnected("closed without response")
+
+    monkeypatch.setattr(live_telemetry.urllib.request, "urlopen", urlopen)
+    with pytest.raises(TelemetryUnavailable):
+        live_telemetry._get_json("http://orders-v2/stats", 3)
+
+    def http(url, timeout):
+        if "orders_v2" in url:
+            raise TelemetryUnavailable(url)
+        service = next(name for name in ("orders", "payments", "loadgen") if name in url)
+        return _snapshot(5)[service]
+
+    source = LiveTelemetrySource(
+        orders_url="http://orders",
+        payments_url="http://payments",
+        loadgen_url="http://loadgen",
+        orders_v2_url="http://orders_v2",
+        http=http,
+    )
+    assert "orders_v2" not in source.snapshot()
+
+
 def test_unavailable_http_propagates_and_healthz_is_false():
     def failing_http(url, timeout):
         raise urllib.error.URLError("refused")

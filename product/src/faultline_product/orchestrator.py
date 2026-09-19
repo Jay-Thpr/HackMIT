@@ -505,11 +505,13 @@ class Orchestrator:
         ]
         if not pairs:
             return f"missing {target.service_name} telemetry"
+        if not any(v2.qps for _, v2, _ in pairs):
+            return f"{target.service_name} served no traffic during canary"
+        # A service that never errored has no error counter yet, so error_rate is honestly
+        # None rather than 0; compare error rates only when both versions report them.
         v1_errors = [v1.error_rate for v1, _, _ in pairs if v1.error_rate is not None]
         v2_errors = [v2.error_rate for _, v2, _ in pairs if v2.error_rate is not None]
-        if not v1_errors or not v2_errors:
-            return "missing version-specific error rates"
-        if sum(v2_errors) / len(v2_errors) > sum(v1_errors) / len(v1_errors):
+        if v1_errors and v2_errors and sum(v2_errors) / len(v2_errors) > sum(v1_errors) / len(v1_errors):
             return "orders-v2 error rate exceeds orders-v1"
         thresholds = [slo.threshold for _, _, fp in pairs for slo in fp.slos if slo.name == "checkout"]
         v2_p99 = [v2.p99_ms for _, v2, _ in pairs if v2.p99_ms is not None]

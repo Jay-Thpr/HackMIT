@@ -117,6 +117,22 @@ def test_canary_version_evidence_fails_closed():
         == "orders-v2 error rate exceeds orders-v1"
     )
 
+    # a v2 that never errored has no error counter yet: honest None, not a regression
+    clean_v2 = v1.model_copy(update={"error_rate": None})
+    with_clean_v2 = healthy.model_copy(
+        update={"services": {**healthy.services, "orders_v2": clean_v2}}
+    )
+    assert Orchestrator._canary_regression([with_clean_v2], target) is None
+
+    idle_v2 = v1.model_copy(update={"qps": 0.0})
+    with_idle_v2 = healthy.model_copy(
+        update={"services": {**healthy.services, "orders_v2": idle_v2}}
+    )
+    assert (
+        Orchestrator._canary_regression([with_idle_v2], target)
+        == "orders_v2 served no traffic during canary"
+    )
+
 
 class CanaryRefusingLevers:
     def __init__(self, delegate):
