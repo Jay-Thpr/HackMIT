@@ -8,6 +8,8 @@
 - Strict OpenAI triage wiring with semantic validation retry and token-usage callback.
 - Experiment planner: directional separation minus blast-radius cost.
 - Deterministic active benchmark runner.
+- Passive-only, LLM-only, nearest-centroid, and random-lever benchmark baselines.
+- Frozen-suite orchestration with JSON-ready aggregate reporting.
 
 ## Interfaces C2 consumes
 
@@ -24,6 +26,13 @@
 
 ## Remaining Brain work
 
-- Passive-only, LLM-only, nearest-centroid, and random-lever benchmark baselines.
-- Aggregate benchmark reporting.
-- Product integration must supply the C2 judge with a complete telemetry series, C4-derived experiment windows, and separate healthy/incident baselines.
+- Run the frozen suite against live sandbox fingerprints and publish only that
+  measured output as benchmark evidence. Fixture results test mechanics, not
+  live accuracy.
+- Capture OpenAI `usage_sink` output for a compressed-fingerprint versus
+  raw-telemetry token comparison before making a Token Company claim.
+- Product integration must supply the C2 judge with a complete telemetry series,
+  C4-derived experiment windows, and separate healthy/incident baselines.
+
+See `DEVPOST_NOTES.md` for evidence-bounded OpenAI, Token Company, and Codex
+write-up copy.
