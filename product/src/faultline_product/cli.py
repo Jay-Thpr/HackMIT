@@ -5,21 +5,25 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from faultline_brain import DEFAULT_MODEL
-from faultline_contracts import JsonlSink, utcnow
+from faultline_contracts import JsonlSink, LeverError, utcnow
 
 from .adapters import (
     DevinAdapter,
+    CanaryPreparationError,
+    FixtureCanaryDeployer,
     FixtureBrain,
     FixtureClock,
     FixtureDevinAdapter,
     FixtureLeverAdapter,
     LiveTelemetrySource,
     SandboxLeverAdapter,
+    SandboxCanaryDeployer,
+    TelemetryUnavailable,
     build_live_brain,
 )
 from .fixtures import load_fixture
 from .orchestrator import Orchestrator
-from .paths import DEFAULT_AUDIT_LOG
+from .paths import DEFAULT_AUDIT_LOG, REPOSITORY_ROOT
 from .ports import PatchProposal
 from .renderer import TerminalRenderer
 from .report import render_report
@@ -40,8 +44,13 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("--telemetry", choices=("fixture", "sandbox"), default="fixture")
     watch.add_argument("--sandbox-host", default="127.0.0.1")
     watch.add_argument("--detect-timeout", type=float, default=300)
-    watch.add_argument("--brain", choices=("fixture", "live"), default="fixture")
+    watch.add_argument("--brain", choices=("fixture", "live"))
     watch.add_argument("--openai-model", default=DEFAULT_MODEL)
+    watch.add_argument(
+        "--canary-context",
+        type=Path,
+        help="patched Git checkout to build as sandbox orders-v2",
+    )
 
     investigate = commands.add_parser("investigate", help="detect, triage, and plan")
     investigate.add_argument("--fixture", choices=("storm",), default="storm")
@@ -51,7 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
     investigate.add_argument("--telemetry", choices=("fixture", "sandbox"), default="fixture")
     investigate.add_argument("--sandbox-host", default="127.0.0.1")
     investigate.add_argument("--detect-timeout", type=float, default=300)
-    investigate.add_argument("--brain", choices=("fixture", "live"), default="fixture")
+    investigate.add_argument("--brain", choices=("fixture", "live"))
     investigate.add_argument("--openai-model", default=DEFAULT_MODEL)
 
     experiment = commands.add_parser("experiment", help="run a fixture experiment and judge it")
@@ -63,7 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
     experiment.add_argument("--telemetry", choices=("fixture", "sandbox"), default="fixture")
     experiment.add_argument("--sandbox-host", default="127.0.0.1")
     experiment.add_argument("--detect-timeout", type=float, default=300)
-    experiment.add_argument("--brain", choices=("fixture", "live"), default="fixture")
+    experiment.add_argument("--brain", choices=("fixture", "live"))
     experiment.add_argument("--openai-model", default=DEFAULT_MODEL)
 
     report = commands.add_parser("report", help="render an incident from the C4 audit log")
@@ -80,8 +89,12 @@ def main(argv: list[str] | None = None) -> int:
             print(render_report(audit, args.incident))
             return 0
 
-        if args.telemetry == "sandbox" and args.levers != "sandbox":
-            print("faultline: error: --telemetry sandbox requires --levers sandbox")
+        if (args.telemetry == "sandbox") != (args.levers == "sandbox"):
+            print("faultline: error: sandbox telemetry and levers must be selected together")
+            return 2
+        brain_mode = args.brain or ("live" if args.telemetry == "sandbox" else "fixture")
+        if args.telemetry == "sandbox" and brain_mode != "live":
+            print("faultline: error: sandbox mode requires --brain live")
             return 2
         bundle = load_fixture(args.fixture)
         incident_id = args.incident or _run_incident_id(bundle.triage.incident_id)
@@ -94,6 +107,7 @@ def main(argv: list[str] | None = None) -> int:
                 orders_url=f"http://{host}:8101",
                 payments_url=f"http://{host}:8102",
                 loadgen_url=f"http://{host}:8103",
+                orders_v2_url=f"http://{host}:8104",
             )
             if not live_telemetry.healthz():
                 print(
@@ -127,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 2
         else:
             levers = FixtureLeverAdapter(clock=clock)
-        if args.brain == "live":
+        if brain_mode == "live":
             brain = build_live_brain(
                 bundle.experiments,
                 api_key=os.environ.get("OPENAI_API_KEY"),
@@ -141,6 +155,7 @@ def main(argv: list[str] | None = None) -> int:
             levers=levers,
             audit=audit,
             patches=_patch_adapter(args),
+            canary_deployer=_canary_deployer(args),
             renderer=renderer,
             telemetry=telemetry,
             brain=brain,
@@ -170,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             orchestrator.run(incident_id=incident_id, now=now)
         return 0
-    except ValueError as exc:
+    except (CanaryPreparationError, LeverError, RuntimeError, TelemetryUnavailable, ValueError) as exc:
         parser_error = str(exc)
         print(f"faultline: error: {parser_error}")
         return 2
@@ -197,6 +212,17 @@ def _patch_adapter(args):
             fallback=fallback,
         )
     return FixtureDevinAdapter()
+
+
+def _canary_deployer(args):
+    if getattr(args, "levers", "fixture") == "sandbox":
+        host = args.sandbox_host
+        return SandboxCanaryDeployer(
+            compose_dir=REPOSITORY_ROOT / "sandbox",
+            context=getattr(args, "canary_context", None),
+            orders_v2_url=f"http://{host}:8104",
+        )
+    return FixtureCanaryDeployer()
 
 
 if __name__ == "__main__":

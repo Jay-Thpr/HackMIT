@@ -9,6 +9,7 @@ from faultline_contracts import (
 )
 from faultline_product.adapters import (
     FixtureBrain,
+    FixtureCanaryDeployer,
     FixtureClock,
     FixtureDevinAdapter,
     FixtureLeverAdapter,
@@ -47,6 +48,7 @@ def test_storm_flow_uses_contract_boundaries(tmp_path):
         levers=levers,
         audit=audit,
         patches=FixtureDevinAdapter(),
+        canary_deployer=FixtureCanaryDeployer(),
         renderer=TerminalRenderer(output.append),
         telemetry=bundle.telemetry,
         brain=brain,
@@ -135,7 +137,7 @@ def test_investigate_and_experiment_commands(tmp_path, capsys):
     assert "Capping retries" in capsys.readouterr().out
 
 
-def test_unreachable_sandbox_control_service(tmp_path, capsys):
+def test_unreachable_sandbox_profile_reports_health_error(tmp_path, capsys):
     result = main(
         [
             "--audit-log",
@@ -143,6 +145,10 @@ def test_unreachable_sandbox_control_service(tmp_path, capsys):
             "watch",
             "--levers",
             "sandbox",
+            "--telemetry",
+            "sandbox",
+            "--brain",
+            "live",
             "--control-url",
             "http://127.0.0.1:1",
             "--incident",
@@ -150,4 +156,4 @@ def test_unreachable_sandbox_control_service(tmp_path, capsys):
         ]
     )
     assert result == 2
-    assert "sandbox control service not reachable" in capsys.readouterr().out
+    assert "sandbox /stats not reachable" in capsys.readouterr().out

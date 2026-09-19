@@ -60,6 +60,22 @@ def _utc(timestamp: float) -> datetime:
     return datetime.fromtimestamp(timestamp, tz=timezone.utc)
 
 
+def _orders_stats(previous: dict, current: dict) -> ServiceStats:
+    requests = _delta(previous, current, "requests")
+    attempts = _delta(previous, current, "attempts")
+    errors = _delta(previous, current, "errors")
+    ok = _delta(previous, current, "ok")
+    buckets = current["buckets_ms"]
+    return ServiceStats(
+        qps=requests / max(1e-6, current["t"] - previous["t"]),
+        p50_ms=quantile(_hist_delta(previous, current, "request"), buckets, 0.50),
+        p99_ms=quantile(_hist_delta(previous, current, "request"), buckets, 0.99),
+        error_rate=_ratio(errors, ok + errors),
+        retry_ratio=_ratio(attempts, requests),
+        timeout_rate=_ratio(_delta(previous, current, "attempt_timeouts"), attempts),
+    )
+
+
 def fingerprint_from_snapshots(prev: Snapshot, cur: Snapshot) -> Fingerprint:
     previous_orders, current_orders = prev["orders"], cur["orders"]
     previous_payments, current_payments = prev["payments"], cur["payments"]
@@ -82,10 +98,7 @@ def fingerprint_from_snapshots(prev: Snapshot, cur: Snapshot) -> Fingerprint:
         orders_buckets,
         0.99,
     )
-    orders_requests = _delta(previous_orders, current_orders, "requests")
     orders_attempts = _delta(previous_orders, current_orders, "attempts")
-    orders_errors = _delta(previous_orders, current_orders, "errors")
-    orders_ok = _delta(previous_orders, current_orders, "ok")
     payment_requests = _delta(previous_payments, current_payments, "requests")
     db_queries_issued = _delta(previous_payments, current_payments, "db_queries_issued")
     pool_size = current_payments["gauges"].get("pool_size")
@@ -107,25 +120,7 @@ def fingerprint_from_snapshots(prev: Snapshot, cur: Snapshot) -> Fingerprint:
         p99_ms=gateway_p99,
         error_rate=_ratio(loadgen_errors, loadgen_ok + loadgen_errors),
     )
-    orders = ServiceStats(
-        qps=orders_requests / dt,
-        p50_ms=quantile(
-            _hist_delta(previous_orders, current_orders, "request"),
-            orders_buckets,
-            0.50,
-        ),
-        p99_ms=quantile(
-            _hist_delta(previous_orders, current_orders, "request"),
-            orders_buckets,
-            0.99,
-        ),
-        error_rate=_ratio(orders_errors, orders_ok + orders_errors),
-        retry_ratio=_ratio(orders_attempts, orders_requests),
-        timeout_rate=_ratio(
-            _delta(previous_orders, current_orders, "attempt_timeouts"),
-            orders_attempts,
-        ),
-    )
+    orders = _orders_stats(previous_orders, current_orders)
     payments = ServiceStats(
         qps=payment_requests / dt,
         p50_ms=quantile(
@@ -189,10 +184,13 @@ def fingerprint_from_snapshots(prev: Snapshot, cur: Snapshot) -> Fingerprint:
             breached=gateway_p99 is not None and gateway_p99 > 1000.0,
         )
     ]
+    services = {"gateway": gateway, "orders": orders, "payments": payments}
+    if "orders_v2" in prev and "orders_v2" in cur:
+        services["orders_v2"] = _orders_stats(prev["orders_v2"], cur["orders_v2"])
     return Fingerprint(
         window_start=window_start,
         window_end=window_end,
-        services={"gateway": gateway, "orders": orders, "payments": payments},
+        services=services,
         db=db,
         edges=edges,
         slos=slos,
@@ -214,15 +212,21 @@ class LiveTelemetrySource:
         orders_url: str = "http://localhost:8101",
         payments_url: str = "http://localhost:8102",
         loadgen_url: str = "http://localhost:8103",
+        orders_v2_url: str | None = None,
         timeout_s: float = 3.0,
         retain_s: float = 1800,
         http: Callable[[str, float], dict] = _get_json,
     ):
-        self._urls = {
+        self._required_urls = {
             "orders": orders_url.rstrip("/") + "/stats",
             "payments": payments_url.rstrip("/") + "/stats",
             "loadgen": loadgen_url.rstrip("/") + "/stats",
         }
+        self._optional_urls = (
+            {"orders_v2": orders_v2_url.rstrip("/") + "/stats"}
+            if orders_v2_url is not None
+            else {}
+        )
         self._timeout_s = timeout_s
         self._retain_s = retain_s
         self._http = http
@@ -234,10 +238,15 @@ class LiveTelemetrySource:
     def snapshot(self) -> Snapshot:
         snapshot: Snapshot = {}
         try:
-            for service, url in self._urls.items():
+            for service, url in self._required_urls.items():
                 snapshot[service] = self._http(url, self._timeout_s)
         except urllib.error.URLError as exc:
             raise TelemetryUnavailable(f"telemetry unavailable at {url}") from exc
+        for service, url in self._optional_urls.items():
+            try:
+                snapshot[service] = self._http(url, self._timeout_s)
+            except (TelemetryUnavailable, urllib.error.URLError):
+                pass
         timestamp = _utc(snapshot["orders"]["t"])
         with self._lock:
             self._snapshots.append((timestamp, snapshot))
@@ -333,7 +342,7 @@ class LiveTelemetrySource:
 
     def healthz(self) -> bool:
         try:
-            for url in self._urls.values():
+            for url in self._required_urls.values():
                 self._fetch(url)
         except TelemetryUnavailable:
             return False

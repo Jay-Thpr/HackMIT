@@ -127,6 +127,18 @@ def test_fingerprint_derives_live_metrics_and_slo():
     assert "svc.payments.error_rate" not in metrics
 
 
+def test_fingerprint_includes_optional_orders_v2_metrics():
+    previous = _snapshot(0)
+    current = _snapshot(5)
+    previous["orders_v2"] = _snapshot(0)["orders"]
+    current["orders_v2"] = _snapshot(5)["orders"]
+
+    fingerprint = fingerprint_from_snapshots(previous, current)
+
+    assert fingerprint.services["orders_v2"].qps == pytest.approx(80)
+    assert fingerprint.services["orders_v2"].error_rate == 0
+
+
 def test_empty_histograms_and_missing_pool_are_none():
     fingerprint = fingerprint_from_snapshots(
         _snapshot(0, empty=True, missing_pool=True),
@@ -198,4 +210,44 @@ def test_sandbox_telemetry_requires_sandbox_levers(tmp_path, capsys):
     )
 
     assert result == 2
-    assert "--telemetry sandbox requires --levers sandbox" in capsys.readouterr().out
+    assert "sandbox telemetry and levers must be selected together" in capsys.readouterr().out
+
+
+def test_sandbox_levers_require_sandbox_telemetry(tmp_path, capsys):
+    result = main(
+        [
+            "--audit-log",
+            str(tmp_path / "audit.jsonl"),
+            "watch",
+            "--telemetry",
+            "fixture",
+            "--levers",
+            "sandbox",
+            "--incident",
+            "pairing",
+        ]
+    )
+
+    assert result == 2
+    assert "sandbox telemetry and levers must be selected together" in capsys.readouterr().out
+
+
+def test_sandbox_profile_refuses_fixture_brain(tmp_path, capsys):
+    result = main(
+        [
+            "--audit-log",
+            str(tmp_path / "audit.jsonl"),
+            "watch",
+            "--telemetry",
+            "sandbox",
+            "--levers",
+            "sandbox",
+            "--brain",
+            "fixture",
+            "--incident",
+            "unsafe-brain",
+        ]
+    )
+
+    assert result == 2
+    assert "sandbox mode requires --brain live" in capsys.readouterr().out

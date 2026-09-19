@@ -1,4 +1,9 @@
 from .brain import LiveBrain, build_live_brain
+from .canary import (
+    CanaryPreparationError,
+    FixtureCanaryDeployer,
+    SandboxCanaryDeployer,
+)
 from .devin import DevinAdapter, FixtureDevinAdapter
 from .fixture import (
     FixtureBrain,
@@ -15,7 +20,9 @@ from .sandbox import SandboxLeverAdapter
 
 __all__ = [
     "DevinAdapter",
+    "CanaryPreparationError",
     "FixtureBrain",
+    "FixtureCanaryDeployer",
     "FixtureClock",
     "FixtureDevinAdapter",
     "FixtureLeverAdapter",
@@ -23,6 +30,7 @@ __all__ = [
     "LiveBrain",
     "LiveTelemetrySource",
     "SandboxLeverAdapter",
+    "SandboxCanaryDeployer",
     "TelemetryUnavailable",
     "build_live_brain",
     "fingerprint_from_snapshots",
