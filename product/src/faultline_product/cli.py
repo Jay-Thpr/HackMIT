@@ -67,15 +67,10 @@ def main(argv: list[str] | None = None) -> int:
             print("faultline: error: incident already exists; pick a new id")
             return 2
         first_breach = bundle.telemetry.first_breach()
-        use_real_time = getattr(args, "real_time", False)
-        clock = (
-            utcnow
-            if args.levers == "sandbox" and use_real_time
-            else FixtureClock(first_breach.window_end, bundle.telemetry.last_window_end)
-        )
+        clock = FixtureClock(first_breach.window_end, bundle.telemetry.last_window_end)
         sleep = time.sleep if getattr(args, "real_time", False) else clock.sleep
         if args.levers == "sandbox":
-            levers = SandboxLeverAdapter(base_url=args.control_url, clock=clock)
+            levers = SandboxLeverAdapter(base_url=args.control_url, clock=utcnow)
             if not levers.healthz():
                 print(
                     f"faultline: error: sandbox control service not reachable at {args.control_url} "
