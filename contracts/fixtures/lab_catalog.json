@@ -1,0 +1,140 @@
+[
+  {
+    "id": "retry_policy",
+    "description": "Set Orders' retry count and per-attempt timeout towards Payments.",
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "max_retries": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 50,
+          "maximum": 10000
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "reversible": true,
+    "max_ttl_s": 1800
+  },
+  {
+    "id": "db_latency",
+    "description": "Add extra_ms to every query on the primary DB for ttl_s seconds, then remove it (a transient slowdown of the database).",
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "extra_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5000
+        }
+      },
+      "required": [
+        "extra_ms"
+      ],
+      "additionalProperties": false
+    },
+    "reversible": true,
+    "max_ttl_s": 600
+  },
+  {
+    "id": "db_capacity",
+    "description": "Limit the primary DB to capacity_qps queries/s for the app (what a runaway batch job does); undo = the job is paused. The standby DB is untouched.",
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "capacity_qps": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1000
+        }
+      },
+      "required": [
+        "capacity_qps"
+      ],
+      "additionalProperties": false
+    },
+    "reversible": true,
+    "max_ttl_s": 1800
+  },
+  {
+    "id": "cpu_limit",
+    "description": "Limit a service container to `cpus` CPUs (a noisy neighbour).",
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "service": {
+          "type": "string",
+          "enum": [
+            "orders",
+            "orders-v2",
+            "payments"
+          ]
+        },
+        "cpus": {
+          "type": "number",
+          "minimum": 0.05,
+          "maximum": 8
+        }
+      },
+      "required": [
+        "service",
+        "cpus"
+      ],
+      "additionalProperties": false
+    },
+    "reversible": true,
+    "max_ttl_s": 1800
+  },
+  {
+    "id": "service_kill",
+    "description": "Stop a service container for ttl_s seconds, then start it again.",
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "service": {
+          "type": "string",
+          "enum": [
+            "orders",
+            "orders-v2",
+            "payments"
+          ]
+        }
+      },
+      "required": [
+        "service"
+      ],
+      "additionalProperties": false
+    },
+    "reversible": true,
+    "max_ttl_s": 300
+  },
+  {
+    "id": "service_restart",
+    "description": "Restart a service container once (drops in-flight requests and state).",
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "service": {
+          "type": "string",
+          "enum": [
+            "orders",
+            "orders-v2",
+            "payments"
+          ]
+        }
+      },
+      "required": [
+        "service"
+      ],
+      "additionalProperties": false
+    },
+    "reversible": false,
+    "max_ttl_s": 1
+  }
+]

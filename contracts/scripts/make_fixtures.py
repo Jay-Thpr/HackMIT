@@ -10,8 +10,14 @@ from pathlib import Path
 
 from faultline_contracts import (
     CATALOG,
+    LAB_CATALOG,
     Actor,
     AuditEvent,
+    CloneEndpoints,
+    CloneInfo,
+    CloneSpec,
+    CloneStatus,
+    LabActionHandle,
     ConfirmExpect,
     Confirmation,
     DbStats,
@@ -288,6 +294,26 @@ def audit_hero() -> list[AuditEvent]:
     ]
 
 
+def clone_hero() -> CloneInfo:
+    """Investigator A's clone (H_meta) right after it reproduced the incident with a transient DB slowdown."""
+    created = T_FAULT + timedelta(seconds=45)
+    return CloneInfo(
+        clone_id="clone-1",
+        status=CloneStatus.ready,
+        spec=CloneSpec(name="h_meta"),
+        created_at=created,
+        endpoints=CloneEndpoints(
+            gateway_url="http://localhost:18080",
+            control_url="http://localhost:19901",
+            stats_urls={"orders": "http://localhost:18101", "payments": "http://localhost:18102",
+                        "loadgen": "http://localhost:18103"},
+        ),
+        active_actions=[LabActionHandle(action_id="lab-001", clone_id="clone-1", action="db_latency",
+                                        params={"extra_ms": 800}, applied_at=created + timedelta(seconds=30),
+                                        ttl_s=20)],
+    )
+
+
 def dump(name: str, obj) -> None:
     path = OUT / name
     if isinstance(obj, list):
@@ -312,6 +338,8 @@ def main() -> None:
     dump("experiments.json", experiments())
     dump("verdict_storm.json", verdict_storm())
     (OUT / "audit_hero.jsonl").write_text("".join(e.model_dump_json() + "\n" for e in audit_hero()))
+    dump("lab_catalog.json", LAB_CATALOG)
+    dump("clone_hero.json", clone_hero())
     dump("fault_state_storm.json", FaultState(world=World.storm, active=False,
                                               params={"delay_ms": 800, "duration_s": 20}, started_at=T_FAULT))
     print(f"wrote fixtures to {OUT}")

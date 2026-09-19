@@ -1,0 +1,25 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "action": {
+      "title": "Action",
+      "type": "string"
+    },
+    "params": {
+      "additionalProperties": true,
+      "title": "Params",
+      "type": "object"
+    },
+    "ttl_s": {
+      "minimum": 1,
+      "title": "Ttl S",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "action",
+    "ttl_s"
+  ],
+  "title": "LabActionRequest",
+  "type": "object"
+}
