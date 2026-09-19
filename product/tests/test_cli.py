@@ -1,12 +1,12 @@
+from datetime import UTC, datetime, timedelta
+
 from faultline_contracts import (
     EventKind,
     JsonlSink,
     LeverAdapter,
     TelemetrySource,
-    Stage,
     experiment_windows,
 )
-
 from faultline_product.adapters import (
     FixtureBrain,
     FixtureClock,
@@ -16,9 +16,19 @@ from faultline_product.adapters import (
 from faultline_product.cli import main
 from faultline_product.fixtures import load_fixture
 from faultline_product.orchestrator import Orchestrator
-from faultline_product.ports import PatchProposal
 from faultline_product.renderer import TerminalRenderer
 from faultline_product.report import render_report
+
+
+def test_fixture_clock_real_sleep_advances_fixture_time(monkeypatch):
+    start = datetime(2026, 9, 19, 15, 0, tzinfo=UTC)
+    clock = FixtureClock(start)
+    monkeypatch.setattr("faultline_product.adapters.fixture.time.sleep", lambda seconds: None)
+
+    clock.real_sleep(0)
+    assert clock.now == start
+    clock.real_sleep(0.01)
+    assert clock.now == start + timedelta(seconds=0.01)
 
 
 def test_storm_flow_uses_contract_boundaries(tmp_path):
@@ -120,3 +130,21 @@ def test_investigate_and_experiment_commands(tmp_path, capsys):
         == 0
     )
     assert "Capping retries" in capsys.readouterr().out
+
+
+def test_unreachable_sandbox_control_service(tmp_path, capsys):
+    result = main(
+        [
+            "--audit-log",
+            str(tmp_path / "audit.jsonl"),
+            "watch",
+            "--levers",
+            "sandbox",
+            "--control-url",
+            "http://127.0.0.1:1",
+            "--incident",
+            "unreachable",
+        ]
+    )
+    assert result == 2
+    assert "sandbox control service not reachable" in capsys.readouterr().out
