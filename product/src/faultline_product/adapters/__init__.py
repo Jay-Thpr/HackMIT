@@ -5,6 +5,11 @@ from .fixture import (
     FixtureLeverAdapter,
     FixtureTelemetrySource,
 )
+from .live_telemetry import (
+    LiveTelemetrySource,
+    TelemetryUnavailable,
+    fingerprint_from_snapshots,
+)
 from .sandbox import SandboxLeverAdapter
 
 __all__ = [
@@ -14,5 +19,8 @@ __all__ = [
     "FixtureDevinAdapter",
     "FixtureLeverAdapter",
     "FixtureTelemetrySource",
+    "LiveTelemetrySource",
     "SandboxLeverAdapter",
+    "TelemetryUnavailable",
+    "fingerprint_from_snapshots",
 ]
