@@ -1,5 +1,6 @@
 import pytest
 from faultline_contracts import EventKind, JsonlSink, LeverError, Stage
+
 from faultline_product.adapters import (
     FixtureBrain,
     FixtureClock,

@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from faultline_contracts import (
     EventKind,
@@ -7,6 +7,7 @@ from faultline_contracts import (
     TelemetrySource,
     experiment_windows,
 )
+
 from faultline_product.adapters import (
     FixtureBrain,
     FixtureClock,
@@ -21,7 +22,7 @@ from faultline_product.report import render_report
 
 
 def test_fixture_clock_real_sleep_advances_fixture_time(monkeypatch):
-    start = datetime(2026, 9, 19, 15, 0, tzinfo=timezone.utc)
+    start = datetime(2026, 9, 19, 15, 0, tzinfo=UTC)
     clock = FixtureClock(start)
     monkeypatch.setattr("faultline_product.adapters.fixture.time.sleep", lambda seconds: None)
 

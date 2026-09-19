@@ -1,7 +1,6 @@
 import argparse
 import os
-import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from faultline_contracts import JsonlSink, utcnow
@@ -121,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _run_incident_id(base: str) -> str:
-    suffix = datetime.now(timezone.utc).strftime("%H%M%S")
+    suffix = datetime.now(UTC).strftime("%H%M%S")
     return f"{base}-{suffix}"
 
 
