@@ -12,6 +12,7 @@ from .paths import CONTRACT_FIXTURES
 class FixtureBundle:
     triage: TriageResult
     experiment: Experiment
+    experiments: list[Experiment]
     verdict: Verdict
     telemetry: FixtureTelemetrySource
 
@@ -33,6 +34,7 @@ def load_fixture(name: str, root: Path = CONTRACT_FIXTURES) -> FixtureBundle:
     return FixtureBundle(
         triage=triage,
         experiment=experiment,
+        experiments=experiments,
         verdict=verdict,
         telemetry=FixtureTelemetrySource(fingerprints),
     )

@@ -27,7 +27,7 @@ class Brain(Protocol):
         triage: TriageResult,
         catalog: list[LeverSpec],
         blast_radius: Callable[[str, dict], float],
-    ) -> Experiment: ...
+    ) -> Experiment | None: ...
 
     def judge(
         self,
