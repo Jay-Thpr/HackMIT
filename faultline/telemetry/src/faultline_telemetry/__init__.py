@@ -2,5 +2,6 @@
 
 from .audit import ElasticsearchAuditSink
 from .config import TelemetrySettings
+from .store import ElasticsearchFingerprintStore, FINGERPRINT_INDEX
 
-__all__ = ["ElasticsearchAuditSink", "TelemetrySettings"]
+__all__ = ["ElasticsearchAuditSink", "TelemetrySettings", "ElasticsearchFingerprintStore", "FINGERPRINT_INDEX"]
