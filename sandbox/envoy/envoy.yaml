@@ -1,0 +1,102 @@
+# Front door (:8080 loadgen -> orders v1/v2) and the Orders -> Payments hop (:8081).
+# Retries are deliberately NOT configured here: they live in Orders' code.
+# Levers (driven by the control service through the admin API on :9902):
+#   shed    runtime fault.http.abort.abort_percent   (0-100, 503 at the gateway)
+#   canary  runtime routing.traffic_shift.orders     (0-10000 = share routed to orders-v2)
+admin:
+  address: {socket_address: {address: 0.0.0.0, port_value: 9902}}
+
+layered_runtime:
+  layers:
+  - name: static
+    static_layer: {}
+  - name: admin
+    admin_layer: {}
+
+static_resources:
+  listeners:
+  - name: gateway
+    address: {socket_address: {address: 0.0.0.0, port_value: 8080}}
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: gateway
+          route_config:
+            name: gateway
+            virtual_hosts:
+            - name: gateway
+              domains: ["*"]
+              routes:
+              - match:
+                  prefix: "/"
+                  runtime_fraction:
+                    default_value: {numerator: 0, denominator: TEN_THOUSAND}
+                    runtime_key: routing.traffic_shift.orders
+                route: {cluster: orders_v2, timeout: 30s}
+              - match: {prefix: "/"}
+                route: {cluster: orders_v1, timeout: 30s}
+          http_filters:
+          - name: envoy.filters.http.fault
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.fault.v3.HTTPFault
+              abort:
+                http_status: 503
+                percentage: {numerator: 0, denominator: HUNDRED}
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+  - name: orders_to_payments
+    address: {socket_address: {address: 0.0.0.0, port_value: 8081}}
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: orders_to_payments
+          route_config:
+            name: payments
+            virtual_hosts:
+            - name: payments
+              domains: ["*"]
+              routes:
+              - match: {prefix: "/"}
+                route: {cluster: payments, timeout: 30s}
+          http_filters:
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+  clusters:
+  - name: orders_v1
+    type: STRICT_DNS
+    connect_timeout: 1s
+    circuit_breakers: &cb
+      thresholds:
+      - {max_connections: 100000, max_pending_requests: 100000, max_requests: 100000, max_retries: 0}
+    typed_extension_protocol_options: &proto
+      envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+        "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+        common_http_protocol_options: {idle_timeout: 60s}
+        explicit_http_config: {http_protocol_options: {}}
+    load_assignment:
+      cluster_name: orders_v1
+      endpoints: [{lb_endpoints: [{endpoint: {address: {socket_address: {address: orders, port_value: 8000}}}}]}]
+  - name: orders_v2
+    type: STRICT_DNS
+    connect_timeout: 1s
+    circuit_breakers: *cb
+    typed_extension_protocol_options: *proto
+    load_assignment:
+      cluster_name: orders_v2
+      endpoints: [{lb_endpoints: [{endpoint: {address: {socket_address: {address: orders-v2, port_value: 8000}}}}]}]
+  - name: payments
+    type: STRICT_DNS
+    connect_timeout: 1s
+    circuit_breakers: *cb
+    typed_extension_protocol_options: *proto
+    load_assignment:
+      cluster_name: payments
+      endpoints: [{lb_endpoints: [{endpoint: {address: {socket_address: {address: payments, port_value: 8000}}}}]}]

@@ -1,0 +1,17 @@
+[project]
+name = "faultline-sandbox"
+version = "0.1.0"
+description = "Faultline hero sandbox: services, fault controller, control API, validation scripts"
+requires-python = ">=3.11"
+dependencies = ["httpx>=0.27", "faultline-contracts"]
+
+[dependency-groups]
+# service deps, for running/testing services outside Docker
+services = ["fastapi==0.115.12", "uvicorn[standard]==0.34.2", "aiohttp==3.11.18", "asyncpg==0.30.0"]
+
+[tool.uv]
+package = false
+default-groups = ["services"]
+
+[tool.uv.sources]
+faultline-contracts = { path = "../contracts", editable = true }
