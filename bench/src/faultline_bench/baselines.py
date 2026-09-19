@@ -4,12 +4,10 @@ These evaluators receive the same steady-state C1 fingerprints as Faultline's
 triage stage. Labels are benchmark outcomes, never runtime telemetry fields.
 """
 
-from __future__ import annotations
-
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from math import sqrt
-from typing import Callable
 
 from faultline_contracts.fingerprint import Fingerprint
 
@@ -29,7 +27,11 @@ class BaselineResult:
 
 @dataclass(frozen=True)
 class AmbiguityReport:
-    """Observed passive-baseline accuracy; callers choose their own go/no-go bar."""
+    """Observed passive-baseline accuracy; callers choose their own go/no-go bar.
+
+    Fixture results are only smoke data. The PRD ambiguity gate must consume
+    independently collected steady-state fingerprints from the live sandbox.
+    """
 
     results: tuple[BaselineResult, ...]
 

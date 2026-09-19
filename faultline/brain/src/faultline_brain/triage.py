@@ -25,7 +25,10 @@ telemetry fingerprint. Propose plausible sustaining causes and directional,
 measurable predictions for the supplied reversible experiments. Do not claim a
 diagnosis is proven: measurement will judge it. Use only supplied canonical metric
 keys and experiment ids. When telemetry cannot separate hypotheses, set ambiguous
-to true and make each hypothesis provide a positive confirms_if test."""
+to true and make each hypothesis provide a positive, falsifiable confirms_if test
+of that same hypothesis. Never use a rival hypothesis being ruled out, or its
+signature merely returning after release, as confirmation. Measurement uses a
+failed positive test to produce none-of-the-above."""
 
 
 class TriageValidationError(ValueError):
