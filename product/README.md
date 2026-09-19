@@ -8,11 +8,12 @@ uv run faultline watch --fixture storm --incident demo-storm-001
 uv run faultline report --incident demo-storm-001
 ```
 
-For a live sandbox control service:
+For live sandbox telemetry and control:
 
 ```bash
 cd sandbox && docker compose up -d --build
-cd ../product && uv run faultline watch --levers sandbox --real-time --incident live-1
+# trigger a storm from the bench side (Owner 3 / demo script), then:
+cd ../product && uv run faultline watch --telemetry sandbox --levers sandbox --incident live-1
 ```
 
 Runtime orchestration depends on the shared `LeverAdapter`, `TelemetrySource`, and

@@ -1,5 +1,6 @@
 import argparse
 import os
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from .adapters import (
     FixtureClock,
     FixtureDevinAdapter,
     FixtureLeverAdapter,
+    LiveTelemetrySource,
     SandboxLeverAdapter,
 )
 from .fixtures import load_fixture
@@ -32,20 +34,29 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("--real-time", action="store_true")
     watch.add_argument("--devin", action="store_true")
     watch.add_argument("--levers", choices=("fixture", "sandbox"), default="fixture")
-    watch.add_argument("--control-url", default="http://localhost:9901")
+    watch.add_argument("--control-url")
+    watch.add_argument("--telemetry", choices=("fixture", "sandbox"), default="fixture")
+    watch.add_argument("--sandbox-host", default="127.0.0.1")
+    watch.add_argument("--detect-timeout", type=float, default=300)
 
     investigate = commands.add_parser("investigate", help="detect, triage, and plan")
     investigate.add_argument("--fixture", choices=("storm",), default="storm")
     investigate.add_argument("--incident", help="override the generated incident id")
     investigate.add_argument("--levers", choices=("fixture", "sandbox"), default="fixture")
-    investigate.add_argument("--control-url", default="http://localhost:9901")
+    investigate.add_argument("--control-url")
+    investigate.add_argument("--telemetry", choices=("fixture", "sandbox"), default="fixture")
+    investigate.add_argument("--sandbox-host", default="127.0.0.1")
+    investigate.add_argument("--detect-timeout", type=float, default=300)
 
     experiment = commands.add_parser("experiment", help="run a fixture experiment and judge it")
     experiment.add_argument("--fixture", choices=("storm",), default="storm")
     experiment.add_argument("--incident", help="override the generated incident id")
     experiment.add_argument("--id", required=True)
     experiment.add_argument("--levers", choices=("fixture", "sandbox"), default="fixture")
-    experiment.add_argument("--control-url", default="http://localhost:9901")
+    experiment.add_argument("--control-url")
+    experiment.add_argument("--telemetry", choices=("fixture", "sandbox"), default="fixture")
+    experiment.add_argument("--sandbox-host", default="127.0.0.1")
+    experiment.add_argument("--detect-timeout", type=float, default=300)
 
     report = commands.add_parser("report", help="render an incident from the C4 audit log")
     report.add_argument("--incident", required=True)
@@ -55,25 +66,55 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     audit = JsonlSink(args.audit_log)
+    live_telemetry = None
     try:
         if args.command == "report":
             print(render_report(audit, args.incident))
             return 0
 
+        if args.telemetry == "sandbox" and args.levers != "sandbox":
+            print("faultline: error: --telemetry sandbox requires --levers sandbox")
+            return 2
         bundle = load_fixture(args.fixture)
         incident_id = args.incident or _run_incident_id(bundle.triage.incident_id)
         if args.command in {"watch", "investigate", "experiment"} and audit.query(incident_id):
             print("faultline: error: incident already exists; pick a new id")
             return 2
         first_breach = bundle.telemetry.first_breach()
-        clock = FixtureClock(first_breach.window_end, bundle.telemetry.last_window_end)
-        use_real_time = getattr(args, "real_time", False)
-        sleep = clock.real_sleep if use_real_time else clock.sleep
+        if args.telemetry == "sandbox":
+            host = args.sandbox_host
+            live_telemetry = LiveTelemetrySource(
+                orders_url=f"http://{host}:8101",
+                payments_url=f"http://{host}:8102",
+                loadgen_url=f"http://{host}:8103",
+            )
+            if not live_telemetry.healthz():
+                print(
+                    "faultline: error: sandbox /stats not reachable "
+                    "(cd sandbox && docker compose up -d)"
+                )
+                return 2
+            live_telemetry.start()
+            telemetry = live_telemetry
+            clock = utcnow
+            sleep = time.sleep
+            print(f"[detect] waiting for checkout SLO breach (timeout {args.detect_timeout:g}s)")
+            try:
+                live_telemetry.wait_for_breach(args.detect_timeout)
+            except TimeoutError:
+                print(f"faultline: error: no SLO breach observed within {args.detect_timeout:g}s")
+                return 3
+        else:
+            telemetry = bundle.telemetry
+            clock = FixtureClock(first_breach.window_end, bundle.telemetry.last_window_end)
+            use_real_time = getattr(args, "real_time", False)
+            sleep = clock.real_sleep if use_real_time else clock.sleep
         if args.levers == "sandbox":
-            levers = SandboxLeverAdapter(base_url=args.control_url, clock=utcnow)
+            control_url = args.control_url or f"http://{args.sandbox_host}:9901"
+            levers = SandboxLeverAdapter(base_url=control_url, clock=utcnow)
             if not levers.healthz():
                 print(
-                    f"faultline: error: sandbox control service not reachable at {args.control_url} "
+                    f"faultline: error: sandbox control service not reachable at {control_url} "
                     "(cd sandbox && docker compose up -d)"
                 )
                 return 2
@@ -86,13 +127,14 @@ def main(argv: list[str] | None = None) -> int:
             audit=audit,
             patches=_patch_adapter(args),
             renderer=renderer,
-            telemetry=bundle.telemetry,
+            telemetry=telemetry,
             brain=brain,
             clock=clock,
             sleep=sleep,
         )
+        now = utcnow() if args.telemetry == "sandbox" else first_breach.window_end
         if args.command == "investigate":
-            fp = orchestrator.detect(incident_id, first_breach.window_end)
+            fp = orchestrator.detect(incident_id, now)
             triage = orchestrator.triage(incident_id, fp)
             experiment = orchestrator.plan(incident_id, triage)
             for hypothesis in triage.hypotheses:
@@ -104,19 +146,22 @@ def main(argv: list[str] | None = None) -> int:
             if args.id != bundle.experiment.id:
                 raise ValueError(f"unknown fixture experiment {args.id!r}")
             baseline, during, after_release = orchestrator.experiment(
-                incident_id, bundle.experiment, first_breach.window_end
+                incident_id, bundle.experiment, now
             )
             verdict = orchestrator.judge(
                 incident_id, bundle.triage, bundle.experiment, baseline, during, after_release
             )
             print(verdict.summary)
         else:
-            orchestrator.run(incident_id=incident_id, now=first_breach.window_end)
+            orchestrator.run(incident_id=incident_id, now=now)
         return 0
     except ValueError as exc:
         parser_error = str(exc)
         print(f"faultline: error: {parser_error}")
         return 2
+    finally:
+        if live_telemetry is not None:
+            live_telemetry.stop()
 
 
 def _run_incident_id(base: str) -> str:
