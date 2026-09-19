@@ -185,14 +185,20 @@ async def wait_until(pred, window_s: float, timeout_s: float) -> dict[str, Any] 
 
 async def _orders_override(max_retries: int | None, ttl_s: float = 30) -> None:
     for u in (URLS["orders"], ORDERS_V2_URL):
+        primary = u == URLS["orders"]
         try:
             if max_retries is None:
-                await http.delete(f"{u}/internal/retry_override", headers=TOKEN)
+                r = await http.delete(f"{u}/internal/retry_override", headers=TOKEN)
             else:
-                await http.post(f"{u}/internal/retry_override", json={"max_retries": max_retries, "ttl_s": ttl_s},
-                                headers=TOKEN)
+                r = await http.post(f"{u}/internal/retry_override", json={"max_retries": max_retries, "ttl_s": ttl_s},
+                                    headers=TOKEN)
+            r.raise_for_status()
+            if primary and max_retries is None:
+                state = (await http.get(f"{u}/internal/retry_override", headers=TOKEN)).json()
+                if state.get("override") is not None:
+                    raise RuntimeError(f"orders still reports retry override {state}")
         except httpx.HTTPError:
-            if u == URLS["orders"]:
+            if primary:
                 raise
 
 
@@ -211,18 +217,20 @@ async def do_reset() -> dict[str, Any]:
     (await http.delete(f"{URLS['loadgen']}/rate")).raise_for_status()
     # drain: without amplification offered load < capacity, so any queue (or a
     # self-sustaining storm) empties; then release retries and demand a stable baseline.
-    for round_ in range(1, 4):
-        remaining = RESET_TIMEOUT_S - (time.monotonic() - t0)
-        await _orders_override(0, ttl_s=max(5.0, remaining))
-        if await wait_until(_drained, 2.0, remaining) is None:
-            break
+    try:
+        for round_ in range(1, 4):
+            remaining = RESET_TIMEOUT_S - (time.monotonic() - t0)
+            await _orders_override(0, ttl_s=max(5.0, remaining))
+            if await wait_until(_drained, 2.0, remaining) is None:
+                break
+            await _orders_override(None)
+            remaining = RESET_TIMEOUT_S - (time.monotonic() - t0)
+            row = await wait_until(lambda r: probe.is_healthy(r, ATTEMPT_TIMEOUT_MS), 5.0, min(15.0, remaining))
+            if row is not None:
+                log.info("reset complete in %.1fs (round %d)", time.monotonic() - t0, round_)
+                return {"elapsed_s": round(time.monotonic() - t0, 1), "baseline": row}
+    finally:
         await _orders_override(None)
-        remaining = RESET_TIMEOUT_S - (time.monotonic() - t0)
-        row = await wait_until(lambda r: probe.is_healthy(r, ATTEMPT_TIMEOUT_MS), 5.0, min(15.0, remaining))
-        if row is not None:
-            log.info("reset complete in %.1fs (round %d)", time.monotonic() - t0, round_)
-            return {"elapsed_s": round(time.monotonic() - t0, 1), "baseline": row}
-    await _orders_override(None)
     raise HTTPException(status_code=503, detail="system did not return to a healthy baseline")
 
 
