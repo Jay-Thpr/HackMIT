@@ -31,7 +31,10 @@ DEFAULT_RECIPES: dict[str, Recipe] = {
 
 
 class FixturePatchVerifier:
-    def verify(self, incident_id: str, patch: PatchProposal, diagnosis: str) -> PatchVerification:
+    def verify(
+        self, incident_id: str, patch: PatchProposal, diagnosis: str, context: Path | None = None
+    ) -> PatchVerification:
+        del context
         return PatchVerification(
             VerificationStatus.passed,
             "fixture clone: replayed incident, SLO recovered",
@@ -53,7 +56,7 @@ class LabPatchVerifier(PatchVerifier):
     def __init__(
         self,
         lab: CloneLab,
-        context: Path | None,
+        context: Path | None = None,
         recipes: dict[str, Recipe] | None = None,
         stress: list[Recipe] | None = None,
         settle_s: float = 30,
@@ -76,19 +79,25 @@ class LabPatchVerifier(PatchVerifier):
         self._sleep = sleep
         self._clock = clock
 
-    def verify(self, incident_id: str, patch: PatchProposal, diagnosis: str) -> PatchVerification:
+    def verify(
+        self,
+        incident_id: str,
+        patch: PatchProposal,
+        diagnosis: str,
+        context: Path | None = None,
+    ) -> PatchVerification:
         recipe = self._recipes.get(diagnosis)
         if recipe is None:
             return PatchVerification(
                 VerificationStatus.skipped, f"no reproduction recipe for {diagnosis}"
             )
-        if self._context is None:
+        context = self._context or context
+        if context is None:
             return PatchVerification(
-                VerificationStatus.skipped, "no --canary-context: nothing to build into the clone"
+                VerificationStatus.skipped,
+                f"no checkout for {patch.reference}: nothing to build into the clone",
             )
-        spec = CloneSpec(
-            name=_clone_name(incident_id), patch_ref=str(self._context.expanduser().resolve())
-        )
+        spec = CloneSpec(name=_clone_name(incident_id), patch_ref=str(context.expanduser().resolve()))
         try:
             clone = self._lab.create(spec)
         except (LabError, httpx.HTTPError) as exc:

@@ -50,7 +50,8 @@ def _revision(context: Path) -> str:
 
 
 class FixtureCanaryDeployer:
-    def prepare(self, patch: PatchProposal) -> CanaryTarget:
+    def prepare(self, patch: PatchProposal, context: Path | None = None) -> CanaryTarget:
+        del context
         return CanaryTarget(
             patch_reference=patch.reference,
             version="fixture-v2",
@@ -59,12 +60,16 @@ class FixtureCanaryDeployer:
 
 
 class SandboxCanaryDeployer:
-    """Build orders-v2 from an operator-provided checkout and wait for readiness."""
+    """Build orders-v2 from the patch's checkout and wait for readiness.
+
+    ``context`` is an operator override (--canary-context); otherwise the checkout resolved
+    from the patch reference is used.
+    """
 
     def __init__(
         self,
         compose_dir: Path,
-        context: Path | None,
+        context: Path | None = None,
         orders_v2_url: str = "http://127.0.0.1:8104",
         timeout_s: float = 90,
         poll_s: float = 1,
@@ -83,12 +88,13 @@ class SandboxCanaryDeployer:
         self._revision = revision
         self._sleep = sleep
 
-    def prepare(self, patch: PatchProposal) -> CanaryTarget:
-        if self._context is None:
+    def prepare(self, patch: PatchProposal, context: Path | None = None) -> CanaryTarget:
+        context = self._context or context
+        if context is None:
             raise CanaryPreparationError(
-                "sandbox canary requires --canary-context pointing to the patched checkout"
+                f"no checkout for {patch.reference}: pass --canary-context or a resolvable patch reference"
             )
-        context = self._context.expanduser().resolve()
+        context = context.expanduser().resolve()
         if not context.is_dir():
             raise CanaryPreparationError(f"canary context does not exist: {context}")
         source_revision = self._revision(context)

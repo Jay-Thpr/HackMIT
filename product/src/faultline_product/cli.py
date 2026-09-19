@@ -15,7 +15,9 @@ from .adapters import (
     FixtureBrain,
     FixtureClock,
     FixtureDevinAdapter,
+    FixturePatchCheckout,
     FixturePatchVerifier,
+    GitPatchCheckout,
     LabPatchVerifier,
     FixtureLeverAdapter,
     LiveTelemetrySource,
@@ -60,7 +62,13 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument(
         "--canary-context",
         type=Path,
-        help="patched Git checkout to build as sandbox orders-v2",
+        help="override: build this checkout as orders-v2 instead of resolving the patch reference",
+    )
+    watch.add_argument(
+        "--max-revisions",
+        type=int,
+        default=1,
+        help="how many times measured failures are sent back to Devin for a revised patch",
     )
     watch.add_argument(
         "--lab-url",
@@ -192,6 +200,8 @@ def main(argv: list[str] | None = None) -> int:
             patches=_patch_adapter(args),
             canary_deployer=_canary_deployer(args),
             verifier=_patch_verifier(args, writer),
+            checkout=_patch_checkout(args),
+            max_revisions=getattr(args, "max_revisions", 1),
             renderer=renderer,
             telemetry=telemetry,
             brain=brain,
@@ -250,6 +260,16 @@ def _patch_adapter(args):
     return FixtureDevinAdapter()
 
 
+def _patch_checkout(args):
+    if getattr(args, "levers", "fixture") != "sandbox":
+        return FixturePatchCheckout()
+    return GitPatchCheckout(
+        repo_root=REPOSITORY_ROOT,
+        workdir=REPOSITORY_ROOT / ".faultline" / "worktrees",
+        override=getattr(args, "canary_context", None),
+    )
+
+
 def _patch_verifier(args, writer=None):
     if getattr(args, "levers", "fixture") != "sandbox":
         return FixturePatchVerifier()
@@ -258,9 +278,7 @@ def _patch_verifier(args, writer=None):
         return None
     from faultline_contracts.clone import HttpCloneLab
 
-    return LabPatchVerifier(
-        HttpCloneLab(lab_url), context=getattr(args, "canary_context", None), writer=writer
-    )
+    return LabPatchVerifier(HttpCloneLab(lab_url), writer=writer)
 
 
 def _canary_deployer(args):
@@ -268,7 +286,6 @@ def _canary_deployer(args):
         host = args.sandbox_host
         return SandboxCanaryDeployer(
             compose_dir=REPOSITORY_ROOT / "sandbox",
-            context=getattr(args, "canary_context", None),
             orders_v2_url=f"http://{host}:8104",
         )
     return FixtureCanaryDeployer()

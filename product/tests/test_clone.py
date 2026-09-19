@@ -209,7 +209,7 @@ class StubVerifier:
         self.result = result
         self.calls = []
 
-    def verify(self, incident_id, patch, diagnosis):
+    def verify(self, incident_id, patch, diagnosis, context=None):
         self.calls.append((incident_id, patch.reference, diagnosis))
         return self.result
 
@@ -240,7 +240,11 @@ def test_failed_clone_verification_refuses_canary_and_pages_human(tmp_path):
     )
     result, events = _run(tmp_path, verifier)
 
-    assert verifier.calls == [("verify-run", "devin://task/verify-run", "H_meta")]
+    assert verifier.calls == [
+        ("verify-run", "devin://task/verify-run", "H_meta"),
+        ("verify-run", "devin://task/verify-run/rev1", "H_meta"),  # one Devin revision, re-verified
+    ]
+    assert result.patch.revision == 1
     assert result.verification.status == VerificationStatus.failed
     assert result.canary.status == CanaryStatus.refused
     assert "clone verification" in result.canary.detail
@@ -258,6 +262,112 @@ def test_passed_clone_verification_proceeds_to_canary(tmp_path):
     assert result.canary.status == CanaryStatus.passed
     assert any(e.kind == EventKind.action_apply and e.stage == Stage.canary for e in events)
     assert events[-1].payload["clone_verification"] == "passed"
+
+
+class SequenceVerifier:
+    """Returns one scripted result per call, keyed by patch revision."""
+
+    def __init__(self, by_revision):
+        self.by_revision = by_revision
+        self.calls = []
+
+    def verify(self, incident_id, patch, diagnosis, context=None):
+        self.calls.append((patch.revision, context))
+        return self.by_revision[patch.revision]
+
+
+class UnrevisablePatches:
+    def propose(self, incident_id, verdict, triage):
+        return PatchProposal("fallback", "branch:faultline/fallback-retry-cap", "prebuilt")
+
+    def revise(self, incident_id, patch, evidence):
+        return None
+
+
+class RecordingCheckout:
+    def __init__(self, root: Path, fail_for=()):
+        self.root, self.fail_for, self.calls = root, set(fail_for), []
+
+    def resolve(self, patch):
+        self.calls.append(patch.reference)
+        if patch.reference in self.fail_for:
+            from faultline_product.ports import CanaryPreparationError
+
+            raise CanaryPreparationError("git fetch failed")
+        return self.root / f"rev{patch.revision}"
+
+
+def _run_with(tmp_path, *, verifier, patches=None, checkout=None, max_revisions=1, levers=None):
+    bundle = load_fixture("storm")
+    clock = FixtureClock(bundle.experiment_start, bundle.telemetry.last_window_end)
+    audit = JsonlSink(tmp_path / "audit.jsonl")
+    orchestrator = Orchestrator(
+        levers or FixtureLeverAdapter(clock=clock),
+        audit,
+        patches or FixtureDevinAdapter(),
+        FixtureCanaryDeployer(),
+        TerminalRenderer(lambda _line: None),
+        bundle.telemetry,
+        FixtureBrain(bundle.triage, bundle.experiment, bundle.verdict),
+        clock,
+        clock.sleep,
+        verifier=verifier,
+        checkout=checkout,
+        max_revisions=max_revisions,
+    )
+    return orchestrator.run("ship", bundle.experiment_start), audit.query("ship")
+
+
+def test_failed_verification_is_sent_back_to_devin_and_revision_ships(tmp_path):
+    failed = PatchVerification(VerificationStatus.failed, "still breached", evidence={"breached_after_settle": 3})
+    passed = PatchVerification(VerificationStatus.passed, "recovered")
+    verifier = SequenceVerifier({0: failed, 1: passed})
+    checkout = RecordingCheckout(tmp_path)
+
+    result, events = _run_with(tmp_path, verifier=verifier, checkout=checkout)
+
+    assert verifier.calls == [(0, tmp_path / "rev0"), (1, tmp_path / "rev1")]
+    assert checkout.calls == ["devin://task/ship", "devin://task/ship/rev1"]
+    assert result.patch.revision == 1 and result.canary.status == CanaryStatus.passed
+    opened = [e for e in events if e.kind == EventKind.patch_opened]
+    assert [e.payload["revision"] for e in opened] == [0, 1]
+    assert "still breached" in opened[1].payload["evidence"]
+    assert '"breached_after_settle": 3' in opened[1].payload["evidence"]
+    assert events[-1].payload["patch_reference"] == "devin://task/ship/rev1"
+
+
+def test_max_revisions_bounds_the_loop(tmp_path):
+    failed = PatchVerification(VerificationStatus.failed, "still breached")
+    verifier = SequenceVerifier({0: failed, 1: failed, 2: failed})
+
+    result, events = _run_with(tmp_path, verifier=verifier, max_revisions=2)
+
+    assert [c[0] for c in verifier.calls] == [0, 1, 2]
+    assert result.patch.revision == 2 and result.canary.status == CanaryStatus.refused
+    assert sum(e.kind == EventKind.page_human for e in events) >= 1
+
+
+def test_unrevisable_patch_pages_human_instead_of_looping(tmp_path):
+    verifier = SequenceVerifier({0: PatchVerification(VerificationStatus.failed, "still breached")})
+
+    result, events = _run_with(tmp_path, verifier=verifier, patches=UnrevisablePatches())
+
+    assert [c[0] for c in verifier.calls] == [0]
+    assert result.canary.status == CanaryStatus.refused
+    paged = [e for e in events if e.kind == EventKind.page_human and "cannot be revised" in e.summary]
+    assert paged and paged[0].payload["evidence"].startswith("clone verification failed")
+
+
+def test_checkout_failure_is_recorded_and_flow_continues(tmp_path):
+    verifier = SequenceVerifier({0: PatchVerification(VerificationStatus.skipped, "no checkout")})
+    checkout = RecordingCheckout(tmp_path, fail_for={"devin://task/ship"})
+
+    result, events = _run_with(tmp_path, verifier=verifier, checkout=checkout)
+
+    assert verifier.calls == [(0, None)]
+    refused = [e for e in events if e.kind == EventKind.refused and "could not check out" in e.summary]
+    assert refused and refused[0].stage == Stage.patch
+    assert result.canary.status == CanaryStatus.passed  # fixture deployer needs no checkout
 
 
 def test_no_verifier_is_skipped_not_blocking(tmp_path):

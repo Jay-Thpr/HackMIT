@@ -27,9 +27,17 @@ uv run faultline watch \
   --telemetry sandbox \
   --levers sandbox \
   --brain live \
-  --canary-context /path/to/patched/checkout \
+  --lab-url http://127.0.0.1:9910 \
   --incident live-1
 ```
+
+The patch reference decides what gets built as orders-v2: a Devin PR URL is fetched as
+`refs/pull/N/head`, `branch:<name>` (the prebuilt fallback) is fetched from origin, each into a
+detached worktree under `.faultline/worktrees/`. `--canary-context <dir>` overrides this with an
+operator checkout. With `--devin` and `DEVIN_API_KEY`, a Devin session writes the fix; when clone
+verification or the production canary fails, the measured evidence is posted back into the same
+session and the revised PR is fetched and verified again (`--max-revisions`, default 1). A patch
+that cannot be revised pages a human with the evidence.
 
 Add `--lab-url http://127.0.0.1:9910` (clone manager: `cd sandbox && uv run uvicorn
 services.lab.app:app --port 9910`) and, before the production canary, Faultline builds the

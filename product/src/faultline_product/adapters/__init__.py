@@ -4,6 +4,7 @@ from .canary import (
     FixtureCanaryDeployer,
     SandboxCanaryDeployer,
 )
+from .checkout import FixturePatchCheckout, GitPatchCheckout
 from .clone import DEFAULT_RECIPES, FixturePatchVerifier, LabPatchVerifier
 from .devin import DevinAdapter, FixtureDevinAdapter
 from .fixture import (
@@ -22,7 +23,9 @@ from .sandbox import SandboxLeverAdapter
 __all__ = [
     "DEFAULT_RECIPES",
     "DevinAdapter",
+    "FixturePatchCheckout",
     "FixturePatchVerifier",
+    "GitPatchCheckout",
     "LabPatchVerifier",
     "CanaryPreparationError",
     "FixtureBrain",

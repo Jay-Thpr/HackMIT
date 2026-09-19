@@ -1,7 +1,9 @@
+import json
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from faultline_contracts import (
     NONE_OF_THE_ABOVE,
@@ -30,6 +32,7 @@ from .ports import (
     CanaryStatus,
     CanaryTarget,
     PatchAdapter,
+    PatchCheckout,
     PatchProposal,
     PatchVerification,
     PatchVerifier,
@@ -67,10 +70,14 @@ class Orchestrator:
         sleep: Callable[[float], None] = time.sleep,
         action_budget: int = 5,
         verifier: PatchVerifier | None = None,
+        checkout: PatchCheckout | None = None,
+        max_revisions: int = 1,
     ):
         self._levers, self._audit, self._patches = levers, audit, patches
         self._canary_deployer = canary_deployer
         self._verifier = verifier
+        self._checkout = checkout
+        self._max_revisions = max_revisions
         self._renderer, self._telemetry, self._brain = renderer, telemetry, brain
         self._clock, self._sleep, self._action_budget = clock, sleep, action_budget
         self._actions = 0
@@ -117,13 +124,7 @@ class Orchestrator:
             return RunResult(incident_id, verdict.diagnosis, None)
         mitigation = self.mitigate(incident_id, triage, experiment, verdict)
         patch = self.patch(incident_id, verdict, triage)
-        verification = self.verify_patch(incident_id, patch, verdict.diagnosis)
-        if verification.status == VerificationStatus.failed:
-            canary = self._refuse_canary(
-                incident_id, f"patch failed clone verification: {verification.detail}"
-            )
-        else:
-            canary = self.canary(incident_id, patch, mitigation)
+        patch, verification, canary = self.ship(incident_id, patch, verdict.diagnosis, mitigation)
         report_ready = canary.status == CanaryStatus.passed
         report_summary = (
             "incident report ready"
@@ -423,13 +424,93 @@ class Orchestrator:
             EventKind.patch_opened,
             Actor.adapter,
             patch.summary,
-            {"provider": patch.provider, "reference": patch.reference},
+            {
+                "provider": patch.provider, "reference": patch.reference,
+                "revision": patch.revision, "session_id": patch.session_id,
+            },
         )
         self._renderer.event("patch", f"{patch.provider} patch prepared")
         return patch
 
+    def ship(
+        self,
+        incident_id: str,
+        patch: PatchProposal,
+        diagnosis: str,
+        mitigation: ActionHandle | None,
+    ) -> tuple[PatchProposal, PatchVerification, CanaryResult]:
+        """Stages 6b-7: checkout -> clone verification -> production canary, with measured
+        evidence sent back to the patch author for at most ``max_revisions`` revisions.
+
+        The mitigation is released only once, before the first canary attempt.
+        """
+        revisions = 0
+        while True:
+            context = self.checkout(incident_id, patch)
+            verification = self.verify_patch(incident_id, patch, diagnosis, context)
+            if verification.status == VerificationStatus.failed:
+                canary = self._refuse_canary(
+                    incident_id, f"patch failed clone verification: {verification.detail}"
+                )
+                evidence = _verification_evidence(verification)
+            else:
+                canary = self.canary(incident_id, patch, mitigation, context)
+                mitigation = None
+                if canary.status != CanaryStatus.regressed:
+                    return patch, verification, canary
+                evidence = f"production canary regressed: {canary.detail}"
+            if revisions >= self._max_revisions:
+                return patch, verification, canary
+            revised = self.revise(incident_id, patch, evidence)
+            if revised is None:
+                return patch, verification, canary
+            patch, revisions = revised, revisions + 1
+
+    def checkout(self, incident_id: str, patch: PatchProposal) -> Path | None:
+        if self._checkout is None:
+            return None
+        try:
+            context = self._checkout.resolve(patch)
+        except CanaryPreparationError as exc:
+            self._record(
+                incident_id, Stage.patch, EventKind.refused, Actor.adapter,
+                f"could not check out {patch.reference}: {exc}", {"patch_reference": patch.reference},
+            )
+            self._renderer.event("patch", f"checkout failed: {exc}")
+            return None
+        if context is not None:
+            self._renderer.event("patch", f"checked out {patch.reference} -> {context}")
+        return context
+
+    def revise(self, incident_id: str, patch: PatchProposal, evidence: str) -> PatchProposal | None:
+        """Send the measured failure back to the patch author (the same Devin session)."""
+        self._renderer.event("patch", f"sending evidence back to {patch.provider} for a revision")
+        revised = self._patches.revise(incident_id, patch, evidence)
+        if revised is None:
+            self._record(
+                incident_id, Stage.patch, EventKind.page_human, Actor.orchestrator,
+                f"{patch.provider} patch cannot be revised automatically; page human",
+                {"patch_reference": patch.reference, "evidence": evidence},
+            )
+            self._renderer.event("patch", "no revision available — paged human")
+            return None
+        self._record(
+            incident_id, Stage.patch, EventKind.patch_opened, Actor.adapter, revised.summary,
+            {
+                "provider": revised.provider, "reference": revised.reference,
+                "revision": revised.revision, "session_id": revised.session_id,
+                "evidence": evidence,
+            },
+        )
+        self._renderer.event("patch", f"{revised.provider} revision {revised.revision} received")
+        return revised
+
     def verify_patch(
-        self, incident_id: str, patch: PatchProposal, diagnosis: str
+        self,
+        incident_id: str,
+        patch: PatchProposal,
+        diagnosis: str,
+        context: Path | None = None,
     ) -> PatchVerification:
         """Stage 6b (PRD v6): replay the reproduced incident against the patch in a clean clone.
 
@@ -440,7 +521,7 @@ class Orchestrator:
             verification = PatchVerification(VerificationStatus.skipped, "no clone lab configured")
         else:
             self._renderer.event("verify", "replaying the reproduced incident against the patch in a clone")
-            verification = self._verifier.verify(incident_id, patch, diagnosis)
+            verification = self._verifier.verify(incident_id, patch, diagnosis, context)
         payload = {
             "status": verification.status.value,
             "clone_id": verification.clone_id,
@@ -470,9 +551,10 @@ class Orchestrator:
         incident_id: str,
         patch: PatchProposal,
         mitigation: ActionHandle | None = None,
+        context: Path | None = None,
     ) -> CanaryResult:
         try:
-            target = self._canary_deployer.prepare(patch)
+            target = self._canary_deployer.prepare(patch, context)
         except CanaryPreparationError as exc:
             return self._refuse_canary(incident_id, f"patch target unavailable: {exc}")
 
@@ -662,3 +744,12 @@ class Orchestrator:
                 experiment_id=experiment_id,
             )
         )
+
+
+def _verification_evidence(verification: PatchVerification) -> str:
+    lines = [f"clone verification failed: {verification.detail}"]
+    if verification.recipe:
+        lines.append(f"replayed recipe: {json.dumps(verification.recipe)}")
+    if verification.evidence:
+        lines.append(f"measured: {json.dumps(verification.evidence)}")
+    return "\n".join(lines)

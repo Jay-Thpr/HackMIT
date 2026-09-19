@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from faultline_contracts import (
@@ -15,8 +16,10 @@ from faultline_contracts import (
 @dataclass(frozen=True)
 class PatchProposal:
     provider: str  # "devin" | "fallback"
-    reference: str  # PR url / branch
+    reference: str  # PR url / "branch:<name>" / "path:<dir>"
     summary: str
+    session_id: str | None = None  # Devin session that can be asked to revise
+    revision: int = 0  # 0 = first proposal, n = n-th revision after measured evidence
 
 
 @dataclass(frozen=True)
@@ -82,10 +85,25 @@ class PatchAdapter(Protocol):
         self, incident_id: str, verdict: Verdict, triage: TriageResult
     ) -> PatchProposal: ...
 
+    def revise(
+        self, incident_id: str, patch: PatchProposal, evidence: str
+    ) -> PatchProposal | None:
+        """Send measured evidence back to the author and return the revised patch, or None
+        when the patch cannot be revised (no live session, provider does not support it)."""
+        ...
+
+
+@runtime_checkable
+class PatchCheckout(Protocol):
+    """Turn a PatchProposal.reference into a local checkout root (contains sandbox/Dockerfile)
+    that the canary deployer and the clone lab can build orders-v2 from."""
+
+    def resolve(self, patch: PatchProposal) -> Path | None: ...
+
 
 @runtime_checkable
 class CanaryDeployer(Protocol):
-    def prepare(self, patch: PatchProposal) -> CanaryTarget: ...
+    def prepare(self, patch: PatchProposal, context: Path | None = None) -> CanaryTarget: ...
 
 
 class VerificationStatus(str, Enum):
@@ -111,5 +129,9 @@ class PatchVerifier(Protocol):
     """
 
     def verify(
-        self, incident_id: str, patch: PatchProposal, diagnosis: str
+        self,
+        incident_id: str,
+        patch: PatchProposal,
+        diagnosis: str,
+        context: Path | None = None,
     ) -> PatchVerification: ...
