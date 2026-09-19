@@ -8,6 +8,13 @@
 
 Faultline is an autonomous incident responder that plugs into any OpenTelemetry-instrumented system. It triages obvious incidents from telemetry, and when several causes fit the symptoms, it spins up disposable clean copies of the system where investigator agents reproduce each hypothesis and measure how it responds to intervention, then runs one safe, reversible production experiment that tells them apart. It then mitigates, ships a Devin-written fix through a self-verified canary, and leaves a report for a human.
 
+What changed in v6.1 (2026-09-19 15:45; refinements, no new subsystem):
+
+- **Incident replay suite.** Every resolved incident leaves a durable artifact: the C6 recipe that reproduced it in a clone. Future patches must survive the whole suite before they may canary. Faultline's incident history becomes a regression suite for the class of failure it just handled.
+- **Attack the patch.** Patch verification reuses the investigator loop: one investigator is given the hypothesis "this patch prevents the incident" and tries to falsify it (bigger trigger, higher load, tighter timeout), with predicted outcomes and measured verdicts. A measured counterexample goes back to Devin's session.
+- **Planner tradeoff is visible.** The UI shows the candidate table at stage 4b: per lever, expected separation in σ (measured in clones), blast radius, and why the winner won.
+- **No standalone chaos mode.** Experiments without a hypothesis have no prediction and therefore nothing to judge; that is chaos tooling's category, not ours.
+
 What changed from v5 (v4 → v5 changes kept below):
 
 - **Clone lab.** Observation tells you *what* is happening, not always *why*, and production is too risky for aggressive experiments. Faultline now spins up disposable, healthy copies of the system where investigator agents try to reproduce each hypothesis, run counterfactual experiments and attack Devin's patch before anything touches production.
@@ -63,7 +70,7 @@ flowchart LR
 | 3 Triage | Service graph + LLM rank candidate causes; obvious ones skip to stage 5 |
 | 4 Experiment | **4a Probe:** per hypothesis, an investigator agent gets a clean clone, injects the hypothesized cause, tries to reproduce the production fingerprint, and measures how that world responds to candidate experiments. **4b Confirm:** apply the gentlest production intervention that separates the surviving hypotheses (predictions now measured in clones) and judge the response against noise |
 | 5 Mitigate | Keep a reversible action, often the experiment that won |
-| 6 Patch | Devin writes the durable fix as a PR; the patch is replayed against the reproduced incident in a fresh clone before it may canary |
+| 6 Patch | Devin writes the durable fix as a PR; in a fresh clone the patch must survive the **incident replay suite** (this incident's reproduction recipe plus every earlier one) and an investigator's attempt to break it, before it may canary |
 | 7 Canary | New version gets \~5% of traffic, compared against old; auto-promote or auto-revert |
 | 8 Report | Timeline, evidence, actions, PR link, for human review |
 
@@ -146,11 +153,18 @@ A hypothesis that fails 1 is dropped before touching production. If none reaches
 
 **C6 action catalog (clone-only, \~6–9 primitives):** create/reset/destroy clone, replay workload, set retry count, set timeout, inject dependency/DB latency, change DB/CPU capacity, pause/resume batch workload, restart/kill service, clone metadata/status. **C6 actions are never production actions**, and C6 never exposes the hidden world.
 
-**Patch verification.** Devin's patch runs as orders-v2 in a fresh clone; the reproduced incident is replayed, plus a transient DB slowdown, higher load and CPU degradation. Only a patch that survives goes to the production canary.
+**Reproduction recipes and the replay suite.** When a hypothesis reproduces the production fingerprint (evidence rule 1), the C6 actions and workload that did it are saved as a **reproduction recipe** (e.g. `db_latency 800 ms / 20 s @ 80 rps`, judged within noise of the incident fingerprint). Recipes accumulate into the **incident replay suite**. It is built from nothing new: clone reset, workload replay and the judge.
+
+**Patch verification = replay + attack.** Devin's patch runs as orders-v2 in a fresh clone.
+
+1. *Replay:* the whole replay suite runs against it; each recipe must now fail to reproduce the incident (judged against the healthy baseline, not eyeballed).
+2. *Attack:* one investigator gets the hypothesis "this patch prevents the incident", the C6 catalog and a small budget, and tries to falsify it: larger or longer trigger, higher load, tighter timeout, CPU degradation. Each attempt carries a prediction and a measured verdict, the same loop as stage 4a.
+
+Only a patch that survives both goes to the production canary. A failure returns the measured counterexample (recipe, params, observations) to the same Devin session for revision. In the pitch: *Faultline tries to break its own fix before it ships.*
 
 **Budget.** Production + 2 concurrent investigation clones; 3 clones maximum after profiling on the final demo machine (each clone is \~8 containers). No swarm: two visible investigators communicate the idea.
 
-**Not building:** VM snapshots, Kubernetes, full production traffic capture, arbitrary shell agents, dozens of chaos primitives, large multi-agent swarms, complex Bayesian inference, perfect environment reconstruction.
+**Not building:** VM snapshots, Kubernetes, full production traffic capture, arbitrary shell agents, dozens of chaos primitives, large multi-agent swarms, complex Bayesian inference, perfect environment reconstruction, a standalone chaos mode on healthy production (no hypothesis → no prediction → nothing to judge).
 
 ## Other scenarios
 
@@ -213,6 +227,8 @@ The LLM proposes and explains; measurement decides. This keeps diagnoses checkab
 | Judge result against noise; update support; confirmation check | Math |
 | Investigator: choose the next clone experiment and predict its outcome | LLM (one agent per hypothesis) |
 | Reproduction similarity, falsification verdicts in clones | Math |
+| Patch attack: choose the next attempt to break the patch, predict its outcome | LLM (same investigator loop) |
+| Replay-suite pass/fail, patch-attack verdicts | Math |
 | Predictions for the production probe | Measured in clones (LLM fallback if no clone ran) |
 | Mitigation choice, Devin request, report | LLM + Devin |
 
@@ -231,7 +247,7 @@ The LLM proposes and explains; measurement decides. This keeps diagnoses checkab
 
 **Support.** Uniform prior; each experiment updates support from agreement between predicted and measured directions. Declare a diagnosis only when the leader passes its confirmation test; if none passes, none-of-the-above.
 
-The UI shows two panels side by side: *LLM reasoning* and *measured evidence*.
+The UI shows two panels side by side: *LLM reasoning* and *measured evidence*. At stage 4b it also shows the **planner's candidate table**: one row per lever with expected separation (σ, measured in clones or LLM-predicted with that marked), blast radius (% of user requests), score, and the winner highlighted. This is the moment that separates Faultline from chaos tooling: not "it can inject faults" but "it picks the cheapest intervention per bit of information."
 
 ## Architecture
 
@@ -274,7 +290,7 @@ flowchart LR
 | Investigators | One agent per hypothesis running the investigator loop in its clone |
 | Orchestrator | State machine for the 8 stages; launches clone investigations; routes Devin patches through clone verification; audit log in Elasticsearch |
 | CLI | `faultline watch`, `investigate`, `experiment`, `report` |
-| UI | Latency/load chart, hypotheses + evidence panels, audit log, live investigator/clone panels |
+| UI | Latency/load chart, hypotheses + evidence panels, planner candidate table, audit log, live investigator/clone panels |
 
 **Fairness rules:** fault-controller state, world labels and trigger timing are never visible to Faultline or its investigators; clones are built only from observable/configurable state; C6 actions only reach clones. On the OTel Demo, filter flagd attributes out of telemetry and never use flag flips as levers.
 
@@ -289,7 +305,7 @@ The demo is built around one live chart of **DB query latency and request load o
 5. **Planner picks the retry cap** because the clones measured it as the gentlest probe that separates the worlds, not because the LLM guessed.
 6. **The chart moment (production).** Cap on: load and latency drop. Cap off: load returns, **latency stays low**, matching clone A. Diagnosis: self-sustaining storm, confirmed; mitigation already in place.
 7. **Contrast (pre-recorded or second live run).** Same experiment on the degraded-DB world: latency snaps back, matching clone B. Same experiment, opposite answers.
-8. **Durable fix.** Devin patch → fresh clone replays the reproduced incident plus a new DB slowdown and higher load → survives → canary at 5% → green → promoted.
+8. **Durable fix.** Devin patch → fresh clone runs the replay suite, then an investigator tries to break the patch (bigger hiccup, 2× load) → survives → canary at 5% → green → promoted. One line in the report: "this recipe is now in the replay suite."
 9. **Morning report + audit log.** Then the benchmark table.
 
 Requirements: record a clean full run as soon as the storm is reliable; rehearse the live run at least 5 times; keep the pre-recorded run as fallback. Show the CLI in Warp for one step.
@@ -344,20 +360,26 @@ We target four primary challenges, each with one visible piece in the demo, plus
 
 Build the core loop to 100% before any layer; the plan assumes 4 people and a Sunday-morning deadline (confirm both).
 
-**Core (must work end to end):** sandbox + Envoy + load generator; storm and degraded-DB worlds; minimal clone lab (2 investigation clones, \~6 C6 primitives, 2 investigators, patch verification in a clone) working by the 2 am freeze but operationally behind the v5 loop; OTel → Elasticsearch; OpenAI triage with structured predictions; planner over retry cap / shed 10% / shed 50% / DB failover; judge vs. noise; mitigation kept; audit log; Devin → canary → verify → revise with prebuilt fallback; CLI; UI chart + panels; overnight sandbox benchmark.
+**Core (must work end to end):** sandbox + Envoy + load generator; storm and degraded-DB worlds; minimal clone lab (2 investigation clones, \~6 C6 primitives, 2 investigators, patch verification in a clone) working by the 2 am freeze but operationally behind the v5 loop; OTel → Elasticsearch; OpenAI triage with structured predictions; planner over retry cap / shed 10% / shed 50% / DB failover; judge vs. noise; mitigation kept; audit log; Devin → canary → verify → revise with prebuilt fallback; CLI; UI chart + panels + planner candidate table; overnight benchmark **on the live sandbox** (not the simulator; `FakeWorld` stays for unit tests and seeds).
 
-**If ahead:** none-of-the-above probe in the demo, easy case, OpenTelemetry Demo suite, richer report, similar-incident search.
+**Committed at 15:45 (scope review; every lane had shipped its → 3:30 pm column):**
+
+- **Live-sandbox benchmark runner.** `bench/` currently runs against `FakeWorld` only. The headline table must come from the real stack, through the same surfaces the integration smoke test uses (C5 to inject, `:9901` to act, `/stats` or ES to observe). \~40 incidents × \~3 min fits one overnight run.
+- **Clone arm in the benchmark** (the v6 ablation row), once two investigators work.
+- **Similar-incident search** in Elasticsearch over stored fingerprints and reproduction recipes; shown at triage ("this looks like incident X, which was a storm") and in the report. Elastic sponsor moment.
+- **Devin live in the demo**, API access verified today; the prebuilt fallback patch and a recorded session are still made.
+- **Sequencing:** the v5 loop runs end to end on the live sandbox with real OpenAI triage *before* the clone lab takes anyone's time. Target: first live loop by \~6 pm, not 9 pm, since every piece already exists.
+
+**If ahead:** none-of-the-above probe in the live demo (the smoke test already covers it), easy case, OpenTelemetry Demo suite, richer report.
 
 **Cut:** SREGym, calibrated response library, change attribution, Kubernetes, extra production levers beyond the four, VM snapshots, clone swarms (> 3 clones), full traffic capture.
 
-| Owner | Builds |
-| --- | --- |
 | Owner | Builds (v5, kept) | Adds in v6 |
 | --- | --- | --- |
 | 1 Sandbox + storm | Services, Envoy, load generator, fault controller, storm gate | **The lab:** clone runtime (isolated Compose replicas), create/reset/destroy lifecycle, workload/incident replay, reproducible fault states, C6 lab actions (retry/timeout, load, DB latency/capacity, CPU, batch pause, restart/kill), patched-version slot in clones |
 | 2 Telemetry + Elastic | OTel, Collector, Elasticsearch, fingerprint queries, audit log store | Clone id on all telemetry, per-clone fingerprints, clone vs. production fingerprint comparison, reproduction-similarity metric, experiment-history storage and queries |
-| 3 Brain | OpenAI triage and predictions, noise model, planner, judge, benchmark runner | **The scientist:** investigator agents (one per hypothesis), clone experiment selection, reproduction and falsification scoring, stopping rules, measured predictions for the production probe, clone arm in the benchmark |
-| 4 Product | Orchestrator, action and code adapters, Devin + canary, CLI, UI, demo | Launch clone investigations, C6 clone adapter, live investigator panels, send diagnosis + reproduction to Devin, route the patch through clone verification before the production canary |
+| 3 Brain | OpenAI triage and predictions, noise model, planner, judge, benchmark runner | **The scientist:** investigator agents (one per hypothesis), clone experiment selection, reproduction and falsification scoring, stopping rules, measured predictions for the production probe, clone arm in the benchmark; *v6.1:* reproduction recipes, patch-attack investigator |
+| 4 Product | Orchestrator, action and code adapters, Devin + canary, CLI, UI, demo | Launch clone investigations, C6 clone adapter, live investigator panels, send diagnosis + reproduction to Devin, route the patch through clone verification before the production canary; *v6.1:* replay-suite store, planner candidate table in the UI, counterexample back to Devin |
 
 **Principle:** Owner 1 exposes capabilities (C6); Owner 3 decides when and why to use them.
 
@@ -373,13 +395,14 @@ Build the core loop to 100% before any layer; the plan assumes 4 people and a Su
 
 | Phase | 1 Sandbox + storm | 2 Telemetry + Elastic | 3 Brain | 4 Product |
 | --- | --- | --- | --- | --- |
-| **→ 3:30 pm** | ✅ Services, Postgres, load generator; storm gate (5/5). ✅ Also done early: Envoy, retry override, World B, fault controller, v2 slot, CPU-starve world, `sandbox/INTEGRATION.md`. *Draft C6 clone-lab contract* | Get OTel → Collector → ES running **first**, then the fingerprint query (sandbox `/stats` mapping in `sandbox/INTEGRATION.md`) | OpenAI triage prompt against C1 fixtures; noise model math; *review and approve C6* | Orchestrator state machine on fake adapters; CLI skeleton; Devin API access check |
-| **3:30 → 9 pm** | *Clone runtime: 2 isolated Compose replicas, create/reset/destroy, clean-start fairness test; C6 lab API (\~6 primitives); workload replay from production config* | Live fingerprint adapter; audit-log index; ambiguity-check data export; *clone id on all telemetry, per-clone fingerprints* | Planner + judge + support update on fixtures; ambiguity check (nearest-centroid + passive LLM); *investigator loop for one hypothesis on one clone* | Real action adapters against :9901; **first end-to-end loop (v5) by 9 pm**; *C6 clone adapter* |
-| **9 pm → 2 am** | *Incident replay: both hero hypotheses reproducible in clones; patched orders-v2 in a clone with stress variants (DB slowdown, load, CPU); clone lab working by 2 am* | Similar-incident search; tokens-per-incident metric; UI data queries; *clone-vs-production similarity metric; experiment-history queries* | Benchmark runner (uses C5), baselines (passive-only, production-only, LLM-only, centroid, random); *2 investigators, reproduction/falsification scoring, measured predictions for the production probe* | Devin → *clone verification* → build v2 → canary → verify → revise; prebuilt fallback patch; UI chart + two panels + *investigator panels* |
-| **2 → 6 am** | Harden storm reliability (✅ 5/5 already); *clone reset reliability; profile production + 2 clones on the demo machine* | Support benchmark runs | Run the overnight benchmark on frozen code (*clone arm if stable*) | Report, record fallback video |
+| **→ 3:30 pm** | ✅ Services, Postgres, load generator; storm gate (5/5). ✅ Also done early: Envoy, retry override, World B, fault controller, v2 slot, CPU-starve world, `sandbox/INTEGRATION.md`. ✅ *C6 clone-lab contract drafted and approved by Owner 3* | Get OTel → Collector → ES running **first**, then the fingerprint query (sandbox `/stats` mapping in `sandbox/INTEGRATION.md`) | OpenAI triage prompt against C1 fixtures; noise model math; *review and approve C6* | Orchestrator state machine on fake adapters; CLI skeleton; Devin API access check |
+| **3:30 → 6 pm** | ✅ *Clone runtime: lab manager `:9910` (`sandbox/services/lab`), `clone.override.yml`, `validate_lab.py fairness` 8/8 (no faultctl, clean DB, production `:9900` refuses clone traffic)* | ✅ Live fingerprint adapter, ES store, audit index, ambiguity export. **Now:** stand up OTel Collector → ES in Compose; join the live-loop run | ✅ Noise, judge, planner, triage wiring, bench runners on `FakeWorld`. **Now:** ambiguity check *result* (centroid + passive LLM on live fingerprints); join the live-loop run | ✅ Orchestrator, CLI, sandbox + live-telemetry adapters, Devin adapter, canary flow. **Now: first end-to-end v5 loop on the live sandbox with real OpenAI triage by \~6 pm**; verify Devin API access |
+| **6 → 9 pm** | ✅ *C6 API checks 24/24 (`validate_lab.py api`); reproduction recipes documented in `INTEGRATION.md`; production + 2 clones profiled (~300 MB, ~0.2 CPU each)*. **Now:** support Owners 3/4 first live clone runs | *Clone id on all telemetry, per-clone fingerprints*; UI data queries | *Investigator loop for one hypothesis on one clone*; **live-sandbox benchmark runner** (C5 + `:9901` + `/stats`/ES, the smoke-test surfaces) | *C6 clone adapter*; UI chart + two panels + **planner candidate table**; prebuilt fallback patch |
+| **9 pm → 2 am** | ✅ *Both hero hypotheses reproduce in clones, CPU world fails both tests (`validate_lab.py storm|degraded|cpu` 25/25); patched orders-v2 builds and canaries in a clone via `patch_ref`.* Remaining: clone reset reliability under repeated runs | **Similar-incident search** over fingerprints + recipes; tokens-per-incident metric; *clone-vs-production similarity metric; experiment-history queries* | *2 investigators, reproduction/falsification scoring, measured predictions for the production probe; reproduction recipes saved; patch-attack investigator*; baselines complete (passive-only, production-only, LLM-only, centroid, random, **clone arm**) | Devin → *replay suite + patch attack in a clone* → build v2 → canary → verify → revise; replay-suite store; *investigator panels*; counterexample back to Devin |
+| **2 → 6 am** | Harden storm reliability (✅ 5/5 already); *clone reset reliability* | Support benchmark runs | **Run the overnight benchmark on the live sandbox on frozen code** (*clone arm if stable*) | Report, record fallback video |
 | **6 am →** | Rehearse the demo | Elastic Devpost write-up | OpenAI + Token Co write-ups, Codex log | Warp + Devin write-ups, demo driver |
 
-**Cut order if behind:** OTel Demo suite → Elastic extras (keep storage) → easy case → clone-lab extras (keep 2 investigators, drop the benchmark clone arm) → live canary (show recorded) → Devin live (use fallback patch). If the clone lab threatens the proven storm → experiment → judge loop, fall back to the v5 loop. Never cut: storm, experiment, judge vs. noise, the chart, the benchmark table.
+**Cut order if behind:** OTel Demo suite → easy case → none-of-the-above in the live demo (keep it in the benchmark) → similar-incident search (keep storage) → patch attack (keep replay) → benchmark clone arm → clone-lab extras (keep 2 investigators) → live-sandbox benchmark (fall back to `FakeWorld`, labelled as simulator numbers) → live canary (show recorded) → Devin live (use fallback patch). If the clone lab threatens the proven storm → experiment → judge loop, fall back to the v5 loop. Never cut: storm, experiment, judge vs. noise, the chart, the benchmark table.
 
 ## Definition of done
 
@@ -390,7 +413,7 @@ The project is done when a judge watching the demo can see all twelve of these, 
 1. Many components look broken at once, and the dashboard alone doesn't say why.
 2. Faultline's triage names two plausible causes and says the telemetry can't separate them.
 3. The LLM's reasoning and the measured evidence appear as separate panels.
-4. The planner picks an experiment for a stated reason: separation vs. user impact.
+4. The planner picks an experiment for a stated reason: a visible candidate table of separation vs. user impact.
 5. The experiment runs live on the incident, and the chart shows the response.
 6. The verdict comes from measurement against noise, not an LLM opinion.
 7. The diagnosis passes its own confirmation test (stays healthy after the cap is released).
@@ -398,17 +421,19 @@ The project is done when a judge watching the demo can see all twelve of these, 
 9. A Devin patch ships through a canary that Faultline verifies itself.
 10. A benchmark table shows experiments beating passive-only and LLM-only on ambiguous incidents.
 11. Two investigators each reproduce their hypothesis in a clean clone and measure its response to the retry cap before production is touched.
-12. The Devin patch survives a replay of the reproduced incident in a clone before its canary.
+12. The Devin patch survives the incident replay suite and an investigator's attempt to break it in a clone before its canary.
 
 **Build checks:**
 
 - [x] Storm gate passed: storm persists 60 s+ after trigger ends; retry cap ends it permanently, in 5 of 5 tries.
-- [ ] Clones start healthy and inherit no hidden state (fairness test); C6 actions cannot reach production.
-- [ ] Both hero hypotheses reproduce the production fingerprint in clones; CPU starvation reproduces neither.
+- [x] Clones start healthy and inherit no hidden state (fairness test); C6 actions cannot reach production (`sandbox/scripts/validate_lab.py fairness`, 8/8).
+- [x] Both hero hypotheses reproduce the production fingerprint in clones; CPU starvation reproduces neither (`validate_lab.py storm|degraded|cpu`, 25/25; the CPU world matches on the dashboard but fails both confirmation tests, as in production).
 - [ ] Ambiguity check: nearest-centroid and passive LLM near chance on storm vs. degraded DB.
 - [ ] Full loop runs unattended from incident to report with no manual steps.
 - [ ] Every action in the audit log has a recorded undo, and a regression triggers it automatically.
-- [ ] Benchmark run completed on frozen code; numbers on slides match the run output.
+- [ ] v5 loop ran end to end on the live sandbox with real OpenAI triage (incident → triage → experiment → verdict), before clone work started.
+- [ ] Benchmark run completed on the live sandbox on frozen code; numbers on slides match the run output and say which arm and how many incidents.
+- [ ] Similar-incident search returns the right prior incident for a fresh storm and a fresh degraded-DB run.
 - [ ] Fallback video recorded; prebuilt patch works if Devin doesn't return in time.
 - [ ] Each primary sponsor's tool is visible at a named moment in the demo.
 
@@ -441,7 +466,7 @@ The biggest risk is scope; the second is a storm that won't reproduce reliably.
 
 - [ ] Confirm submission deadline and team size.
 - [ ] Check HackMIT rules on reusing open-source code; credit any reuse.
-- [ ] Verify Devin API access with event credentials.
+- [ ] Verify Devin API access with event credentials (today, before 6 pm; decided: Devin live in the demo, fallback recorded).
 - [ ] Confirm the OTel Demo runs on a team laptop, or drop it.
-- [ ] Confirm the demo machine; profile production + 2 clones on it.
-- [ ] Agree C6 (clone lab contract) between Owners 1 and 3 before building investigators.
+- [ ] Confirm the demo machine; profile production + 2 clones on it (dev MacBook: ~300 MB and ~0.2 CPU per healthy clone, fine).
+- [x] Agree C6 (clone lab contract) between Owners 1 and 3 before building investigators.

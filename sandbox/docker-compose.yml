@@ -7,6 +7,9 @@
 #   8101/8102/8103  orders/payments/loadgen GET /stats (app telemetry, for diagnostics)
 #
 # Tunables: override any ${VAR} from the shell or a .env file next to this file.
+#
+# Clones (C6): the lab manager (services/lab, :9910) starts this same file under another project
+# name (`-p faultline-clone-<slot>`) with PORT_* shifted by 1000*slot and WITHOUT faultctl.
 name: faultline-sandbox
 
 x-tunables: &tunables
@@ -56,7 +59,7 @@ services:
       <<: *tunables
       PRIMARY_DSN: postgresql://app@db-primary:5432/shop
       STANDBY_DSN: postgresql://app@db-standby:5432/shop
-    ports: ["127.0.0.1:8102:8000"]
+    ports: ["127.0.0.1:${PORT_PAYMENTS:-8102}:8000"]
     depends_on:
       db-primary: {condition: service_healthy}
       db-standby: {condition: service_healthy}
@@ -68,13 +71,13 @@ services:
       <<: *tunables
       SERVICE_VERSION: v1
       PAYMENTS_URL: http://envoy:8081/pay
-    ports: ["127.0.0.1:8101:8000"]
+    ports: ["127.0.0.1:${PORT_ORDERS:-8101}:8000"]
     depends_on: [payments]
 
   # Canary build. Off by default; Owner 4 builds it from a patched checkout:
   #   ORDERS_V2_CONTEXT=/path/to/patched/repo docker compose --profile canary up -d --build orders-v2
   orders-v2:
-    image: faultline-sandbox-orders-v2:latest
+    image: ${ORDERS_V2_IMAGE:-faultline-sandbox-orders-v2:latest}
     restart: unless-stopped
     profiles: [canary]
     build: {context: "${ORDERS_V2_CONTEXT:-..}", dockerfile: sandbox/Dockerfile}
@@ -83,7 +86,7 @@ services:
       <<: *tunables
       SERVICE_VERSION: v2
       PAYMENTS_URL: http://envoy:8081/pay
-    ports: ["127.0.0.1:8104:8000"]
+    ports: ["127.0.0.1:${PORT_ORDERS_V2:-8104}:8000"]
     depends_on: [payments]
 
   envoy:
@@ -92,7 +95,7 @@ services:
     command: [envoy, -c, /etc/envoy/envoy.yaml, --log-level, warn]
     volumes:
       - ./envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
-    ports: ["127.0.0.1:8080:8080"]
+    ports: ["127.0.0.1:${PORT_GATEWAY:-8080}:8080"]
     depends_on: [orders, payments]
 
   loadgen:
@@ -101,7 +104,7 @@ services:
     environment:
       <<: *tunables
       TARGET_URL: http://envoy:8080/checkout
-    ports: ["127.0.0.1:8103:8000"]
+    ports: ["127.0.0.1:${PORT_LOADGEN:-8103}:8000"]
     depends_on: [envoy]
 
   control:
@@ -113,7 +116,7 @@ services:
       ORDERS_V2_URL: http://orders-v2:8000
       PAYMENTS_URL: http://payments:8000
       ENVOY_ADMIN_URL: http://envoy:9902
-    ports: ["127.0.0.1:9901:8000"]
+    ports: ["127.0.0.1:${PORT_CONTROL:-9901}:8000"]
     depends_on: [envoy]
 
   faultctl:

@@ -25,7 +25,8 @@ GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://127.0.0.1:8080")
 class Sampler:
     """Snapshots /stats once per call to tick(); keeps history for window rows."""
 
-    def __init__(self, show_hidden: bool = False, out=sys.stdout) -> None:
+    def __init__(self, show_hidden: bool = False, out=sys.stdout, urls: dict[str, str] | None = None) -> None:
+        self.urls = urls or STATS_URLS  # a clone's CloneEndpoints.stats_urls works here too
         self.http = httpx.Client(timeout=5.0)
         self.hist: list[tuple[float, probe.Snap]] = []
         self.t0 = time.monotonic()
@@ -34,7 +35,7 @@ class Sampler:
         self._printed_header = 0
 
     def snapshot(self) -> probe.Snap:
-        return {name: self.http.get(f"{u}/stats").json() for name, u in STATS_URLS.items()}
+        return {name: self.http.get(f"{u}/stats").json() for name, u in self.urls.items() if name in STATS_URLS}
 
     def tick(self, label: str = "") -> dict[str, Any] | None:
         """Take a snapshot, print the 1 s row, return it."""
