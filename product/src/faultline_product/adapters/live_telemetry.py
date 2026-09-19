@@ -8,14 +8,8 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from faultline_contracts import (
-    WINDOW_S,
-    DbStats,
-    Edge,
-    Fingerprint,
-    ServiceStats,
-    SloStatus,
-)
+from faultline_contracts import WINDOW_S, Fingerprint
+from faultline_telemetry.fingerprint import fingerprint_from_stats
 
 Snapshot = dict[str, dict[str, Any]]
 
@@ -24,177 +18,28 @@ class TelemetryUnavailable(RuntimeError):
     pass
 
 
-def _delta(prev: dict, cur: dict, name: str) -> float:
-    return cur["counters"].get(name, 0.0) - prev["counters"].get(name, 0.0)
-
-
-def _hist_delta(prev: dict, cur: dict, name: str) -> list[int] | None:
-    c = cur["hists"].get(name)
-    if c is None:
-        return None
-    p = prev["hists"].get(name)
-    return [a - (p["counts"][i] if p else 0) for i, a in enumerate(c["counts"])]
-
-
-def quantile(counts: list[int] | None, buckets_ms: list[float], q: float) -> float | None:
-    if not counts:
-        return None
-    total = sum(counts)
-    if total <= 0:
-        return None
-    rank, seen = q * total, 0
-    for i, n in enumerate(counts):
-        if n and seen + n >= rank:
-            lo = buckets_ms[i - 1] if i > 0 else 0.0
-            hi = buckets_ms[i] if i < len(buckets_ms) else buckets_ms[-1] * 2
-            return lo + (hi - lo) * (rank - seen) / n
-        seen += n
-    return buckets_ms[-1] * 2
-
-
-def _ratio(a: float, b: float) -> float | None:
-    return a / b if b > 0 else None
-
-
 def _utc(timestamp: float) -> datetime:
     return datetime.fromtimestamp(timestamp, tz=timezone.utc)
 
 
-def _orders_stats(previous: dict, current: dict) -> ServiceStats:
-    requests = _delta(previous, current, "requests")
-    attempts = _delta(previous, current, "attempts")
-    errors = _delta(previous, current, "errors")
-    ok = _delta(previous, current, "ok")
-    buckets = current["buckets_ms"]
-    return ServiceStats(
-        qps=requests / max(1e-6, current["t"] - previous["t"]),
-        p50_ms=quantile(_hist_delta(previous, current, "request"), buckets, 0.50),
-        p99_ms=quantile(_hist_delta(previous, current, "request"), buckets, 0.99),
-        error_rate=_ratio(errors, ok + errors),
-        retry_ratio=_ratio(attempts, requests),
-        timeout_rate=_ratio(_delta(previous, current, "attempt_timeouts"), attempts),
-    )
-
-
-def fingerprint_from_snapshots(prev: Snapshot, cur: Snapshot) -> Fingerprint:
-    previous_orders, current_orders = prev["orders"], cur["orders"]
-    previous_payments, current_payments = prev["payments"], cur["payments"]
-    previous_loadgen, current_loadgen = prev["loadgen"], cur["loadgen"]
-    window_start = _utc(previous_orders["t"])
-    window_end = _utc(current_orders["t"])
-    dt = max(1e-6, (window_end - window_start).total_seconds())
-    orders_buckets = current_orders["buckets_ms"]
-    payments_buckets = current_payments["buckets_ms"]
-
-    loadgen_errors = _delta(previous_loadgen, current_loadgen, "errors")
-    loadgen_ok = _delta(previous_loadgen, current_loadgen, "ok")
-    gateway_p50 = quantile(
-        _hist_delta(previous_loadgen, current_loadgen, "request"),
-        orders_buckets,
-        0.50,
-    )
-    gateway_p99 = quantile(
-        _hist_delta(previous_loadgen, current_loadgen, "request"),
-        orders_buckets,
-        0.99,
-    )
-    orders_attempts = _delta(previous_orders, current_orders, "attempts")
-    payment_requests = _delta(previous_payments, current_payments, "requests")
-    db_queries_issued = _delta(previous_payments, current_payments, "db_queries_issued")
-    pool_size = current_payments["gauges"].get("pool_size")
-    pool_busy_ratio = (
-        min(
-            1.0,
-            _ratio(
-                _delta(previous_payments, current_payments, "db_busy_s"),
-                dt * pool_size,
-            ),
-        )
-        if pool_size
-        else None
-    )
-
-    gateway = ServiceStats(
-        qps=_delta(previous_loadgen, current_loadgen, "sent") / dt,
-        p50_ms=gateway_p50,
-        p99_ms=gateway_p99,
-        error_rate=_ratio(loadgen_errors, loadgen_ok + loadgen_errors),
-    )
-    orders = _orders_stats(previous_orders, current_orders)
-    payments = ServiceStats(
-        qps=payment_requests / dt,
-        p50_ms=quantile(
-            _hist_delta(previous_payments, current_payments, "request"),
-            payments_buckets,
-            0.50,
-        ),
-        p99_ms=quantile(
-            _hist_delta(previous_payments, current_payments, "request"),
-            payments_buckets,
-            0.99,
-        ),
-    )
-    db = DbStats(
-        qps=db_queries_issued / dt,
-        query_p50_ms=quantile(
-            _hist_delta(previous_payments, current_payments, "db_query"),
-            payments_buckets,
-            0.50,
-        ),
-        query_p99_ms=quantile(
-            _hist_delta(previous_payments, current_payments, "db_query"),
-            payments_buckets,
-            0.99,
-        ),
-        pool_busy_ratio=pool_busy_ratio,
-    )
-    edges = [
-        Edge(
-            src="orders",
-            dst="payments",
-            qps=orders_attempts / dt,
-            p99_ms=quantile(
-                _hist_delta(previous_orders, current_orders, "attempt"),
-                orders_buckets,
-                0.99,
-            ),
-            error_rate=_ratio(
-                _delta(previous_orders, current_orders, "attempt_timeouts")
-                + _delta(previous_orders, current_orders, "attempt_errors"),
-                orders_attempts,
-            ),
-        ),
-        Edge(
-            src="payments",
-            dst="db",
-            qps=db_queries_issued / dt,
-            p99_ms=quantile(
-                _hist_delta(previous_payments, current_payments, "db_query"),
-                payments_buckets,
-                0.99,
-            ),
-        ),
-    ]
-    slos = [
-        SloStatus(
-            name="checkout",
-            metric="svc.gateway.p99_ms",
-            threshold=1000.0,
-            value=gateway_p99,
-            breached=gateway_p99 is not None and gateway_p99 > 1000.0,
-        )
-    ]
-    services = {"gateway": gateway, "orders": orders, "payments": payments}
+def fingerprint_from_snapshots(
+    prev: Snapshot,
+    cur: Snapshot,
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> Fingerprint:
+    """Owner 2's canonical C1 builder, plus the optional orders-v2 canary service."""
+    start = start or _utc(prev["orders"]["t"])
+    end = end or _utc(cur["orders"]["t"])
+    fingerprint = fingerprint_from_stats(prev, cur, start, end)
     if "orders_v2" in prev and "orders_v2" in cur:
-        services["orders_v2"] = _orders_stats(prev["orders_v2"], cur["orders_v2"])
-    return Fingerprint(
-        window_start=window_start,
-        window_end=window_end,
-        services=services,
-        db=db,
-        edges=edges,
-        slos=slos,
-    )
+        v2 = fingerprint_from_stats(
+            {**prev, "orders": prev["orders_v2"]}, {**cur, "orders": cur["orders_v2"]}, start, end
+        )
+        fingerprint = fingerprint.model_copy(
+            update={"services": {**fingerprint.services, "orders_v2": v2.services["orders"]}}
+        )
+    return fingerprint
 
 
 def _get_json(url: str, timeout: float) -> dict:
@@ -297,8 +142,7 @@ class LiveTelemetrySource:
         if current_index is None or previous_index == current_index:
             raise ValueError(f"no telemetry covering [{start}, {end})")
         return fingerprint_from_snapshots(
-            entries[previous_index][1],
-            entries[current_index][1],
+            entries[previous_index][1], entries[current_index][1], start, end
         )
 
     def series(

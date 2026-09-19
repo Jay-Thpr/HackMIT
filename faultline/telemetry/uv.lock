@@ -45,7 +45,7 @@ wheels = [
 [[package]]
 name = "faultline-contracts"
 version = "0.1.0"
-source = { directory = "../../contracts" }
+source = { editable = "../../contracts" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
@@ -76,7 +76,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "faultline-contracts", directory = "../../contracts" },
+    { name = "faultline-contracts", editable = "../../contracts" },
     { name = "httpx", specifier = ">=0.27" },
 ]
 

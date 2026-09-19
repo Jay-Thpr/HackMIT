@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "faultline-brain",
     "faultline-contracts",
+    "faultline-telemetry",
 ]
 
 [project.scripts]
@@ -29,6 +30,7 @@ packages = ["src/faultline_product"]
 [tool.uv.sources]
 faultline-contracts = { path = "../contracts", editable = true }
 faultline-brain = { path = "../faultline/brain", editable = true }
+faultline-telemetry = { path = "../faultline/telemetry", editable = true }
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "../contracts/src"]

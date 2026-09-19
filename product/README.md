@@ -36,6 +36,11 @@ the measured Brain planner/judge and refuses fixture evidence. The canary checko
 as orders-v2 before traffic shifts; if it cannot be prepared or measured, the run is reported
 as escalated rather than successful.
 
+Live `/stats` → C1 fingerprints are built by Owner 2's canonical
+`faultline_telemetry.fingerprint.fingerprint_from_stats` (missing data stays `None`, fixed
+window boundaries); Product only adds the polling loop, breach wait, and the optional
+`orders_v2` canary service on top, so the judge's baselines match what lands in Elasticsearch.
+
 Runtime orchestration depends on the shared `LeverAdapter`, `TelemetrySource`, and
 `AuditSink` contracts. Owner 2's live telemetry/Elasticsearch sink and Owner 4's
 TTL-backed sandbox adapter can replace the fixture implementations without changing

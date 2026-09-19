@@ -153,6 +153,21 @@ def test_empty_histograms_and_missing_pool_are_none():
     assert fingerprint.db.pool_busy_ratio is None
 
 
+def test_fingerprint_matches_owner2_builder_and_omits_missing_counters():
+    from faultline_telemetry.fingerprint import fingerprint_from_stats
+
+    previous, current = _snapshot(0), _snapshot(5)
+    start, end = datetime.fromtimestamp(0, timezone.utc), datetime.fromtimestamp(5, timezone.utc)
+    assert fingerprint_from_snapshots(previous, current, start, end) == fingerprint_from_stats(
+        previous, current, start, end
+    )
+
+    del previous["orders"]["counters"]["attempts"], current["orders"]["counters"]["attempts"]
+    fingerprint = fingerprint_from_snapshots(previous, current)
+    assert fingerprint.services["orders"].retry_ratio is None
+    assert "svc.orders.retry_ratio" not in fingerprint.metrics()
+
+
 def test_window_and_series_use_snapshot_pairs():
     snapshots = [_snapshot(0), _snapshot(5), _snapshot(10)]
     source = _source(snapshots)

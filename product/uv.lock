@@ -89,6 +89,7 @@ source = { editable = "." }
 dependencies = [
     { name = "faultline-brain" },
     { name = "faultline-contracts" },
+    { name = "faultline-telemetry" },
 ]
 
 [package.optional-dependencies]
@@ -105,9 +106,28 @@ dev = [
 requires-dist = [
     { name = "faultline-brain", editable = "../faultline/brain" },
     { name = "faultline-contracts", editable = "../contracts" },
+    { name = "faultline-telemetry", editable = "../faultline/telemetry" },
     { name = "openai", marker = "extra == 'llm'", specifier = "==3.13.0" },
 ]
 provides-extras = ["llm"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8" }]
+
+[[package]]
+name = "faultline-telemetry"
+version = "0.1.0"
+source = { editable = "../faultline/telemetry" }
+dependencies = [
+    { name = "faultline-contracts" },
+    { name = "httpx" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "faultline-contracts", editable = "../contracts" },
+    { name = "httpx", specifier = ">=0.27" },
+]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8" }]
