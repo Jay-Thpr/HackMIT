@@ -5,7 +5,9 @@ from pathlib import Path
 
 from faultline_contracts import Experiment, TriageResult
 from faultline_contracts.fakes import FakeWorld
-from faultline_contracts.fault import DegradeDbFault, StormFault
+import pytest
+
+from faultline_contracts.fault import CpuStarveFault, DegradeDbFault, StormFault
 
 from faultline_bench import run_hero_case
 
@@ -28,13 +30,25 @@ def test_active_loop_confirms_the_storm_with_zero_blast_retry_cap():
     assert result.blast_radius_pct == 0.0
 
 
-def test_retry_cap_alone_refuses_an_unconfirmed_reduced_db_diagnosis():
+@pytest.mark.parametrize("seed", [1, 2, 3])
+def test_retry_cap_confirms_reduced_db_because_db_stays_slow_under_reduced_load(seed):
     triage, candidates = inputs()
-    result = run_hero_case(FakeWorld(seed=2), lambda world: world.degrade_db(DegradeDbFault()), triage, candidates)
+    result = run_hero_case(FakeWorld(seed=seed), lambda world: world.degrade_db(DegradeDbFault()), triage, candidates)
 
     assert result.selected_experiment_id == "retry_cap_0_20s"
-    # The retry-cap response rules out the storm but does not itself satisfy
-    # the simulator's full DB confirmation path. C2 must not overclaim; the
-    # orchestrator can schedule db_failover as the next experiment.
+    # H_db's confirmation is a positive test: DB query time stays high while the cap
+    # holds load at 80/s, which neither the storm nor CPU starvation reproduces.
+    assert result.diagnosis == "H_db"
+    assert result.confirmed is True
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3])
+def test_cpu_starvation_fits_neither_hypothesis(seed):
+    """None-of-the-above: the DB recovers as soon as load drops, so H_db's positive test fails,
+    and the incident returns after release, so H_meta's fails too. Confirmation, not elimination."""
+    triage, candidates = inputs()
+    result = run_hero_case(FakeWorld(seed=seed), lambda world: world.cpu_starve(CpuStarveFault()), triage, candidates)
+
+    assert result.selected_experiment_id == "retry_cap_0_20s"
     assert result.diagnosis == "none_of_the_above"
     assert result.confirmed is False

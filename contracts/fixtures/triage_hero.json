@@ -85,9 +85,9 @@
         }
       ],
       "confirms_if": {
-        "phase": "after_release",
-        "metric": "svc.orders.retry_ratio",
-        "expect": "up"
+        "phase": "during",
+        "metric": "db.query_p50_ms",
+        "expect": "flat"
       }
     },
     {
