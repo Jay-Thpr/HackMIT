@@ -30,6 +30,10 @@ clone not ready), 503 the clone could not reach a healthy baseline. Every lab ac
 ttl_s and the clone reverts it on its own when it expires.
 """
 
+# CloneLab.list() shadows the builtin inside the class body; deferred annotations keep
+# `-> list[LabActionHandle]` importable on Python < 3.14.
+from __future__ import annotations
+
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Protocol, runtime_checkable

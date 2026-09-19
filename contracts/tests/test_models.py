@@ -170,6 +170,23 @@ def test_standard_blast_radius():
     assert exps == {"retry_cap_0_20s": 0.0, "shed_10_20s": 10.0, "shed_50_20s": 50.0, "db_failover_30s": 1.0}
 
 
+def test_package_imports_on_minimum_python():
+    """requires-python is >=3.11, which evaluates annotations eagerly (3.14 defers them and hides
+    shadowing bugs such as CloneLab.list vs `-> list[...]`)."""
+    import shutil
+    import subprocess
+    import sys
+
+    if sys.version_info < (3, 14):
+        return  # this interpreter already exercises eager annotations
+    if shutil.which("uv") is None:
+        pytest.skip("uv not available")
+    r = subprocess.run(["uv", "run", "--python", "3.11", "--isolated", "--with-editable", str(ROOT), "python", "-c",
+                        "import faultline_contracts, faultline_contracts.fault, faultline_contracts.fakes"],
+                       capture_output=True, text=True, cwd=ROOT)
+    assert r.returncode == 0, r.stderr[-2000:]
+
+
 def test_clone_lab_contract():
     assert len(LAB_CATALOG) == 6 and LAB_ACTION_IDS == {a.id for a in LAB_CATALOG}
     assert MAX_CLONES == 3
