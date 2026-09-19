@@ -2,7 +2,12 @@ import pytest
 
 from faultline_contracts import EventKind, Experiment, JsonlSink, Stage
 
-from faultline_product.adapters import FixtureBrain, FixtureClock, FixtureDevinAdapter, FixtureLeverAdapter
+from faultline_product.adapters import (
+    FixtureBrain,
+    FixtureClock,
+    FixtureDevinAdapter,
+    FixtureLeverAdapter,
+)
 from faultline_product.fixtures import load_fixture
 from faultline_product.orchestrator import BudgetExceeded, Orchestrator
 from faultline_product.renderer import TerminalRenderer
@@ -11,7 +16,9 @@ from faultline_product.renderer import TerminalRenderer
 def _orchestrator(tmp_path, *, experiment=None, telemetry=None, budget=5):
     bundle = load_fixture("storm")
     telemetry = telemetry or bundle.telemetry
-    clock = FixtureClock(bundle.telemetry.first_breach().window_end, bundle.telemetry.last_window_end)
+    clock = FixtureClock(
+        bundle.telemetry.first_breach().window_end, bundle.telemetry.last_window_end
+    )
     brain = FixtureBrain(bundle.triage, experiment or bundle.experiment, bundle.verdict)
     audit = JsonlSink(tmp_path / "audit.jsonl")
     return (
@@ -74,5 +81,7 @@ def test_canary_regression_auto_undoes_and_refuses(tmp_path):
     orchestrator, audit, _ = _orchestrator(tmp_path, telemetry=BreachedTelemetry(bundle.telemetry))
     orchestrator.run("regression", bundle.telemetry.first_breach().window_end)
     events = audit.query("regression")
-    assert any(event.kind == EventKind.action_undo and event.stage == Stage.canary for event in events)
+    assert any(
+        event.kind == EventKind.action_undo and event.stage == Stage.canary for event in events
+    )
     assert any(event.kind == EventKind.refused and event.stage == Stage.canary for event in events)

@@ -1,6 +1,18 @@
-from faultline_contracts import EventKind, JsonlSink, LeverAdapter, TelemetrySource, Stage, experiment_windows
+from faultline_contracts import (
+    EventKind,
+    JsonlSink,
+    LeverAdapter,
+    TelemetrySource,
+    Stage,
+    experiment_windows,
+)
 
-from faultline_product.adapters import FixtureBrain, FixtureClock, FixtureDevinAdapter, FixtureLeverAdapter
+from faultline_product.adapters import (
+    FixtureBrain,
+    FixtureClock,
+    FixtureDevinAdapter,
+    FixtureLeverAdapter,
+)
 from faultline_product.cli import main
 from faultline_product.fixtures import load_fixture
 from faultline_product.orchestrator import Orchestrator
@@ -62,7 +74,15 @@ def test_storm_flow_uses_contract_boundaries(tmp_path):
 def test_report_is_rebuilt_from_audit_log(tmp_path, capsys):
     audit_path = tmp_path / "audit.jsonl"
     exit_code = main(
-        ["--audit-log", str(audit_path), "watch", "--fixture", "storm", "--incident", "demo-storm-001"]
+        [
+            "--audit-log",
+            str(audit_path),
+            "watch",
+            "--fixture",
+            "storm",
+            "--incident",
+            "demo-storm-001",
+        ]
     )
     assert exit_code == 0
 
@@ -85,5 +105,18 @@ def test_investigate_and_experiment_commands(tmp_path, capsys):
     audit = tmp_path / "audit.jsonl"
     assert main(["--audit-log", str(audit), "investigate", "--incident", "investigate"]) == 0
     assert "Experiment: retry_cap_0_20s" in capsys.readouterr().out
-    assert main(["--audit-log", str(audit), "experiment", "--id", "retry_cap_0_20s", "--incident", "experiment"]) == 0
+    assert (
+        main(
+            [
+                "--audit-log",
+                str(audit),
+                "experiment",
+                "--id",
+                "retry_cap_0_20s",
+                "--incident",
+                "experiment",
+            ]
+        )
+        == 0
+    )
     assert "Capping retries" in capsys.readouterr().out

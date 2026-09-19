@@ -14,7 +14,9 @@ def render_report(audit: AuditSink, incident_id: str) -> str:
         f"Patch: {patch}",
         "Timeline:",
     ]
-    lines.extend(f"  {event.ts.isoformat()}  {event.kind.value:<18} {event.summary}" for event in events)
+    lines.extend(
+        f"  {event.ts.isoformat()}  {event.kind.value:<18} {event.summary}" for event in events
+    )
     return "\n".join(lines)
 
 

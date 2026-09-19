@@ -8,6 +8,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 RUNTIME_DIR = ROOT / "src"
 
+
 def _imports_fault(tree: ast.AST) -> list[str]:
     hits = []
     for node in ast.walk(tree):
@@ -19,15 +20,20 @@ def _imports_fault(tree: ast.AST) -> list[str]:
                 mod == "faultline_contracts" and any(a.name == "fault" for a in node.names)
             ):
                 hits.append(mod)
-            if node.level > 0 and (mod == "fault" or mod.startswith("fault.") or (
-                mod == "" and any(a.name == "fault" for a in node.names)
-            )):
+            if node.level > 0 and (
+                mod == "fault"
+                or mod.startswith("fault.")
+                or (mod == "" and any(a.name == "fault" for a in node.names))
+            ):
                 hits.append("." * node.level + mod)
     return hits
 
+
 def _imports_fakes(tree: ast.AST) -> bool:
     for node in ast.walk(tree):
-        if isinstance(node, ast.Import) and any(a.name.startswith("faultline_contracts.fakes") for a in node.names):
+        if isinstance(node, ast.Import) and any(
+            a.name.startswith("faultline_contracts.fakes") for a in node.names
+        ):
             return True
         if isinstance(node, ast.ImportFrom):
             mod = node.module or ""
@@ -36,6 +42,7 @@ def _imports_fakes(tree: ast.AST) -> bool:
             ):
                 return True
     return False
+
 
 def test_product_runtime_does_not_import_hidden_fault_controller_or_fakes():
     bad_fault = {}
@@ -51,6 +58,7 @@ def test_product_runtime_does_not_import_hidden_fault_controller_or_fakes():
             bad_fakes.append(str(py))
     assert not bad_fault, bad_fault
     assert not bad_fakes, bad_fakes
+
 
 def test_detector_itself():
     assert _imports_fakes(ast.parse("from faultline_contracts.fakes import FakeWorld"))

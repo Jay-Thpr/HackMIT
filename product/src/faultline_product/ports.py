@@ -35,4 +35,6 @@ class Brain(Protocol):
 
 @runtime_checkable
 class PatchAdapter(Protocol):
-    def propose(self, incident_id: str, verdict: Verdict, triage: TriageResult) -> PatchProposal: ...
+    def propose(
+        self, incident_id: str, verdict: Verdict, triage: TriageResult
+    ) -> PatchProposal: ...

@@ -22,7 +22,9 @@ def load_fixture(name: str, root: Path = CONTRACT_FIXTURES) -> FixtureBundle:
 
     triage = TriageResult.model_validate(_read_json(root / "triage_hero.json"))
     verdict = Verdict.model_validate(_read_json(root / "verdict_storm.json"))
-    experiments = [Experiment.model_validate(item) for item in _read_json(root / "experiments.json")]
+    experiments = [
+        Experiment.model_validate(item) for item in _read_json(root / "experiments.json")
+    ]
     experiment = next(item for item in experiments if item.id == "retry_cap_0_20s")
     fingerprints = [
         Fingerprint.model_validate(item)

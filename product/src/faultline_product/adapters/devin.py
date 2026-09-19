@@ -10,7 +10,9 @@ from faultline_contracts import TriageResult, Verdict
 from ..ports import PatchProposal
 
 
-def _http_request(method: str, url: str, *, headers: dict[str, str], data: bytes | None = None) -> tuple[int, dict]:
+def _http_request(
+    method: str, url: str, *, headers: dict[str, str], data: bytes | None = None
+) -> tuple[int, dict]:
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(request) as response:
@@ -69,7 +71,9 @@ class DevinAdapter:
                     return self._api_error(status)
                 pull_request = session.get("pull_request")
                 if pull_request and pull_request.get("url"):
-                    return PatchProposal("devin", pull_request["url"], f"Devin session {session_id}")
+                    return PatchProposal(
+                        "devin", pull_request["url"], f"Devin session {session_id}"
+                    )
                 if session.get("status_enum") in {"finished", "expired", "blocked"}:
                     return self._fallback_with_session(session_url)
                 if time.monotonic() >= deadline:
@@ -78,7 +82,9 @@ class DevinAdapter:
         except Exception:
             return self._fallback_with_summary("devin api error: request failed")
 
-    def _call(self, method: str, url: str, headers: dict[str, str], payload: dict | None) -> tuple[int, dict]:
+    def _call(
+        self, method: str, url: str, headers: dict[str, str], payload: dict | None
+    ) -> tuple[int, dict]:
         data = json.dumps(payload).encode() if payload is not None else None
         result = self._http(method, url, headers=headers, data=data)
         if isinstance(result, tuple) and len(result) == 2:
@@ -86,7 +92,9 @@ class DevinAdapter:
         return 200, result
 
     def _prompt(self, incident_id: str, verdict: Verdict, triage: TriageResult) -> str:
-        hypothesis = next((item for item in triage.hypotheses if item.id == verdict.diagnosis), None)
+        hypothesis = next(
+            (item for item in triage.hypotheses if item.id == verdict.diagnosis), None
+        )
         label = hypothesis.label if hypothesis else verdict.diagnosis
         description = hypothesis.description if hypothesis else ""
         observations = "\n".join(
@@ -105,7 +113,9 @@ class DevinAdapter:
         return self._fallback_with_summary(f"devin api error: {status}")
 
     def _fallback_with_session(self, session_url: str) -> PatchProposal:
-        return self._fallback_with_summary(f"{self._fallback.summary}; Devin session: {session_url}")
+        return self._fallback_with_summary(
+            f"{self._fallback.summary}; Devin session: {session_url}"
+        )
 
     def _fallback_with_summary(self, summary: str) -> PatchProposal:
         return PatchProposal("fallback", self._fallback.reference, summary)

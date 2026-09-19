@@ -18,6 +18,7 @@ from faultline_contracts import (
     utcnow,
 )
 
+
 class FixtureClock:
     def __init__(self, now: datetime, limit: datetime | None = None):
         self.now = now

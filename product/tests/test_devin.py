@@ -25,9 +25,9 @@ def test_pr_appears_on_second_poll():
         del method, url, kwargs
         return responses.pop(0)
 
-    result = DevinAdapter("key", "repo", _fallback(), poll_s=0, sleep=lambda _: None, http=http).propose(
-        "i", bundle.verdict, bundle.triage
-    )
+    result = DevinAdapter(
+        "key", "repo", _fallback(), poll_s=0, sleep=lambda _: None, http=http
+    ).propose("i", bundle.verdict, bundle.triage)
     assert result.provider == "devin"
     assert result.reference == "https://github/pr/1"
 
@@ -43,7 +43,9 @@ def test_finished_without_pr_mentions_session_url():
         del method, url, kwargs
         return responses.pop(0)
 
-    result = DevinAdapter("key", "repo", _fallback(), http=http).propose("i", bundle.verdict, bundle.triage)
+    result = DevinAdapter("key", "repo", _fallback(), http=http).propose(
+        "i", bundle.verdict, bundle.triage
+    )
     assert result.provider == "fallback"
     assert "https://devin/session/1" in result.summary
 

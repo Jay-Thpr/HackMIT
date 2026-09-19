@@ -6,7 +6,13 @@ from pathlib import Path
 
 from faultline_contracts import JsonlSink
 
-from .adapters import DevinAdapter, FixtureBrain, FixtureClock, FixtureDevinAdapter, FixtureLeverAdapter
+from .adapters import (
+    DevinAdapter,
+    FixtureBrain,
+    FixtureClock,
+    FixtureDevinAdapter,
+    FixtureLeverAdapter,
+)
 from .fixtures import load_fixture
 from .orchestrator import Orchestrator
 from .paths import DEFAULT_AUDIT_LOG
