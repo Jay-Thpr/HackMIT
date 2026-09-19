@@ -1,0 +1,43 @@
+{
+  "clone_id": "clone-1",
+  "status": "ready",
+  "spec": {
+    "name": "h_meta",
+    "versions": {
+      "orders": "v1",
+      "payments": "v1"
+    },
+    "retry_policy": {
+      "max_retries": 3,
+      "timeout_ms": 500
+    },
+    "workload": {
+      "rps": 80.0
+    },
+    "patch_ref": null
+  },
+  "created_at": "2026-09-19T15:01:45Z",
+  "endpoints": {
+    "gateway_url": "http://localhost:18080",
+    "control_url": "http://localhost:19901",
+    "stats_urls": {
+      "orders": "http://localhost:18101",
+      "payments": "http://localhost:18102",
+      "loadgen": "http://localhost:18103"
+    }
+  },
+  "active_actions": [
+    {
+      "action_id": "lab-001",
+      "clone_id": "clone-1",
+      "action": "db_latency",
+      "params": {
+        "extra_ms": 800
+      },
+      "applied_at": "2026-09-19T15:02:15Z",
+      "ttl_s": 20,
+      "status": "active"
+    }
+  ],
+  "detail": null
+}

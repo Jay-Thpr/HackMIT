@@ -1,0 +1,231 @@
+{
+  "$defs": {
+    "ActionStatus": {
+      "enum": [
+        "active",
+        "undone",
+        "expired",
+        "failed"
+      ],
+      "title": "ActionStatus",
+      "type": "string"
+    },
+    "CloneEndpoints": {
+      "additionalProperties": false,
+      "description": "Same surfaces as production, so the C1 and C3 adapters work unchanged against a clone.",
+      "properties": {
+        "control_url": {
+          "title": "Control Url",
+          "type": "string"
+        },
+        "gateway_url": {
+          "title": "Gateway Url",
+          "type": "string"
+        },
+        "stats_urls": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Stats Urls",
+          "type": "object"
+        }
+      },
+      "required": [
+        "gateway_url",
+        "control_url",
+        "stats_urls"
+      ],
+      "title": "CloneEndpoints",
+      "type": "object"
+    },
+    "CloneSpec": {
+      "additionalProperties": false,
+      "description": "What a clone inherits: only what Faultline may legitimately know about production.",
+      "properties": {
+        "name": {
+          "pattern": "^[a-z0-9_-]{1,32}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "patch_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Patch Ref"
+        },
+        "retry_policy": {
+          "$ref": "#/$defs/RetryPolicy"
+        },
+        "versions": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Versions",
+          "type": "object"
+        },
+        "workload": {
+          "$ref": "#/$defs/WorkloadSpec"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "CloneSpec",
+      "type": "object"
+    },
+    "CloneStatus": {
+      "enum": [
+        "creating",
+        "ready",
+        "resetting",
+        "destroyed",
+        "failed"
+      ],
+      "title": "CloneStatus",
+      "type": "string"
+    },
+    "LabActionHandle": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "title": "Action",
+          "type": "string"
+        },
+        "action_id": {
+          "title": "Action Id",
+          "type": "string"
+        },
+        "applied_at": {
+          "format": "date-time",
+          "title": "Applied At",
+          "type": "string"
+        },
+        "clone_id": {
+          "title": "Clone Id",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": true,
+          "title": "Params",
+          "type": "object"
+        },
+        "status": {
+          "$ref": "#/$defs/ActionStatus",
+          "default": "active"
+        },
+        "ttl_s": {
+          "title": "Ttl S",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "action_id",
+        "clone_id",
+        "action",
+        "params",
+        "ttl_s"
+      ],
+      "title": "LabActionHandle",
+      "type": "object"
+    },
+    "RetryPolicy": {
+      "additionalProperties": false,
+      "description": "Orders' call policy towards Payments \u2014 observable production config.",
+      "properties": {
+        "max_retries": {
+          "default": 3,
+          "maximum": 5,
+          "minimum": 0,
+          "title": "Max Retries",
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "default": 500,
+          "maximum": 10000,
+          "minimum": 50,
+          "title": "Timeout Ms",
+          "type": "integer"
+        }
+      },
+      "title": "RetryPolicy",
+      "type": "object"
+    },
+    "WorkloadSpec": {
+      "additionalProperties": false,
+      "description": "Open-loop request rate to replay into a clone (reconstructed from observed production load).",
+      "properties": {
+        "rps": {
+          "default": 80.0,
+          "exclusiveMinimum": 0,
+          "maximum": 1000,
+          "title": "Rps",
+          "type": "number"
+        }
+      },
+      "title": "WorkloadSpec",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "active_actions": {
+      "items": {
+        "$ref": "#/$defs/LabActionHandle"
+      },
+      "title": "Active Actions",
+      "type": "array"
+    },
+    "clone_id": {
+      "title": "Clone Id",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "detail": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Detail"
+    },
+    "endpoints": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CloneEndpoints"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "spec": {
+      "$ref": "#/$defs/CloneSpec"
+    },
+    "status": {
+      "$ref": "#/$defs/CloneStatus"
+    }
+  },
+  "required": [
+    "clone_id",
+    "status",
+    "spec",
+    "created_at"
+  ],
+  "title": "CloneInfo",
+  "type": "object"
+}

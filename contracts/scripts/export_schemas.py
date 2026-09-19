@@ -6,11 +6,26 @@ Run: uv run python scripts/export_schemas.py
 import json
 from pathlib import Path
 
-from faultline_contracts import ActionHandle, AuditEvent, Experiment, Fingerprint, LeverSpec, TriageDraft, TriageResult, Verdict
+from faultline_contracts import (
+    ActionHandle,
+    AuditEvent,
+    CloneInfo,
+    CloneSpec,
+    Experiment,
+    Fingerprint,
+    LabActionHandle,
+    LabActionRequest,
+    LabActionSpec,
+    LeverSpec,
+    TriageDraft,
+    TriageResult,
+    Verdict,
+)
 from faultline_contracts.fault import CpuStarveFault, DegradeDbFault, FaultState, StormFault
 
 MODELS = [Fingerprint, TriageDraft, TriageResult, Verdict, LeverSpec, Experiment, ActionHandle, AuditEvent,
-          FaultState, StormFault, DegradeDbFault, CpuStarveFault]
+          FaultState, StormFault, DegradeDbFault, CpuStarveFault,
+          CloneSpec, CloneInfo, LabActionSpec, LabActionRequest, LabActionHandle]
 OUT = Path(__file__).resolve().parent.parent / "schema"
 
 
