@@ -15,6 +15,7 @@ from faultline_product.adapters import (
     LiveBrain,
     build_live_brain,
 )
+from faultline_product.adapters.brain import INCIDENT_STEADY_WINDOWS, _baselines
 from faultline_product.cli import main
 from faultline_product.fixtures import load_fixture
 
@@ -83,7 +84,7 @@ def test_judge_matches_storm_fixture():
     verdict = LiveBrain([]).judge(
         triage,
         Experiment.model_validate(json.loads((FIXTURES / "experiments.json").read_text())[0]),
-        baseline,
+        [*baseline, *incident],
         during,
         after_release,
     )
@@ -109,6 +110,31 @@ def test_judge_empty_during_returns_none_of_the_above():
     assert verdict.diagnosis == NONE_OF_THE_ABOVE
     assert verdict.confirmed is False
     assert verdict.summary == "insufficient telemetry: no during/after-release windows"
+
+
+def test_judge_refuses_to_confirm_without_true_healthy_baseline():
+    triage, series, _baseline, incident, during, after_release, _windows = _storm_inputs()
+
+    verdict = LiveBrain([]).judge(
+        triage,
+        Experiment.model_validate(json.loads((FIXTURES / "experiments.json").read_text())[0]),
+        incident,
+        during,
+        after_release,
+    )
+
+    assert verdict.diagnosis == NONE_OF_THE_ABOVE
+    assert verdict.confirmed is False
+    assert verdict.summary == "insufficient telemetry: no healthy baseline windows"
+
+
+def test_incident_baseline_uses_only_the_stable_breached_tail():
+    _triage, series, healthy, incident, _during, _after_release, _windows = _storm_inputs()
+
+    selected_healthy, selected_incident = _baselines([*healthy, *incident])
+
+    assert selected_healthy == healthy
+    assert selected_incident == incident[-INCIDENT_STEADY_WINDOWS:]
 
 
 class _Response:

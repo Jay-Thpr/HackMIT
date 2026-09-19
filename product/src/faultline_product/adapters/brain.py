@@ -19,6 +19,8 @@ from faultline_contracts import (
 )
 from faultline_contracts.triage import NONE_OF_THE_ABOVE
 
+INCIDENT_STEADY_WINDOWS = 6
+
 
 class LiveBrain:
     """Product-side Brain: OpenAI proposes (run_triage), math decides (plan_experiment, judge)."""
@@ -131,12 +133,25 @@ class LiveBrain:
             start=during[0].window_start,
             release=after_release[0].window_start,
         )
-        healthy = [fp for fp in baseline if not any(slo.breached for slo in fp.slos)]
-        incident = [fp for fp in baseline if any(slo.breached for slo in fp.slos)]
+        healthy, incident = _baselines(baseline)
         if not healthy:
-            healthy = list(baseline)
+            return Verdict(
+                incident_id=triage.incident_id,
+                diagnosis=NONE_OF_THE_ABOVE,
+                confirmed=False,
+                support=[],
+                observations=[],
+                summary="insufficient telemetry: no healthy baseline windows",
+            )
         if not incident:
-            incident = list(baseline[-3:])
+            return Verdict(
+                incident_id=triage.incident_id,
+                diagnosis=NONE_OF_THE_ABOVE,
+                confirmed=False,
+                support=[],
+                observations=[],
+                summary="insufficient telemetry: no breached incident baseline windows",
+            )
         return judge(
             triage,
             ordered_series,
@@ -144,6 +159,20 @@ class LiveBrain:
             NoiseModel.from_windows(healthy),
             NoiseModel.from_windows(incident),
         )
+
+
+def _baselines(baseline: list[Fingerprint]) -> tuple[list[Fingerprint], list[Fingerprint]]:
+    """Split C1 history into true healthy windows and a steady incident tail.
+
+    The breach ignition ramp is not measurement noise. Including it in the
+    incident standard deviation lets a large experiment response appear flat,
+    so the judge receives only the latest six breached windows (30 seconds).
+    Healthy evidence is never substituted with incident telemetry: without it,
+    an after-release ``within_baseline`` confirmation is undefined.
+    """
+    healthy = [fp for fp in baseline if not any(slo.breached for slo in fp.slos)]
+    breached = [fp for fp in baseline if any(slo.breached for slo in fp.slos)]
+    return healthy, breached[-INCIDENT_STEADY_WINDOWS:]
 
 
 def build_live_brain(

@@ -35,6 +35,10 @@ class LabExperiment:
     observe_after_s: float = 0.0
     recovery_wait_s: float = 0.0
 
+    def recipe(self) -> dict:
+        """C6 patch-verifier recipe built from an investigator's measured action."""
+        return {"action": self.action, "params": dict(self.params), "ttl_s": self.ttl_s}
+
 
 @dataclass(frozen=True)
 class SimilarityEvidence:

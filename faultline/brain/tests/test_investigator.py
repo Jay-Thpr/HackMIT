@@ -87,6 +87,9 @@ def test_investigator_reproduces_recovers_and_cleans_up_clone():
     assert evidence.recovery.recovered is True
     assert evidence.survives_falsification is True
     assert waits == [30, 5]
+    assert evidence.reproduction.action.recipe() == {
+        "action": "db_latency", "params": {"extra_ms": 800}, "ttl_s": 20
+    }
     assert lab.events == ["create", "apply:db_latency", "undo:db_latency", "reset:clone-a", "destroy:clone-a"]
 
 

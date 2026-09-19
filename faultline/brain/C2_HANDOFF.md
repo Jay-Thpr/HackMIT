@@ -14,6 +14,9 @@
   measured C2 prediction scoring, and guaranteed lab-action/clone cleanup.
 - Production confirmation follow-up: an unconfirmed diagnostic probe can select
   the gentlest untried positive confirmation experiment for its leading cause.
+- Live baseline hardening: incident noise uses the steady 30-second breached
+  tail, and the judge refuses an after-release confirmation with no true healthy
+  baseline windows.
 
 ## Interfaces C2 consumes
 
