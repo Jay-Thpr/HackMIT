@@ -168,6 +168,33 @@ def test_fingerprint_matches_owner2_builder_and_omits_missing_counters():
     assert "svc.orders.retry_ratio" not in fingerprint.metrics()
 
 
+class RecordingWriter:
+    def __init__(self):
+        self.writes = []
+
+    def write(self, fingerprint, *, incident_id=None, clone_id=None):
+        self.writes.append((fingerprint, incident_id, clone_id))
+
+
+def test_live_source_persists_each_window_once_with_incident_metadata():
+    writer = RecordingWriter()
+    source = LiveTelemetrySource(
+        orders_url="http://orders",
+        payments_url="http://payments",
+        loadgen_url="http://loadgen",
+        http=_scripted_http([_snapshot(0), _snapshot(5)]),
+        writer=writer,
+        incident_id="incident-7",
+    )
+    source.snapshot()
+    source.snapshot()
+    start = datetime.fromtimestamp(0, timezone.utc)
+    end = datetime.fromtimestamp(5, timezone.utc)
+    assert source.window(start, end).window_start == start
+    assert source.window(start, end).window_start == start
+    assert [(item[1], item[2]) for item in writer.writes] == [("incident-7", None)]
+
+
 def test_window_and_series_use_snapshot_pairs():
     snapshots = [_snapshot(0), _snapshot(5), _snapshot(10)]
     source = _source(snapshots)
