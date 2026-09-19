@@ -1,0 +1,12 @@
+[project]
+name = "faultline-brain"
+version = "0.1.0"
+description = "Evidence-based triage, planning and judging for Faultline"
+requires-python = ">=3.11"
+dependencies = ["faultline-contracts"]
+
+[tool.uv.sources]
+faultline-contracts = { path = "../../contracts", editable = true }
+
+[dependency-groups]
+dev = ["pytest>=8"]
