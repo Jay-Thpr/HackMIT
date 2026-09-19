@@ -217,6 +217,21 @@ Exactly `contracts/README.md` § C6; `HttpCloneLab("http://localhost:9910")`. Me
 * **Reproduction recipes** the hero hypotheses map to: H_meta → `db_latency 800, ttl 20` then wait ≥ 10 s;
   H_db → `db_capacity 40`; none-of-the-above control → `cpu_limit payments 0.1`. Whether and when to use them is
   the investigators' call.
+* **Benchmark cells (measured in a clone, `scripts/sweep_lab.py sweep`; the same knobs the production fault
+  controller moves, so they transfer to C5 `storm`/`degrade_db` at the same `rps`).** Every cell reset cleanly (19/19).
+
+  | Load (rps) | World A: `db_latency` 400 or 800 ms × 10 or 20 s | World B: `db_capacity` 30 / 40 / 50 / 60 |
+  |---|---|---|
+  | 60 | valid: ignites, cap heals, stays healed (all 4 cells) | valid: incident at 4×, cap does not heal (30, 40, 60) |
+  | 80 | valid (all 4 cells) | valid (30, 40, 50, 60) |
+  | 100 | **not World A**: ignites but the cap does *not* heal (R ≈ μ, no headroom); reset 22–94 s | not measured |
+
+  Use `rps ≤ 80` for World A; `rps = 100` looks like a storm but behaves like World B, so it belongs in the
+  none-of-the-above/overload bucket if used at all. Reset after a valid cell: 7.8–8.8 s (storm), 9.8–13.8 s (degraded).
+* **Consumer paths verified (`sweep_lab.py concurrent|verify`):** two clones created at once → both ready in ~9 s wall,
+  distinct slots, both reproduce their world while the other runs, concurrent resets 12–13 s. The `LabPatchVerifier`
+  sequence (`patch_ref` clone → clone `canary_weight 1.0` → `db_latency 800/20` → `destroy` without `reset`) works: v2
+  takes 100 % of traffic, the storm reproduces on it, destroy leaves no containers.
 * **Patch verification:** `CloneSpec(patch_ref=<checkout root with sandbox/services/orders/app.py patched>)`
   builds orders-v2 in the clone; then `canary_weight 1.0` via the clone's control sends it all traffic and the
   reproduction recipes above are the stress variants.

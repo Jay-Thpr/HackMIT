@@ -171,4 +171,5 @@ services/faultctl    :9900 hidden faults + reset            services/common    s
 services/lab         :9910 clone manager (C6, host process) clone.override.yml clone-only network settings
 scripts/diag.py      live diagnostics                       scripts/validate.py scripted checks
 scripts/validate_lab.py  clone lab checks (fairness, api, storm, degraded, cpu)
+scripts/sweep_lab.py     benchmark cell sweep (rps × trigger), concurrent clones, LabPatchVerifier path
 ```
