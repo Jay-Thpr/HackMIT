@@ -1,3 +1,4 @@
+import http.client
 import json
 import urllib.error
 import urllib.request
@@ -47,7 +48,7 @@ def _http_request(
     except urllib.error.HTTPError as error:
         body = error.read()
         return error.code, json.loads(body) if body else {}
-    except urllib.error.URLError as error:
+    except (OSError, http.client.HTTPException) as error:  # URLError, timeouts, resets
         raise LeverError(f"control service unreachable at {url}: {error}") from error
 
 
@@ -142,7 +143,7 @@ class SandboxLeverAdapter:
         url = f"{self._base_url}{path}"
         try:
             return self._http(method, url, data=payload, timeout=self._timeout_s)
-        except urllib.error.URLError as error:
+        except (OSError, http.client.HTTPException) as error:
             raise LeverError(f"control service unreachable at {url}: {error}") from error
 
     @staticmethod

@@ -15,9 +15,11 @@ from .adapters import (
     FixtureBrain,
     FixtureClock,
     FixtureDevinAdapter,
+    FixtureInvestigation,
     FixturePatchCheckout,
     FixturePatchVerifier,
     GitPatchCheckout,
+    LabInvestigation,
     LabPatchVerifier,
     FixtureLeverAdapter,
     LiveTelemetrySource,
@@ -69,6 +71,22 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=1,
         help="how many times measured failures are sent back to Devin for a revised patch",
+    )
+    watch.add_argument(
+        "--max-clones",
+        type=int,
+        default=1,
+        help="investigation clones to run concurrently (2 + production caused Docker API 500s on a MacBook)",
+    )
+    watch.add_argument(
+        "--no-investigate",
+        action="store_true",
+        help="skip stage 4a (clone investigators) even when --lab-url is set",
+    )
+    watch.add_argument(
+        "--investigate-gate",
+        action="store_true",
+        help="drop hypotheses that fail to reproduce in a clone before the production probe",
     )
     watch.add_argument(
         "--lab-url",
@@ -202,6 +220,8 @@ def main(argv: list[str] | None = None) -> int:
             verifier=_patch_verifier(args, writer),
             checkout=_patch_checkout(args),
             max_revisions=getattr(args, "max_revisions", 1),
+            investigation=_investigation(args, writer),
+            investigation_gate=getattr(args, "investigate_gate", False),
             renderer=renderer,
             telemetry=telemetry,
             brain=brain,
@@ -251,9 +271,9 @@ def _patch_adapter(args):
         reference="branch:faultline/fallback-retry-cap",
         summary="Prebuilt patch: bounded retries with exponential backoff and jitter",
     )
-    if getattr(args, "devin", False):
+    if getattr(args, "devin", False) or getattr(args, "levers", "fixture") == "sandbox":
         return DevinAdapter(
-            api_key=os.getenv("DEVIN_API_KEY"),
+            api_key=os.getenv("DEVIN_API_KEY") if getattr(args, "devin", False) else None,
             repo="github.com/Jay-Thpr/HackMIT",
             fallback=fallback,
         )
@@ -267,6 +287,21 @@ def _patch_checkout(args):
         repo_root=REPOSITORY_ROOT,
         workdir=REPOSITORY_ROOT / ".faultline" / "worktrees",
         override=getattr(args, "canary_context", None),
+    )
+
+
+def _investigation(args, writer=None):
+    if getattr(args, "no_investigate", False):
+        return None
+    if getattr(args, "levers", "fixture") != "sandbox":
+        return FixtureInvestigation()
+    lab_url = getattr(args, "lab_url", None)
+    if not lab_url:
+        return None
+    from faultline_contracts.clone import HttpCloneLab
+
+    return LabInvestigation(
+        HttpCloneLab(lab_url), writer=writer, max_clones=getattr(args, "max_clones", 1)
     )
 
 

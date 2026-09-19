@@ -98,3 +98,19 @@ def test_connection_refused_becomes_lever_error():
     adapter = SandboxLeverAdapter(http=http)
     with pytest.raises(LeverError, match="control service unreachable"):
         adapter.apply("retry_cap", {"max_retries": 0}, 20)
+
+
+def test_transport_timeout_is_a_lever_error():
+    from faultline_contracts import LeverError
+    from faultline_product.adapters.sandbox import SandboxLeverAdapter
+
+    def http(method, url, *, data=None, timeout):
+        raise TimeoutError("timed out")
+
+    adapter = SandboxLeverAdapter(base_url="http://clone:10901", http=http)
+    try:
+        adapter.apply("retry_cap", {"max_retries": 0}, 20)
+    except LeverError as exc:
+        assert "unreachable" in str(exc)
+    else:
+        raise AssertionError("expected LeverError")

@@ -79,6 +79,48 @@ class Brain(Protocol):
     ) -> Verdict: ...
 
 
+@dataclass(frozen=True)
+class HypothesisInvestigation:
+    """Stage 4a outcome for one hypothesis, measured in its own clean clone (C6).
+
+    Owner 3's investigator produces the evidence; this is Product's transport of it into the
+    audit log, the report and the UI. ``prediction_matches``/``prediction_total`` describe how
+    the clone responded to the *production probe* the planner selected.
+    """
+
+    hypothesis_id: str
+    clone_id: str | None
+    recipe: dict | None
+    reproduced: bool
+    recovered: bool
+    prediction_matches: int | None
+    prediction_total: int | None
+    detail: str
+    evidence: dict | None = None  # similarity numbers etc., for the audit log / UI
+
+    @property
+    def survives(self) -> bool:
+        return (
+            self.reproduced
+            and self.recovered
+            and (self.prediction_total is None or self.prediction_matches == self.prediction_total)
+        )
+
+
+@runtime_checkable
+class Investigation(Protocol):
+    """Run one investigator per hypothesis in disposable clones before touching production."""
+
+    def investigate(
+        self,
+        incident_id: str,
+        triage: TriageResult,
+        production_incident: Fingerprint,
+        healthy_reference: list[Fingerprint],
+        production_probe: Experiment,
+    ) -> list[HypothesisInvestigation]: ...
+
+
 @runtime_checkable
 class PatchAdapter(Protocol):
     def propose(

@@ -32,7 +32,9 @@ def _run(command: list[str], *, cwd: Path, env: dict[str, str]) -> None:
             text=True,
         )
     except (OSError, subprocess.CalledProcessError) as exc:
-        raise CanaryPreparationError("orders-v2 build or startup failed") from exc
+        stderr = (getattr(exc, "stderr", "") or "").strip().splitlines()
+        tail = " | ".join(stderr[-3:]) if stderr else str(exc)
+        raise CanaryPreparationError(f"orders-v2 build or startup failed: {tail}") from exc
 
 
 def _revision(context: Path) -> str:
@@ -100,8 +102,10 @@ class SandboxCanaryDeployer:
         source_revision = self._revision(context)
         env = dict(os.environ)
         env["ORDERS_V2_CONTEXT"] = str(context)
+        # --no-deps: orders-v2 depends_on payments; without it compose recreates production
+        # payments whenever the shared image changes, which is a production incident of its own.
         self._runner(
-            ["docker", "compose", "--profile", "canary", "up", "-d", "--build", "orders-v2"],
+            ["docker", "compose", "--profile", "canary", "up", "-d", "--build", "--no-deps", "orders-v2"],
             cwd=self._compose_dir,
             env=env,
         )

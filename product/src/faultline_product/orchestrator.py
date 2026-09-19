@@ -31,6 +31,8 @@ from .ports import (
     CanaryResult,
     CanaryStatus,
     CanaryTarget,
+    HypothesisInvestigation,
+    Investigation,
     PatchAdapter,
     PatchCheckout,
     PatchProposal,
@@ -54,6 +56,7 @@ class RunResult:
     patch: PatchProposal | None
     canary: CanaryResult | None = None
     verification: PatchVerification | None = None
+    investigations: list[HypothesisInvestigation] | None = None
 
 
 class Orchestrator:
@@ -72,12 +75,16 @@ class Orchestrator:
         verifier: PatchVerifier | None = None,
         checkout: PatchCheckout | None = None,
         max_revisions: int = 1,
+        investigation: Investigation | None = None,
+        investigation_gate: bool = False,
     ):
         self._levers, self._audit, self._patches = levers, audit, patches
         self._canary_deployer = canary_deployer
         self._verifier = verifier
         self._checkout = checkout
         self._max_revisions = max_revisions
+        self._investigation = investigation
+        self._investigation_gate = investigation_gate
         self._renderer, self._telemetry, self._brain = renderer, telemetry, brain
         self._clock, self._sleep, self._action_budget = clock, sleep, action_budget
         self._actions = 0
@@ -100,6 +107,9 @@ class Orchestrator:
             )
             self._renderer.event("report", f"ready: faultline report --incident {incident_id}")
             return RunResult(incident_id, "refused", None)
+        investigations, triage = self.investigate(incident_id, triage, fp, experiment, now)
+        if triage is None:
+            return RunResult(incident_id, NONE_OF_THE_ABOVE, None, investigations=investigations)
         baseline, during, after_release = self.experiment(incident_id, experiment, now)
         verdict = self.judge(incident_id, triage, experiment, baseline, during, after_release)
         if not verdict.confirmed:
@@ -121,7 +131,7 @@ class Orchestrator:
                 "diagnosis not confirmed",
                 {},
             )
-            return RunResult(incident_id, verdict.diagnosis, None)
+            return RunResult(incident_id, verdict.diagnosis, None, investigations=investigations)
         mitigation = self.mitigate(incident_id, triage, experiment, verdict)
         patch = self.patch(incident_id, verdict, triage)
         patch, verification, canary = self.ship(incident_id, patch, verdict.diagnosis, mitigation)
@@ -149,7 +159,7 @@ class Orchestrator:
         self._renderer.event(
             "report", f"{report_label}: faultline report --incident {incident_id}"
         )
-        return RunResult(incident_id, verdict.diagnosis, patch, canary, verification)
+        return RunResult(incident_id, verdict.diagnosis, patch, canary, verification, investigations)
 
     def detect(self, incident_id: str, now: datetime) -> Fingerprint:
         fp = self._telemetry.window(now - timedelta(seconds=WINDOW_S), now)
@@ -262,6 +272,91 @@ class Orchestrator:
             "plan", f"{experiment.id} selected to confirm {leader}, blast radius {experiment.blast_radius_pct:g}%"
         )
         return experiment
+
+    def investigate(
+        self,
+        incident_id: str,
+        triage: TriageResult,
+        production_incident: Fingerprint,
+        production_probe: Experiment,
+        now: datetime,
+    ) -> tuple[list[HypothesisInvestigation], TriageResult | None]:
+        """Stage 4a: one investigator per hypothesis, each in a clean clone, before production
+        is touched. Evidence is recorded per hypothesis. With ``investigation_gate`` on, a
+        hypothesis that fails to reproduce the production fingerprint is dropped; if none
+        survives, a human is paged and the production probe is not run.
+        """
+        if self._investigation is None:
+            return [], triage
+        self._renderer.event(
+            "investigate",
+            f"forking production into {len(triage.hypotheses)} clean clones, one per hypothesis",
+        )
+        healthy = [
+            fp
+            for fp in self._telemetry.series(now - timedelta(seconds=BASELINE_S), now)
+            if not any(slo.breached for slo in fp.slos)
+        ]
+        try:
+            results = self._investigation.investigate(
+                incident_id, triage, production_incident, healthy, production_probe
+            )
+        except Exception as exc:  # noqa: BLE001 - PRD: the clone lab never threatens the v5 loop
+            self._record(
+                incident_id, Stage.experiment, EventKind.refused, Actor.adapter,
+                f"clone investigation unavailable, continuing with the production probe: {exc}",
+                {"error": f"{type(exc).__name__}: {exc}"},
+            )
+            self._renderer.event("investigate", f"unavailable ({type(exc).__name__}) — continuing without clones")
+            return [], triage
+        for item in results:
+            self._record(
+                incident_id,
+                Stage.experiment,
+                EventKind.triage,
+                Actor.math,
+                f"clone investigation {item.hypothesis_id}: {item.detail}",
+                {
+                    "investigation": True,
+                    "hypothesis_id": item.hypothesis_id,
+                    "clone_id": item.clone_id,
+                    "recipe": item.recipe,
+                    "reproduced": item.reproduced,
+                    "recovered": item.recovered,
+                    "prediction_matches": item.prediction_matches,
+                    "prediction_total": item.prediction_total,
+                    "survives": item.survives,
+                    "evidence": item.evidence,
+                },
+                experiment_id=production_probe.id,
+            )
+            verdict = "survives" if item.survives else "falsified"
+            self._renderer.event("investigate", f"{item.hypothesis_id} {verdict}: {item.detail}")
+        if not self._investigation_gate:
+            return results, triage
+        survivors = {item.hypothesis_id for item in results if item.reproduced}
+        if not survivors:
+            self._record(
+                incident_id, Stage.experiment, EventKind.page_human, Actor.orchestrator,
+                "no hypothesis reproduced the incident in a clone; page human",
+                {"hypotheses": [h.id for h in triage.hypotheses]},
+            )
+            self._renderer.event("investigate", "nothing reproduced — paged human")
+            return results, None
+        dropped = [h.id for h in triage.hypotheses if h.id not in survivors]
+        if dropped:
+            self._record(
+                incident_id, Stage.experiment, EventKind.refused, Actor.math,
+                f"dropped before production: {', '.join(dropped)} did not reproduce in a clone",
+                {"dropped": dropped, "survivors": sorted(survivors)},
+            )
+            triage = triage.model_copy(
+                update={
+                    "hypotheses": [h for h in triage.hypotheses if h.id in survivors],
+                    "predictions": [p for p in triage.predictions if p.hypothesis_id in survivors],
+                }
+            )
+        return results, triage
 
     def experiment(
         self, incident_id: str, experiment: Experiment, now: datetime

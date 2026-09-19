@@ -7,6 +7,7 @@ from .canary import (
 from .checkout import FixturePatchCheckout, GitPatchCheckout
 from .clone import DEFAULT_RECIPES, FixturePatchVerifier, LabPatchVerifier
 from .devin import DevinAdapter, FixtureDevinAdapter
+from .investigate import FixtureInvestigation, LabInvestigation
 from .fixture import (
     FixtureBrain,
     FixtureClock,
@@ -25,7 +26,9 @@ __all__ = [
     "DevinAdapter",
     "FixturePatchCheckout",
     "FixturePatchVerifier",
+    "FixtureInvestigation",
     "GitPatchCheckout",
+    "LabInvestigation",
     "LabPatchVerifier",
     "CanaryPreparationError",
     "FixtureBrain",

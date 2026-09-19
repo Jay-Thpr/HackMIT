@@ -77,6 +77,7 @@ def test_sandbox_canary_builds_context_and_records_revision(tmp_path):
     target = deployer.prepare(_patch())
 
     assert calls[0][0][-1] == "orders-v2"
+    assert "--no-deps" in calls[0][0]  # never recreate production payments
     assert calls[0][2]["ORDERS_V2_CONTEXT"] == str(tmp_path.resolve())
     assert target.patch_reference == _patch().reference
     assert target.source_revision == "abc123"
