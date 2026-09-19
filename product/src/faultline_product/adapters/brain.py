@@ -64,6 +64,9 @@ class LiveBrain:
         self.last_triage_note = "openai"
         return result
 
+    def triage_source(self) -> str | None:
+        return self.last_triage_note
+
     def plan(
         self,
         triage: TriageResult,

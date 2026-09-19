@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 dependencies = ["pydantic>=2", "faultline-contracts"]
 
 [tool.uv.sources]
-faultline-contracts = { path = "../../contracts" }
+faultline-contracts = { path = "../../contracts", editable = true }
 
 [dependency-groups]
 dev = ["pytest>=8"]

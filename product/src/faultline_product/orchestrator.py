@@ -129,8 +129,8 @@ class Orchestrator:
             {"hypotheses": ids, "ambiguous": triage.ambiguous},
         )
         self._renderer.event("triage", f"ambiguous: {' vs '.join(ids)}")
-        source = getattr(self._brain, "last_triage_note", None)
-        if source is not None:
+        source = self._brain.triage_source()
+        if source:
             self._renderer.event("triage", f"source: {source}")
         return triage
 

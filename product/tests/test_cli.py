@@ -76,9 +76,10 @@ def test_storm_flow_uses_contract_boundaries(tmp_path):
     assert {event.action_id for event in experiment_events if event.action_id} == {
         experiment_events[0].action_id
     }
-    assert output[3] == "[experiment] retry_cap on: {'max_retries': 0}"
-    assert output[4] == "[experiment] retry_cap released"
-    assert output[5].startswith("[observe] after-release window collected")
+    assert output[2] == "[triage] source: fixture"
+    assert output[4] == "[experiment] retry_cap on: {'max_retries': 0}"
+    assert output[5] == "[experiment] retry_cap released"
+    assert output[6].startswith("[observe] after-release window collected")
 
 
 def test_report_is_rebuilt_from_audit_log(tmp_path, capsys):

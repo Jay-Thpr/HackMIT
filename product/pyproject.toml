@@ -13,7 +13,7 @@ faultline = "faultline_product.cli:main"
 
 [project.optional-dependencies]
 llm = [
-    "openai>=3.16.2",
+    "openai==3.13.0",
 ]
 
 [dependency-groups]
@@ -27,7 +27,7 @@ build-backend = "hatchling.build"
 packages = ["src/faultline_product"]
 
 [tool.uv.sources]
-faultline-contracts = { path = "../contracts" }
+faultline-contracts = { path = "../contracts", editable = true }
 faultline-brain = { path = "../faultline/brain", editable = true }
 
 [tool.pytest.ini_options]
