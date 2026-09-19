@@ -16,6 +16,7 @@ An autonomous incident responder. When telemetry can't distinguish causes that f
 | `faultline/brain/` | 3 Brain | Not started — OpenAI triage, noise model, planner, judge |
 | `product/ (faultline_product)` | 4 Product | In progress — orchestrator, adapters, Devin adapter, CLI; UI not started |
 | `bench/` | 3 Brain | Not started — benchmark runner and baselines |
+| `integration/` | shared | Built — live sandbox smoke test via C5 + `:9901` + `/stats` only; `cd integration && uv run python smoke_sandbox.py` (~6 min, stack must be up). Observes only; never retunes `sandbox/` |
 
 Stay inside your owner's directories. Talk to other components only through `faultline_contracts`.
 

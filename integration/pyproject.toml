@@ -1,0 +1,18 @@
+[project]
+name = "faultline-integration"
+version = "0.1.0"
+description = "End-to-end smoke test of the running sandbox through its documented interfaces (C5 :9900, C3 :9901, /stats)"
+requires-python = ">=3.11"
+dependencies = ["httpx>=0.27", "faultline-contracts"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+faultline-contracts = { path = "../contracts", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
