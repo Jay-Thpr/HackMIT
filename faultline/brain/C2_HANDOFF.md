@@ -31,6 +31,11 @@
   live accuracy.
 - Capture OpenAI `usage_sink` output for a compressed-fingerprint versus
   raw-telemetry token comparison before making a Token Company claim.
+- C2's frozen `triage_hero.json` currently allows H_db to confirm from a
+  retry-cap observation. The live run showed that this can also happen under
+  uncontrolled host contention. Updating that fixture to require the direct
+  `db_failover` recovery test needs the C2 consumers' contract approval; do
+  not present retry-cap-only H_db confirmations as final benchmark evidence.
 - Product integration must supply the C2 judge with a complete telemetry series,
   C4-derived experiment windows, and separate healthy/incident baselines.
 

@@ -43,6 +43,11 @@ from .noise import NoiseModel
 # do sharply enough once one hypothesis has any contradicting evidence at all.
 AGREEMENT_ODDS = 2.0
 
+# A lever can take several seconds to drain queued work.  During-phase evidence
+# should describe the settled response to the lever, rather than averaging that
+# response away with the transition immediately after it was applied.
+DURING_SETTLED_FRACTION = 0.5
+
 
 def phase_fingerprints(
     series: list[Fingerprint], start: datetime, end: datetime | None
@@ -66,6 +71,19 @@ def _measure(fps: list[Fingerprint], metric: str) -> float | None:
     if not values:
         return None
     return sum(values) / len(values)
+
+
+def _settled_during(fps: list[Fingerprint]) -> list[Fingerprint]:
+    """Return the trailing half of a during-phase series.
+
+    Telemetry windows are aggregates, so the first window(s) after applying a
+    lever can still contain the pre-action backlog.  We measure the settled end
+    of a bounded hold instead.  One-window holds remain measurable.
+    """
+    if not fps:
+        return []
+    start = max(0, len(fps) - max(1, round(len(fps) * DURING_SETTLED_FRACTION)))
+    return fps[start:]
 
 
 def _observe(
@@ -134,9 +152,10 @@ def judge(
             continue  # experiment never ran (or never released): nothing to judge
 
         during_fps = phase_fingerprints(series, window.start, window.release)
+        settled_during_fps = _settled_during(during_fps)
         after_fps = phase_fingerprints(series, window.release, None)
         plan: list[tuple[MetricExpectation, Phase, list[Fingerprint], NoiseModel]] = [
-            *((e, Phase.during, during_fps, incident_baseline) for e in pred.during),
+            *((e, Phase.during, settled_during_fps, incident_baseline) for e in pred.during),
             *((e, Phase.after_release, after_fps, healthy_baseline) for e in pred.after_release),
         ]
 

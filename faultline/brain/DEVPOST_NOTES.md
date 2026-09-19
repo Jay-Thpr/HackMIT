@@ -83,3 +83,16 @@ Its fixture scenarios validate benchmark mechanics; they are not a substitute
 for the required frozen live-sandbox run. Put only the resulting live-run JSON
 on slides or in headline accuracy claims. In particular, do not describe
 fixture accuracy as a production or public-benchmark result.
+
+## Live-run note (not a controlled benchmark result)
+
+`live-1` is excluded from benchmark claims. The freshly built shared stack was
+already in a storm before fault injection, and the Docker stack disappeared
+after the run. During the retry cap, `db.query_p50_ms` remained about 1186 ms,
+so the current fixture's H_db confirmation path fired. That is useful safety
+feedback, not evidence of H_db accuracy: host contention can have the same
+response to a retry cap. The prompt now requires a direct recovery experiment
+for a claimed capacity/dependency cause, and the judge measures the settled
+tail of the during phase so a short recovery is not diluted by the initial
+drain. Changing the frozen H_db fixture itself remains a contract-approved
+follow-up.

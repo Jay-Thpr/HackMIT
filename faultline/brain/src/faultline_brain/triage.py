@@ -28,7 +28,10 @@ keys and experiment ids. When telemetry cannot separate hypotheses, set ambiguou
 to true and make each hypothesis provide a positive, falsifiable confirms_if test
 of that same hypothesis. Never use a rival hypothesis being ruled out, or its
 signature merely returning after release, as confirmation. Measurement uses a
-failed positive test to produce none-of-the-above."""
+failed positive test to produce none-of-the-above. A diagnostic load reduction
+may separate hypotheses but cannot by itself confirm a capacity or dependency
+hypothesis: require a second experiment that directly relieves its claimed
+sustaining cause (for example, fail over the database) and predicts recovery."""
 
 
 class TriageValidationError(ValueError):
