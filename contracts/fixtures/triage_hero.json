@@ -105,11 +105,7 @@
           "direction": "flat"
         }
       ],
-      "confirms_if": {
-        "phase": "during",
-        "metric": "db.query_p50_ms",
-        "expect": "flat"
-      }
+      "confirms_if": null
     },
     {
       "hypothesis_id": "H_db",
