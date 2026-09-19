@@ -151,6 +151,8 @@ def test_unreachable_sandbox_profile_reports_health_error(tmp_path, capsys):
             "live",
             "--control-url",
             "http://127.0.0.1:1",
+            "--sandbox-host",
+            "sandbox.invalid",
             "--incident",
             "unreachable",
         ]

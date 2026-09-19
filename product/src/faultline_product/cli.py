@@ -47,6 +47,12 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("--elasticsearch-url", help="persist sandbox C1 windows to this Elasticsearch endpoint")
     watch.add_argument("--clone-id", help="tag sandbox telemetry as this C6 clone in Elasticsearch")
     watch.add_argument("--detect-timeout", type=float, default=300)
+    watch.add_argument(
+        "--detect-sustain",
+        type=float,
+        default=60,
+        help="seconds the SLO must stay breached before acting (PRD detector: 60)",
+    )
     watch.add_argument("--brain", choices=("fixture", "live"))
     watch.add_argument("--openai-model", default=DEFAULT_MODEL)
     watch.add_argument(
@@ -65,6 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
     investigate.add_argument("--elasticsearch-url", help="persist sandbox C1 windows to this Elasticsearch endpoint")
     investigate.add_argument("--clone-id", help="tag sandbox telemetry as this C6 clone in Elasticsearch")
     investigate.add_argument("--detect-timeout", type=float, default=300)
+    investigate.add_argument("--detect-sustain", type=float, default=60)
     investigate.add_argument("--brain", choices=("fixture", "live"))
     investigate.add_argument("--openai-model", default=DEFAULT_MODEL)
 
@@ -79,6 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
     experiment.add_argument("--elasticsearch-url", help="persist sandbox C1 windows to this Elasticsearch endpoint")
     experiment.add_argument("--clone-id", help="tag sandbox telemetry as this C6 clone in Elasticsearch")
     experiment.add_argument("--detect-timeout", type=float, default=300)
+    experiment.add_argument("--detect-sustain", type=float, default=60)
     experiment.add_argument("--brain", choices=("fixture", "live"))
     experiment.add_argument("--openai-model", default=DEFAULT_MODEL)
 
@@ -135,9 +143,12 @@ def main(argv: list[str] | None = None) -> int:
             telemetry = live_telemetry
             clock = utcnow
             sleep = time.sleep
-            print(f"[detect] waiting for checkout SLO breach (timeout {args.detect_timeout:g}s)")
+            print(
+                f"[detect] waiting for checkout SLO breach sustained {args.detect_sustain:g}s "
+                f"(timeout {args.detect_timeout:g}s)"
+            )
             try:
-                live_telemetry.wait_for_breach(args.detect_timeout)
+                live_telemetry.wait_for_breach(args.detect_timeout, sustain_s=args.detect_sustain)
             except TimeoutError:
                 print(f"faultline: error: no SLO breach observed within {args.detect_timeout:g}s")
                 return 3
