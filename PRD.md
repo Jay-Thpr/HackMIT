@@ -6,7 +6,12 @@
 
 **When everything breaks at once, dashboards can't tell you why. Faultline runs the experiment that can, and that experiment is usually the fix.**
 
-Faultline is an autonomous incident responder that plugs into any OpenTelemetry-instrumented system. It triages obvious incidents from telemetry, and when several causes fit the symptoms, it spins up disposable clean copies of the system where investigator agents reproduce each hypothesis and measure how it responds to intervention, then runs one safe, reversible production experiment that tells them apart. It then mitigates, ships a Devin-written fix through a self-verified canary, and leaves a report for a human.
+Faultline is an autonomous experimental debugger for distributed systems. It plugs into any OpenTelemetry-instrumented system and works in four beats:
+
+1. **Surface and prove the problem.** Triage considers every class of sustaining cause (taxonomy below), rules out what telemetry can rule out and names the metric that did it, and says plainly when the survivors are indistinguishable.
+2. **Fork production; crawl the clones.** Faultline forks the system into disposable clones built only from observable config, never production data. One investigator agent per hypothesis crawls its clone hunting for the outage: it injects its suspected cause and must recreate the production fingerprint. A theory that can't reproduce the incident dies before production is touched. Survivors are measured against every candidate intervention.
+3. **Aimed chaos, then one production test.** Every fault Faultline injects is a bet two theories disagree on. The clones pick the gentlest production probe that separates them; it runs for seconds, with a TTL, and measurement against noise decides. If nothing passes its own confirmation test, Faultline says *none of the above* and pages a human.
+4. **Patch, attack the patch, ship.** Reversible mitigation stays in place; Devin writes the durable fix; in a fresh clone Faultline replays the reproduced incident and an investigator runs *educated chaos* against the patch, trying to break it. Only a fix that survives goes to a self-verified 5 % canary. Irreversible remediations (split a hot shard, resize a tier) are never done autonomously: Faultline writes the case and a human signs.
 
 What changed in v6.1 (2026-09-19 15:45; refinements, no new subsystem):
 
@@ -14,6 +19,7 @@ What changed in v6.1 (2026-09-19 15:45; refinements, no new subsystem):
 - **Attack the patch.** Patch verification reuses the investigator loop: one investigator is given the hypothesis "this patch prevents the incident" and tries to falsify it (bigger trigger, higher load, tighter timeout), with predicted outcomes and measured verdicts. A measured counterexample goes back to Devin's session.
 - **Planner tradeoff is visible.** The UI shows the candidate table at stage 4b: per lever, expected separation in σ (measured in clones), blast radius, and why the winner won.
 - **No standalone chaos mode.** Experiments without a hypothesis have no prediction and therefore nothing to judge; that is chaos tooling's category, not ours.
+- **Identity restated as four beats** (surface and prove → fork and crawl → aimed chaos and one production test → patch, attack the patch, ship); **sustaining-cause taxonomy** so triage is exhaustive over the hypothesis space (`considered` field proposed for C2); **three-tier autonomy ladder** with human-gated irreversible remediations (shard split as the example); **depth-on-the-storm stretch list** (find the cliff, outage-as-test, scaling counterfactual, admission control at measured capacity).
 
 What changed from v5 (v4 → v5 changes kept below):
 
@@ -82,6 +88,27 @@ Core principles:
 - **Admit ignorance.** If no hypothesis passes its confirmation test, report none-of-the-above and page a human with the evidence.
 - **Prefer diagnoses you can reproduce.** A hypothesis earns support by reproducing the production fingerprint in a clean clone from its own injected cause, not by LLM confidence.
 - **Aggressive in clones, gentle in production.** Clones may disable retries, halve capacity, kill services and replay the incident repeatedly; production only gets C3 levers with TTLs.
+- **Nothing goes unconsidered.** Triage reports a verdict on every class in the sustaining-cause taxonomy, not just the ones it likes.
+
+### Sustaining-cause taxonomy (what triage must consider)
+
+Exhaustiveness lives in the *hypothesis space*, not in how many worlds we build. Triage returns a verdict for every class: `live`, `ruled_out` (naming the metric that ruled it out), or `cant_tell` (the signal isn't collected). The LLM may add an `other` class with a justification; nothing may be silently skipped. `cant_tell` classes are surfaced to the human in the report. This list is a starting set and will grow; the rule is that every entry names its signature, its discriminating experiment, and its autonomy tier.
+
+| Class | Telemetry signature | Discriminating experiment | Reproducible in a clone? | Tier |
+| --- | --- | --- | --- | --- |
+| Retry storm (metastable) | high retry ratio, DB saturated, trigger gone | cap retries, release | yes (`db_latency`) | auto |
+| Degraded dependency / DB | DB saturated at low issued qps | failover / pause batch | yes (`db_capacity`) | auto |
+| Resource exhaustion (CPU, pool, FDs) | service p99 up, DB fine | `cpu_limit` in clone; scale in production | yes | auto / describe |
+| Bad deploy / config | change event precedes SLO breach | roll back canary | yes (`patch_ref`) | auto |
+| Queue backlog | consumer lag grows, producer fine | pause producer / drain | partial | describe |
+| Hot key / hot shard | one key or partition dominates DB time | rate-limit key; split shard | partial | **human-gated** |
+| Cache stampede | miss spike, DB qps burst at TTL edge | coalesce / jitter TTL | partial | describe |
+| Bad node / noisy neighbor | one instance anomalous, peers fine | drain instance | yes (`service_kill`) | auto |
+| Other (LLM-proposed) | stated by the LLM | stated by the LLM, or `cant_tell` | — | human |
+
+In the hero: 8 classes considered, 2 live and indistinguishable (storm, degraded DB), 5 ruled out with a metric each, CPU starvation `cant_tell` because per-container CPU is not collected. That is what makes the later *none of the above* on the CPU world credible: it isn't "neither of my two guesses", it is "nothing in the taxonomy passed".
+
+*Contract impact (C2, needs Owner 3 sign-off):* add `considered: list[ClassVerdict {class, verdict: live|ruled_out|cant_tell, evidence_metric?, note}]` to `TriageDraft`; UI shows it as a row under the hypotheses panel.
 
 ## Hero scenario: storm vs. degraded DB
 
@@ -203,12 +230,18 @@ Every *production* experiment, mitigation and code fix is a **lever** pulled thr
 
 **Code = same loop plus clone verification plus a canary.** Devin opens a PR; Faultline first runs it as orders-v2 in a fresh clone against the replayed incident and stress variants (fails → evidence back to Devin); then builds orders-v2 beside orders-v1 in production; Envoy sends 5% to v2; compare v2 vs v1; promote gradually or set v2 weight to 0. If verification fails, send the measured evidence back into the same Devin session for a revision. A prebuilt fallback patch keeps the demo independent of Devin's latency.
 
-**Autonomy and guardrails.**
+**Autonomy ladder and guardrails.**
 
-- Automatic: telemetry reads, triage, reversible actions.
-- Canary-gated: code.
-- Human after the fact: merging, refactoring, reviewing the report.
-- Never irreversible actions; action budget of 5 per incident, then page a human; auto-undo on regression; kill switch; full audit log.
+| Tier | What | Who decides | Examples |
+| --- | --- | --- | --- |
+| Automatic | telemetry reads, triage, clone experiments, reversible production actions with a TTL | Faultline | retry cap, shed, DB failover |
+| Canary-gated | code | Faultline, after clone replay + patch attack, then 5 % canary it judges itself | Devin's backoff + circuit-breaker patch |
+| Human-gated | irreversible or capacity-changing remediations | a human signs; Faultline writes the case | split a hot shard, resize a tier, schema change |
+| Human after the fact | merging, refactoring, reviewing the report | a human | — |
+
+For a human-gated action Faultline produces the *case*, not the action: the evidence that points at it, a clone run showing it relieves the reproduced incident where that is reproducible, the runbook, and a one-click approval that is recorded in the audit log with who signed. Pitch line: *it runs the safe fixes itself, canaries the code, and writes the case for the risky ones.*
+
+- Never irreversible actions autonomously; action budget of 5 per incident, then page a human; auto-undo on regression; kill switch; full audit log.
 
 Coverage: the performance and availability class (bad changes, overload, slow dependencies, metastable storms, resource exhaustion, queue backlog, bad nodes, hot keys, cache stampedes). Out of scope: silent wrong answers, data corruption and consistency bugs, slow-burn leaks, systems with no levers.
 
@@ -310,6 +343,10 @@ The demo is built around one live chart of **DB query latency and request load o
 
 Requirements: record a clean full run as soon as the storm is reliable; rehearse the live run at least 5 times; keep the pre-recorded run as fallback. Show the CLI in Warp for one step.
 
+**Pitch vocabulary.** Use the flashy words, each with the qualifier that makes it ours: *fork production* (no production data, only versions/config/rate); *investigators crawl the clones hunting for the outage* (they must reproduce it, or the theory dies); *aimed chaos* / *chaos with a hypothesis* (every fault is a bet two theories disagree on); *educated chaos against the patch* (Faultline tries to break its own fix before shipping it); *the system is stuck in a traffic jam that outlasted the accident* (metastable failure); *it's allowed to say "I don't know"*. Never say *random*, *explore*, or *swarm*. Never say "proved" for a clone result; say "reproduced in a clone, confirmed in production".
+
+Opening: "At least 4 of AWS's 15 biggest outages were traffic jams that outlasted the accident: the trigger was gone, but retries kept the system down. Dashboards can't tell that from a broken database; they look identical. Faultline forks production into disposable clones. Investigator agents crawl each clone hunting for the outage: one injects a DB hiccup, one injects a degraded DB, both recreate the incident. Then aimed chaos: cap retries, clone A heals, clone B relapses. Now we know the one cheap test that separates them, and we run it in production for 20 seconds. Measurement decides, not the LLM. Then Devin writes the fix, and Faultline attacks it in a fresh clone before a single real request sees it."
+
 ## Benchmark and evaluation
 
 The headline result: on ambiguous incidents where passive methods are near chance, Faultline's experiments raise diagnosis accuracy, and it correctly reports none-of-the-above and no-incident.
@@ -370,7 +407,14 @@ Build the core loop to 100% before any layer; the plan assumes 4 people and a Su
 - **Devin live in the demo**, API access verified today; the prebuilt fallback patch and a recorded session are still made.
 - **Sequencing:** the v5 loop runs end to end on the live sandbox with real OpenAI triage *before* the clone lab takes anyone's time. Target: first live loop by \~6 pm, not 9 pm, since every piece already exists.
 
-**If ahead:** none-of-the-above probe in the live demo (the smoke test already covers it), easy case, OpenTelemetry Demo suite, richer report.
+**Depth on the storm (if ahead, in this order; all clone-side, none touches the core loop):**
+
+1. **Find the cliff.** Metastable failures have a tipping point. In one clone, binary-search the request rate at which a 20 s hiccup becomes self-sustaining (`workload.rps` × `db_latency`, ~6 runs of ~60 s). Report: *"checkout becomes self-sustaining above N rps with 3 retries; you run at 80; with retries capped at 1 the cliff moves to M."* Turns the diagnosis into a measured system property and the mitigation into a number.
+2. **Every outage becomes a test.** Export the reproduction recipe as a runnable check (`faultline replay <incident-id>` against a fresh clone) and attach it to the Devin PR next to the patch.
+3. **"Scaling would have made it worse."** Counterfactual in a clone: scale Payments to 2 replicas, replay the incident, show it getting worse; then the retry cap fixing it with no new capacity. Needs Envoy's payments cluster to pick up the second replica and one new C6 primitive (`scale`); try for 30 minutes, drop if Envoy resists.
+4. Admission control at measured capacity (`rate_limit {qps}` at the gateway set to the DB capacity the experiment revealed) folded into the durable-fix story.
+
+**If ahead (other):** none-of-the-above probe in the live demo (the smoke test already covers it), easy case, OpenTelemetry Demo suite, richer report, a hot-key world (human-gated shard split shown as a written case).
 
 **Cut:** SREGym, calibrated response library, change attribution, Kubernetes, extra production levers beyond the four, VM snapshots, clone swarms (> 3 clones), full traffic capture.
 
@@ -396,8 +440,8 @@ Build the core loop to 100% before any layer; the plan assumes 4 people and a Su
 | Phase | 1 Sandbox + storm | 2 Telemetry + Elastic | 3 Brain | 4 Product |
 | --- | --- | --- | --- | --- |
 | **→ 3:30 pm** | ✅ Services, Postgres, load generator; storm gate (5/5). ✅ Also done early: Envoy, retry override, World B, fault controller, v2 slot, CPU-starve world, `sandbox/INTEGRATION.md`. ✅ *C6 clone-lab contract drafted and approved by Owner 3* | Get OTel → Collector → ES running **first**, then the fingerprint query (sandbox `/stats` mapping in `sandbox/INTEGRATION.md`) | OpenAI triage prompt against C1 fixtures; noise model math; *review and approve C6* | Orchestrator state machine on fake adapters; CLI skeleton; Devin API access check |
-| **3:30 → 6 pm** | ✅ *Clone runtime: lab manager `:9910` (`sandbox/services/lab`), `clone.override.yml`, `validate_lab.py fairness` 8/8 (no faultctl, clean DB, production `:9900` refuses clone traffic)* | ✅ Live fingerprint adapter, ES store, audit index, ambiguity export. **Now:** stand up OTel Collector → ES in Compose; join the live-loop run | ✅ Noise, judge, planner, triage wiring, bench runners on `FakeWorld`. **Now:** ambiguity check *result* (centroid + passive LLM on live fingerprints); join the live-loop run | ✅ Orchestrator, CLI, sandbox + live-telemetry adapters, Devin adapter, canary flow. **Now: first end-to-end v5 loop on the live sandbox with real OpenAI triage by \~6 pm**; verify Devin API access |
-| **6 → 9 pm** | ✅ *C6 API checks 24/24 (`validate_lab.py api`); reproduction recipes documented in `INTEGRATION.md`; production + 2 clones profiled (~300 MB, ~0.2 CPU each)*. **Now:** support Owners 3/4 first live clone runs | *Clone id on all telemetry, per-clone fingerprints*; UI data queries | *Investigator loop for one hypothesis on one clone*; **live-sandbox benchmark runner** (C5 + `:9901` + `/stats`/ES, the smoke-test surfaces) | *C6 clone adapter*; UI chart + two panels + **planner candidate table**; prebuilt fallback patch |
+| **3:30 → 6 pm** | ✅ *Clone runtime: lab manager `:9910` (`sandbox/services/lab`), `clone.override.yml`, `validate_lab.py fairness` 8/8 (no faultctl, clean DB, production `:9900` refuses clone traffic)* | ✅ Live fingerprint adapter, ES store, audit index, ambiguity export. **Now:** stand up OTel Collector → ES in Compose; join the live-loop run | ✅ Noise, judge, planner, triage wiring, bench runners on `FakeWorld`. **Now:** ambiguity check *result* (centroid + passive LLM on live fingerprints); join the live-loop run | ✅ Orchestrator, CLI, sandbox + live-telemetry adapters, Devin adapter, canary flow. ✅ **First end-to-end v5 loop on the live sandbox** (`integration/live_loop.py`, PR #16): storm → H_meta confirmed (p50 −7.8σ during, −0.15σ after release), degraded → H_db confirmed (p50 flat during, +74σ after) — with fixture triage fallback; detector fixed to a sustained 60 s breach. **Now:** same run with `OPENAI_API_KEY` set (real triage); verify Devin API access |
+| **6 → 9 pm** | ✅ *C6 API checks 24/24 (`validate_lab.py api`); reproduction recipes documented in `INTEGRATION.md`; production + 2 clones profiled (~300 MB, ~0.2 CPU each)*. **Now:** support Owners 3/4 first live clone runs | *Clone id on all telemetry, per-clone fingerprints*; UI data queries | *Investigator loop for one hypothesis on one clone*; **live-sandbox benchmark runner** (C5 + `:9901` + `/stats`/ES; scaffolding exists in `integration/live_loop.py` — reset → inject → run → score → reset) | *C6 clone adapter*; UI chart + two panels + **planner candidate table**; prebuilt fallback patch |
 | **9 pm → 2 am** | ✅ *Both hero hypotheses reproduce in clones, CPU world fails both tests (`validate_lab.py storm|degraded|cpu` 25/25); patched orders-v2 builds and canaries in a clone via `patch_ref`.* Remaining: clone reset reliability under repeated runs | **Similar-incident search** over fingerprints + recipes; tokens-per-incident metric; *clone-vs-production similarity metric; experiment-history queries* | *2 investigators, reproduction/falsification scoring, measured predictions for the production probe; reproduction recipes saved; patch-attack investigator*; baselines complete (passive-only, production-only, LLM-only, centroid, random, **clone arm**) | Devin → *replay suite + patch attack in a clone* → build v2 → canary → verify → revise; replay-suite store; *investigator panels*; counterexample back to Devin |
 | **2 → 6 am** | Harden storm reliability (✅ 5/5 already); *clone reset reliability* | Support benchmark runs | **Run the overnight benchmark on the live sandbox on frozen code** (*clone arm if stable*) | Report, record fallback video |
 | **6 am →** | Rehearse the demo | Elastic Devpost write-up | OpenAI + Token Co write-ups, Codex log | Warp + Devin write-ups, demo driver |
@@ -429,9 +473,9 @@ The project is done when a judge watching the demo can see all twelve of these, 
 - [x] Clones start healthy and inherit no hidden state (fairness test); C6 actions cannot reach production (`sandbox/scripts/validate_lab.py fairness`, 8/8).
 - [x] Both hero hypotheses reproduce the production fingerprint in clones; CPU starvation reproduces neither (`validate_lab.py storm|degraded|cpu`, 25/25; the CPU world matches on the dashboard but fails both confirmation tests, as in production).
 - [ ] Ambiguity check: nearest-centroid and passive LLM near chance on storm vs. degraded DB.
-- [ ] Full loop runs unattended from incident to report with no manual steps.
-- [ ] Every action in the audit log has a recorded undo, and a regression triggers it automatically.
-- [ ] v5 loop ran end to end on the live sandbox with real OpenAI triage (incident → triage → experiment → verdict), before clone work started.
+- [x] Full loop runs unattended from incident to report with no manual steps (`integration/live_loop.py`: detect → triage → plan → experiment → verdict → mitigation → patch → report on the live sandbox, both hero worlds; canary stage still refused without `--canary-context`).
+- [ ] Every action in the audit log has a recorded undo, and a regression triggers it automatically. *(Undo pairing verified live on both worlds; auto-revert on canary regression is unit-tested only.)*
+- [ ] v5 loop ran end to end on the live sandbox with real OpenAI triage (incident → triage → experiment → verdict), before clone work started. *(Ran live with the fixture-triage fallback: storm H_meta confirmed, degraded H_db confirmed. Still needed: the same run with `OPENAI_API_KEY`.)*
 - [ ] Benchmark run completed on the live sandbox on frozen code; numbers on slides match the run output and say which arm and how many incidents.
 - [ ] Similar-incident search returns the right prior incident for a fresh storm and a fresh degraded-DB run.
 - [ ] Fallback video recorded; prebuilt patch works if Devin doesn't return in time.
