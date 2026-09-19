@@ -126,7 +126,7 @@ def _verifier(lab, telemetry, levers, context=Path("/tmp/patched")):
     return LabPatchVerifier(
         lab,
         context=context,
-        telemetry_factory=lambda clone: telemetry,
+        telemetry_factory=lambda clone, incident_id: telemetry,
         levers_factory=lambda clone: levers,
         sleep=clock.sleep,
         clock=clock,
@@ -168,6 +168,24 @@ def test_verifier_fails_when_incident_persists_after_trigger_ends():
     assert "still breached" in result.detail
     assert lab.actions[0][1] == "db_capacity"
     assert lab.destroyed  # clone torn down on failure too
+
+
+def test_default_clone_telemetry_carries_writer_incident_and_clone_id():
+    class Writer:
+        def __init__(self):
+            self.calls = []
+
+        def write(self, fingerprint, *, incident_id=None, clone_id=None):
+            self.calls.append((incident_id, clone_id))
+
+    writer = Writer()
+    lab = FakeLab()
+    verifier = LabPatchVerifier(lab, context=Path("/tmp/patched"), writer=writer)
+    clone = lab.create(CloneSpec(name="verify-x", patch_ref="/tmp/patched"))
+    source = verifier._clone_telemetry(clone, "inc-9")
+    assert source._writer is writer
+    assert (source._incident_id, source._clone_id) == ("inc-9", clone.clone_id)
+    assert source._optional_urls == {"orders_v2": "http://clone:9104/stats"}
 
 
 def test_verifier_skips_without_lab_recipe_or_context():

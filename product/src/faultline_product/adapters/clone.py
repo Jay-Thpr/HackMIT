@@ -18,7 +18,7 @@ from faultline_contracts import WINDOW_S, Fingerprint, LeverError, utcnow
 from faultline_contracts.clone import CloneInfo, CloneLab, CloneSpec, CloneStatus, LabError
 
 from ..ports import PatchProposal, PatchVerification, PatchVerifier, VerificationStatus
-from .live_telemetry import LiveTelemetrySource, TelemetryUnavailable
+from .live_telemetry import FingerprintWriter, LiveTelemetrySource, TelemetryUnavailable
 from .sandbox import SandboxLeverAdapter
 
 # How each hero diagnosis is reproduced in a clone (sandbox/INTEGRATION.md "reproduction
@@ -58,18 +58,20 @@ class LabPatchVerifier(PatchVerifier):
         stress: list[Recipe] | None = None,
         settle_s: float = 30,
         healthy_windows: int = 4,
-        telemetry_factory: Callable[[CloneInfo], LiveTelemetrySource] | None = None,
+        telemetry_factory: Callable[[CloneInfo, str], LiveTelemetrySource] | None = None,
         levers_factory: Callable[[CloneInfo], SandboxLeverAdapter] | None = None,
+        writer: FingerprintWriter | None = None,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], datetime] = utcnow,
     ):
         self._lab = lab
         self._context = context
+        self._writer = writer  # Owner 2's ES store: clone windows land tagged with clone_id
         self._recipes = recipes or DEFAULT_RECIPES
         self._stress = stress or []
         self._settle_s = settle_s
         self._healthy_windows = healthy_windows
-        self._telemetry_factory = telemetry_factory or _clone_telemetry
+        self._telemetry_factory = telemetry_factory or self._clone_telemetry
         self._levers_factory = levers_factory or _clone_levers
         self._sleep = sleep
         self._clock = clock
@@ -97,7 +99,7 @@ class LabPatchVerifier(PatchVerifier):
                 clone_id=clone.clone_id,
             )
         try:
-            return self._run(clone, recipe)
+            return self._run(clone, recipe, incident_id)
         except (LabError, LeverError, TelemetryUnavailable, httpx.HTTPError) as exc:
             return PatchVerification(
                 VerificationStatus.skipped, f"clone verification aborted: {exc}",
@@ -109,8 +111,8 @@ class LabPatchVerifier(PatchVerifier):
             except (LabError, httpx.HTTPError):
                 pass
 
-    def _run(self, clone: CloneInfo, recipe: Recipe) -> PatchVerification:
-        telemetry = self._telemetry_factory(clone)
+    def _run(self, clone: CloneInfo, recipe: Recipe, incident_id: str) -> PatchVerification:
+        telemetry = self._telemetry_factory(clone, incident_id)
         levers = self._levers_factory(clone)
         telemetry.start()
         try:
@@ -165,21 +167,22 @@ class LabPatchVerifier(PatchVerifier):
             clone_id=clone.clone_id, recipe=recipe, evidence=evidence,
         )
 
+    def _clone_telemetry(self, clone: CloneInfo, incident_id: str) -> LiveTelemetrySource:
+        urls = clone.endpoints.stats_urls
+        return LiveTelemetrySource(
+            orders_url=urls["orders"],
+            payments_url=urls["payments"],
+            loadgen_url=urls["loadgen"],
+            orders_v2_url=urls.get("orders-v2"),
+            writer=self._writer,
+            incident_id=incident_id,
+            clone_id=clone.clone_id,
+        )
+
 
 def _clone_name(incident_id: str) -> str:
     safe = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in incident_id.lower())
     return f"verify-{safe}"[:32].rstrip("-") or "verify"
-
-
-def _clone_telemetry(clone: CloneInfo) -> LiveTelemetrySource:
-    urls = clone.endpoints.stats_urls
-    return LiveTelemetrySource(
-        orders_url=urls["orders"],
-        payments_url=urls["payments"],
-        loadgen_url=urls["loadgen"],
-        orders_v2_url=urls.get("orders-v2"),
-        clone_id=clone.clone_id,
-    )
 
 
 def _clone_levers(clone: CloneInfo) -> SandboxLeverAdapter:

@@ -106,6 +106,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     audit = JsonlSink(args.audit_log)
     live_telemetry = None
+    writer = None
     try:
         if args.command == "report":
             print(render_report(audit, args.incident))
@@ -190,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
             audit=audit,
             patches=_patch_adapter(args),
             canary_deployer=_canary_deployer(args),
-            verifier=_patch_verifier(args),
+            verifier=_patch_verifier(args, writer),
             renderer=renderer,
             telemetry=telemetry,
             brain=brain,
@@ -249,7 +250,7 @@ def _patch_adapter(args):
     return FixtureDevinAdapter()
 
 
-def _patch_verifier(args):
+def _patch_verifier(args, writer=None):
     if getattr(args, "levers", "fixture") != "sandbox":
         return FixturePatchVerifier()
     lab_url = getattr(args, "lab_url", None)
@@ -257,7 +258,9 @@ def _patch_verifier(args):
         return None
     from faultline_contracts.clone import HttpCloneLab
 
-    return LabPatchVerifier(HttpCloneLab(lab_url), context=getattr(args, "canary_context", None))
+    return LabPatchVerifier(
+        HttpCloneLab(lab_url), context=getattr(args, "canary_context", None), writer=writer
+    )
 
 
 def _canary_deployer(args):
