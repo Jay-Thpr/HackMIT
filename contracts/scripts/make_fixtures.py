@@ -195,8 +195,10 @@ def triage_hero() -> TriageResult:
                 hypothesis_id="H_db", experiment_id="retry_cap_0_20s",
                 during=[me("db.query_p50_ms", flat), me("db.qps", down), me("svc.gateway.error_rate", flat)],
                 after_release=[me("db.query_p50_ms", flat), me("svc.orders.retry_ratio", up)],
-                confirms_if=Confirmation(phase=Phase.after_release, metric="svc.orders.retry_ratio",
-                                         expect=ConfirmExpect.up),
+                # Positive test of H_db itself: the DB stays slow even with the load taken off it.
+                # ("retry_ratio up after release" would only be elimination of H_meta: any non-storm
+                # world passes it, so CPU starvation would be misdiagnosed as H_db.)
+                confirms_if=Confirmation(phase=Phase.during, metric="db.query_p50_ms", expect=ConfirmExpect.flat),
             ),
             Prediction(
                 hypothesis_id="H_meta", experiment_id="db_failover_30s",
