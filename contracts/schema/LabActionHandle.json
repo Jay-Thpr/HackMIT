@@ -1,0 +1,56 @@
+{
+  "$defs": {
+    "ActionStatus": {
+      "enum": [
+        "active",
+        "undone",
+        "expired",
+        "failed"
+      ],
+      "title": "ActionStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "action": {
+      "title": "Action",
+      "type": "string"
+    },
+    "action_id": {
+      "title": "Action Id",
+      "type": "string"
+    },
+    "applied_at": {
+      "format": "date-time",
+      "title": "Applied At",
+      "type": "string"
+    },
+    "clone_id": {
+      "title": "Clone Id",
+      "type": "string"
+    },
+    "params": {
+      "additionalProperties": true,
+      "title": "Params",
+      "type": "object"
+    },
+    "status": {
+      "$ref": "#/$defs/ActionStatus",
+      "default": "active"
+    },
+    "ttl_s": {
+      "title": "Ttl S",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "action_id",
+    "clone_id",
+    "action",
+    "params",
+    "ttl_s"
+  ],
+  "title": "LabActionHandle",
+  "type": "object"
+}

@@ -113,8 +113,16 @@ def _strings(node):
 @pytest.mark.parametrize("name", [
     "fingerprint_healthy.json", "fingerprint_storm.json", "fingerprint_degraded_db.json",
     "series_storm_experiment.json", "series_degraded_db_experiment.json",
+    "lab_catalog.json", "clone_hero.json",  # C6: investigators read these; they must not name the worlds
 ])
 def test_fingerprint_fixtures_leak_no_world_labels(name):
     data = json.loads((ROOT / "fixtures" / name).read_text())
     leaks = {s for s in _strings(data) for w in FORBIDDEN_WORDS if w in s.lower()}
     assert not leaks, f"{name} leaks hidden labels: {leaks}"
+
+
+def test_clone_lab_does_not_import_fault_controller():
+    """C6 is visible to investigators, so it must not touch C5 (not even for type reuse)."""
+    src = (ROOT / "src" / "faultline_contracts" / "clone.py").read_text()
+    assert not _imports_fault(ast.parse(src))
+    assert "faultline_contracts.fault" not in src and "from .fault" not in src

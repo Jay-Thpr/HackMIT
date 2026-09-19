@@ -12,6 +12,7 @@ until the real producer exists.
 | C3 Levers (`LeverAdapter`) | `levers.py` | Action adapter → planner, orchestrator | Owner 4 (sandbox endpoints: Owner 1) |
 | C4 Audit events | `audit.py` | Orchestrator → judge (phase boundaries), UI, report | Owner 4 (ES sink: Owner 2) |
 | C5 Fault controller | `fault.py` | Bench / demo script → sandbox. **Hidden from Faultline** | Owner 1 |
+| C6 Clone lab (`CloneLab`) | `clone.py` | Clone manager (sandbox) → investigators (Owner 3), orchestrator (Owner 4) | Owner 1 (consumer approval: Owner 3) |
 
 ## Install
 
@@ -214,6 +215,76 @@ Used only by the sandbox, `bench/` and the demo script. HTTP API on `http://loca
 
 All endpoints return `FaultState`. Port 9900 must not be reachable from Faultline's config.
 
+## C6 — Clone lab (Owner 1 serves; Owner 3 investigators and Owner 4 orchestrator call) — DRAFT, awaiting Owner 3 approval
+
+A **clone** is a disposable, healthy replica of the target (its own Compose project and network) where an
+investigator may run experiments that are far too aggressive for production. Three environments, never mixed:
+
+| Environment | Knows the hidden cause? | Allowed actions |
+| --- | --- | --- |
+| Production | yes, invisible to Faultline | C3 levers only, via `:9901` |
+| Clean clone | no; starts healthy | C3 levers via its own control service **plus** C6 `LAB_CATALOG` |
+| Benchmark controller | yes (it injected it) | C5 on production only; unreachable from clones and investigators |
+
+**What a clone inherits** (`CloneSpec`): a label, service `versions`, `retry_policy {max_retries, timeout_ms}`,
+`workload {rps}` (reconstructed from observed production load) and an optional `patch_ref` for the orders-v2 slot.
+That is all Faultline may legitimately know. It never inherits fault-controller state, `io_profile` contents or
+production DB contents; `extra="forbid"` rejects anything else. A clone is `ready` only after a verified healthy
+5 s window, and `reset()` gets it back there (503 if it can't).
+
+**Same surfaces as production.** `CloneInfo.endpoints` gives `gateway_url`, `control_url` (a C3 control service
+for that clone: `retry_cap`, `shed`, `db_failover`, `canary_weight` with TTLs) and `stats_urls` (`/stats` per
+service). So the production telemetry adapter (C1) and lever adapter (C3) work unchanged against a clone; the
+brain's judge can score a clone experiment exactly as it scores a production one. Owner 2 tags clone telemetry
+with `clone_id`.
+
+**Lab primitives** (`LAB_CATALOG`, also `fixtures/lab_catalog.json`; clone-only, never production). Every apply
+carries `ttl_s` (≤ `max_ttl_s`) and the clone reverts it on its own when it expires. Wording deliberately avoids
+world vocabulary, because investigators read this catalog (`tests/test_boundary.py` checks it).
+
+| Action | Params | What it does physically | Undo |
+| --- | --- | --- | --- |
+| `retry_policy` | `max_retries 0–5`, `timeout_ms 50–10000` | Orders' call policy towards Payments | back to the clone's `CloneSpec.retry_policy` |
+| `db_latency` | `extra_ms 0–5000` | every primary-DB query costs `extra_ms` more, for `ttl_s` (a transient slowdown) | extra cost removed |
+| `db_capacity` | `capacity_qps > 0` | primary DB capacity for the app limited to `capacity_qps` (what a runaway batch job does) | job paused |
+| `cpu_limit` | `service`, `cpus 0.05–8` | `docker update --cpus` on that service | original limit |
+| `service_kill` | `service` | stop the container for `ttl_s`, then start it | start it |
+| `service_restart` | `service` | restart once (`reversible=False`, one-shot) | — |
+
+```python
+from faultline_contracts import HttpCloneLab, CloneSpec, WorkloadSpec
+
+lab = HttpCloneLab("http://localhost:9910")                    # create/reset block until healthy (≈ 20–40 s)
+c = lab.create(CloneSpec(name="h_meta", workload=WorkloadSpec(rps=80)))
+h = lab.apply(c.clone_id, "db_latency", {"extra_ms": 800}, ttl_s=20)   # reproduce: transient DB slowdown
+# ... wait, read c.endpoints.stats_urls with the C1 adapter, then C3 levers via c.endpoints.control_url ...
+lab.undo(h); lab.reset(c.clone_id); lab.destroy(c.clone_id)
+```
+
+### Clone manager HTTP API (`http://localhost:9910`) — what `HttpCloneLab` calls
+
+| Request | Body → Returns | Notes |
+| --- | --- | --- |
+| `GET /lab/catalog` | → `list[LabActionSpec]` | |
+| `GET /clones` · `GET /clones/{id}` | → `list[CloneInfo]` · `CloneInfo` | |
+| `POST /clones` | `CloneSpec` → `CloneInfo` | blocks until `ready`; `409` when `MAX_CLONES` (3) are alive |
+| `POST /clones/{id}/reset` | → `CloneInfo` | clears every lab action and lever, drains, verifies a healthy window; `503` if it can't |
+| `DELETE /clones/{id}` | → `CloneInfo` (`destroyed`) | idempotent |
+| `POST /clones/{id}/workload` | `WorkloadSpec` → `CloneInfo` | change the replayed request rate |
+| `POST /clones/{id}/actions` | `LabActionRequest {action, params, ttl_s}` → `LabActionHandle` | `400` bad params / ttl; `409` clone not `ready` |
+| `DELETE /clones/{id}/actions/{action_id}` | → `LabActionHandle` (`undone`) | idempotent |
+| `GET /clones/{id}/actions` | → `list[LabActionHandle]` | active and recently expired |
+| `GET /healthz` | → `200` | |
+
+Errors are `{"detail": "..."}`; the client maps all 4xx to `LabError`. `LabActionHandle.status` reuses C3's
+`ActionStatus` (`active | undone | expired | failed`).
+
+**Rules.** (1) C6 endpoints only reach clones: the manager refuses anything that would touch the production
+Compose project. (2) Nothing in `clone.py` imports C5, and `:9900` is not routable from a clone's network.
+(3) Budget: production + 2 investigation clones; 3 only after profiling on the demo machine (`MAX_CLONES`).
+(4) Reproduction recipes are documented by Owner 1 in `sandbox/INTEGRATION.md` (e.g. `db_latency 800 ms / 20 s`,
+`db_capacity 40`, `cpu_limit payments 0.1`); investigators decide when and why to use them.
+
 ## Fairness rules
 
 1. Nothing under `faultline/` imports `faultline_contracts.fault` (enforced by `tests/test_boundary.py`).
@@ -253,6 +324,8 @@ Deterministic; timeline starts 2026-09-19T15:00:00Z, fault at 15:01:00, experime
 | `verdict_storm.json` | `Verdict` | H_meta confirmed, with observations |
 | `audit_hero.jsonl` | `AuditEvent` per line | one incident's full trail |
 | `fault_state_storm.json` | `FaultState` (C5) | storm injected at 15:01:00 |
+| `lab_catalog.json` | `list[LabActionSpec]` (C6) | `LAB_CATALOG` |
+| `clone_hero.json` | `CloneInfo` (C6) | investigator A's ready clone with an active `db_latency` action |
 
 JSON Schema for the main models is in `schema/` (regenerate with `uv run python scripts/export_schemas.py`).
 

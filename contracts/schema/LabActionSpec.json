@@ -1,0 +1,35 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "description": {
+      "title": "Description",
+      "type": "string"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "max_ttl_s": {
+      "title": "Max Ttl S",
+      "type": "integer"
+    },
+    "params_schema": {
+      "additionalProperties": true,
+      "title": "Params Schema",
+      "type": "object"
+    },
+    "reversible": {
+      "default": true,
+      "title": "Reversible",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "id",
+    "description",
+    "params_schema",
+    "max_ttl_s"
+  ],
+  "title": "LabActionSpec",
+  "type": "object"
+}

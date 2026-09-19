@@ -7,9 +7,16 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from faultline_contracts import (
+    LAB_ACTION_IDS,
+    LAB_CATALOG,
+    MAX_CLONES,
     NONE_OF_THE_ABOVE,
     AuditEvent,
+    CloneInfo,
+    CloneSpec,
     Experiment,
+    LabActionRequest,
+    LabActionSpec,
     Fingerprint,
     JsonlSink,
     LeverSpec,
@@ -33,12 +40,14 @@ SINGLE = {
     "triage_hero.json": TriageResult,
     "verdict_storm.json": Verdict,
     "fault_state_storm.json": FaultState,
+    "clone_hero.json": CloneInfo,
 }
 LISTS = {
     "series_storm_experiment.json": Fingerprint,
     "series_degraded_db_experiment.json": Fingerprint,
     "catalog.json": LeverSpec,
     "experiments.json": Experiment,
+    "lab_catalog.json": LabActionSpec,
 }
 
 
@@ -159,6 +168,25 @@ def test_standard_blast_radius():
     assert standard_blast_radius("canary_weight", {"v2_weight": 0.05}) == pytest.approx(5.0)
     exps = {e["id"]: e["blast_radius_pct"] for e in load("experiments.json")}
     assert exps == {"retry_cap_0_20s": 0.0, "shed_10_20s": 10.0, "shed_50_20s": 50.0, "db_failover_30s": 1.0}
+
+
+def test_clone_lab_contract():
+    assert len(LAB_CATALOG) == 6 and LAB_ACTION_IDS == {a.id for a in LAB_CATALOG}
+    assert MAX_CLONES == 3
+    for a in LAB_CATALOG:
+        assert a.params_schema["additionalProperties"] is False and a.max_ttl_s >= 1
+    assert not LabActionSpec.model_validate(next(a for a in LAB_CATALOG if a.id == "service_restart").model_dump()).reversible
+    # a clone inherits only observable config; defaults match the production tunables
+    spec = CloneSpec(name="h_db")
+    assert spec.retry_policy.max_retries == 3 and spec.retry_policy.timeout_ms == 500 and spec.workload.rps == 80
+    with pytest.raises(ValidationError):
+        CloneSpec(name="H DB")  # label must be [a-z0-9_-]
+    with pytest.raises(ValidationError):
+        CloneSpec(name="x", hidden_cause="storm")  # nothing hidden may be passed in
+    with pytest.raises(ValidationError):
+        LabActionRequest(action="db_latency", params={"extra_ms": 800}, ttl_s=0)
+    clone = CloneInfo.model_validate(load("clone_hero.json"))
+    assert clone.endpoints is not None and clone.active_actions[0].expires_at > clone.active_actions[0].applied_at
 
 
 def _walk(node):
