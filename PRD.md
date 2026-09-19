@@ -309,6 +309,17 @@ flowchart LR
 - **Clone runtime:** isolated Compose replicas of the target (own project, network and ports), each with its own lab API (C6): create/reset/destroy, workload replay, lab primitives, patched-version slot.
 - OTel auto-instrumentation → Collector → Elasticsearch.
 
+### Elastic tools we will use (Owner 2)
+
+Docker Compose runs the target system and an OpenTelemetry Collector. **Elastic Cloud is the managed remote Elasticsearch deployment** the Collector and Faultline connect to; it is not a Docker container. A local Elasticsearch container remains an optional offline-development fallback, but the demo uses an Elastic Cloud URL and API key so the team can demonstrate real Elastic queries.
+
+- **Elastic Cloud (core):** our managed Elasticsearch and Kibana deployment. It holds the raw OpenTelemetry data plus Faultline's `faultline-fingerprints` (C1) and `faultline-audit` (C4) indices, giving us durable searchable evidence without operating a production search cluster ourselves.
+- **OpenTelemetry Collector / Elastic OpenTelemetry ingestion (core):** receives traces, metrics and logs from the Docker services over OTLP, batches them, and sends them to Elastic Cloud. This creates one standard ingestion path and lets us add a differently instrumented target system later without rewriting Faultline.
+- **Elasticsearch Query DSL (core):** runs the exact, structured queries behind `incident_timeline`, `clone_vs_production`, `experiment_history`, and `similar_incidents`. Time, environment, incident and clone filters make every result reproducible and keep production evidence separate from clone data and hidden benchmark-controller state.
+- **ES|QL (demo):** produces readable, bounded time-series summaries for the CLI and chart, such as DB p99, QPS and retry ratio over one incident. Its pipe-based syntax makes the analysis visibly inspectable by judges and demonstrates that Elastic is doing analysis rather than acting as a JSON bucket.
+- **Kibana Discover (demo support):** saved views expose raw OTLP signals alongside the C1 and C4 indices. This gives the distributed-systems owner a quick ingestion check and lets judges inspect the evidence behind a Faultline decision.
+- **`semantic_text` plus hybrid search (polish; never verdict input):** searches separately indexed human-readable log-highlight templates, audit details and incident summaries using both exact terms and semantic similarity. It helps a human find related incidents when wording differs, while the Brain's diagnosis remains based only on measured C1 evidence and the noise model.
+
 **Faultline:**
 
 | Component | Responsibility |
