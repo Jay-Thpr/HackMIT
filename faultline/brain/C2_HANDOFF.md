@@ -69,15 +69,17 @@ With a deployment management key, run:
 
 ```bash
 PYTHONPATH=contracts/src:faultline/brain/src \
-ELASTICSEARCH_URL=https://... KIBANA_URL=https://... \
-ELASTIC_API_KEY=... OPENAI_API_KEY=... OPENAI_MODEL=... \
+FAULTLINE_ELASTICSEARCH_URL=https://... KIBANA_URL=https://... \
+ELASTIC_AGENT_BUILDER_API_KEY=... OPENAI_API_KEY=... OPENAI_MODEL=... \
 python faultline/brain/scripts/deploy_elastic_investigation_agent.py
 ```
 
 The script creates the `faultline-openai-investigation` OpenAI
 `chat_completion` inference endpoint, verifies the four tool IDs, then creates
 or updates the agent. `--dry-run` validates the configuration and both hero
-fixtures without credentials. Deployment credentials are intentionally not
+fixtures without credentials. `ELASTIC_AGENT_BUILDER_API_KEY` needs
+`manage_inference` plus Agent Builder management privileges; it is distinct
+from the telemetry writer key. Deployment credentials are intentionally not
 committed to this repository.
 
 See `DEVPOST_NOTES.md` for evidence-bounded OpenAI, Token Company, and Codex

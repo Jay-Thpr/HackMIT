@@ -2,9 +2,11 @@
 """Create the OpenAI inference endpoint and read-only Elastic agent.
 
 Required environment variables:
-  ELASTICSEARCH_URL  Elasticsearch endpoint
+  ELASTICSEARCH_URL or FAULTLINE_ELASTICSEARCH_URL
+                     Elasticsearch endpoint
   KIBANA_URL         Kibana endpoint for the same deployment
-  ELASTIC_API_KEY    key with manage_inference and Agent Builder management
+  ELASTIC_AGENT_BUILDER_API_KEY or ELASTIC_API_KEY
+                     key with manage_inference and Agent Builder management
   OPENAI_API_KEY     key stored by Elastic in the inference endpoint
   OPENAI_MODEL       an OpenAI chat model id selected by the team
 
@@ -43,11 +45,11 @@ def request(method: str, url: str, api_key: str, body: dict[str, Any] | None = N
     return json.loads(payload) if payload else None
 
 
-def require(name: str) -> str:
-    value = os.environ.get(name)
+def require(*names: str) -> str:
+    value = next((os.environ.get(name) for name in names if os.environ.get(name)), None)
     if not value:
-        raise SystemExit(f"{name} is required")
-    return value.rstrip("/") if name.endswith("_URL") else value
+        raise SystemExit(f"one of {', '.join(names)} is required")
+    return value.rstrip("/") if any(name.endswith("_URL") for name in names) else value
 
 
 def fixture_boundary_check(root: Path) -> None:
@@ -72,9 +74,9 @@ def main() -> None:
         print(json.dumps({"inference_endpoint": endpoint, "agent": definition}, indent=2))
         return
 
-    elasticsearch_url = require("ELASTICSEARCH_URL")
+    elasticsearch_url = require("ELASTICSEARCH_URL", "FAULTLINE_ELASTICSEARCH_URL")
     kibana_url = require("KIBANA_URL")
-    elastic_api_key = require("ELASTIC_API_KEY")
+    elastic_api_key = require("ELASTIC_AGENT_BUILDER_API_KEY", "ELASTIC_API_KEY")
     endpoint = openai_inference_definition(require("OPENAI_API_KEY"), require("OPENAI_MODEL"))
 
     request("PUT", f"{elasticsearch_url}/_inference/chat_completion/{INFERENCE_ID}", elastic_api_key, endpoint)
