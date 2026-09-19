@@ -23,9 +23,9 @@ class ElasticsearchAuditSink(AuditSink):
         self._client.index(index=self._index, document=document)
 
     def query(self, incident_id: str, *, clone_id: str | None = None) -> list[AuditEvent]:
-        filters: list[dict[str, Any]] = [{"term": {"incident_id.keyword": incident_id}}]
+        filters: list[dict[str, Any]] = [{"term": {"incident_id": incident_id}}]
         if clone_id is not None:
-            filters.append({"term": {"clone_id.keyword": clone_id}})
+            filters.append({"term": {"clone_id": clone_id}})
         response = self._client.search(
             index=self._index,
             query={"bool": {"filter": filters}},

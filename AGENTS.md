@@ -12,7 +12,7 @@ An autonomous incident responder. When telemetry can't distinguish causes that f
 |---|---|---|
 | `contracts/` | shared | Built — interfaces C1–C5, fakes, fixtures, schemas, tests |
 | `sandbox/` | 1 Sandbox + storm | Built — Docker Compose target system, Envoy, fault controller :9900, levers :9901, clone lab manager :9910 (`uv run uvicorn services.lab.app:app --port 9910`, host process); see `sandbox/INTEGRATION.md` |
-| `faultline/telemetry/` | 2 Telemetry + Elastic | Not started — OTel → ES, fingerprint queries, ES audit sink |
+| `faultline/telemetry/` | 2 Telemetry + Elastic | Built — `/stats` poller → C1, ES fingerprint store (`faultline-fingerprints`), ES audit sink, analytics, ES|QL `incident_timeline`, index templates; Elastic Cloud via `FAULTLINE_ELASTICSEARCH_URL` + `FAULTLINE_ELASTICSEARCH_API_KEY` (see `.env.example`); smoke: `cd faultline/telemetry && uv run python scripts/es_smoke.py` |
 | `faultline/brain/` | 3 Brain | Not started — OpenAI triage, noise model, planner, judge |
 | `product/ (faultline_product)` | 4 Product | In progress — orchestrator, adapters, Devin adapter, CLI; UI not started |
 | `bench/` | 3 Brain | Not started — benchmark runner and baselines |

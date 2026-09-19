@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 import time
 from datetime import UTC, datetime
@@ -6,9 +7,16 @@ from pathlib import Path
 
 from faultline_brain import DEFAULT_MODEL
 from faultline_contracts import JsonlSink, LeverError, utcnow
-from faultline_telemetry import ElasticsearchFingerprintStore, HttpElasticsearchClient
+from faultline_telemetry import (
+    ElasticsearchAuditSink,
+    ElasticsearchFingerprintStore,
+    HttpElasticsearchClient,
+    ensure_index_templates,
+    load_repo_dotenv,
+)
 
 from .adapters import (
+    TeeAuditSink,
     DevinAdapter,
     CanaryPreparationError,
     FixtureCanaryDeployer,
@@ -35,6 +43,8 @@ from .ports import PatchProposal
 from .renderer import TerminalRenderer
 from .report import render_report
 
+log = logging.getLogger(__name__)
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="faultline", description="Faultline operator CLI")
@@ -51,6 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("--telemetry", choices=("fixture", "sandbox"), default="fixture")
     watch.add_argument("--sandbox-host", default="127.0.0.1")
     watch.add_argument("--elasticsearch-url", help="persist sandbox C1 windows to this Elasticsearch endpoint")
+    watch.add_argument("--elasticsearch-api-key", help="Elastic Cloud API key (env: FAULTLINE_ELASTICSEARCH_API_KEY)")
     watch.add_argument("--clone-id", help="tag sandbox telemetry as this C6 clone in Elasticsearch")
     watch.add_argument("--detect-timeout", type=float, default=300)
     watch.add_argument(
@@ -102,6 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
     investigate.add_argument("--telemetry", choices=("fixture", "sandbox"), default="fixture")
     investigate.add_argument("--sandbox-host", default="127.0.0.1")
     investigate.add_argument("--elasticsearch-url", help="persist sandbox C1 windows to this Elasticsearch endpoint")
+    investigate.add_argument("--elasticsearch-api-key", help="Elastic Cloud API key (env: FAULTLINE_ELASTICSEARCH_API_KEY)")
     investigate.add_argument("--clone-id", help="tag sandbox telemetry as this C6 clone in Elasticsearch")
     investigate.add_argument("--detect-timeout", type=float, default=300)
     investigate.add_argument("--detect-sustain", type=float, default=60)
@@ -117,6 +129,7 @@ def build_parser() -> argparse.ArgumentParser:
     experiment.add_argument("--telemetry", choices=("fixture", "sandbox"), default="fixture")
     experiment.add_argument("--sandbox-host", default="127.0.0.1")
     experiment.add_argument("--elasticsearch-url", help="persist sandbox C1 windows to this Elasticsearch endpoint")
+    experiment.add_argument("--elasticsearch-api-key", help="Elastic Cloud API key (env: FAULTLINE_ELASTICSEARCH_API_KEY)")
     experiment.add_argument("--clone-id", help="tag sandbox telemetry as this C6 clone in Elasticsearch")
     experiment.add_argument("--detect-timeout", type=float, default=300)
     experiment.add_argument("--detect-sustain", type=float, default=60)
@@ -129,8 +142,23 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_repo_dotenv(Path.cwd())
     args = build_parser().parse_args(argv)
     audit = JsonlSink(args.audit_log)
+    elasticsearch_url = getattr(args, "elasticsearch_url", None) or os.environ.get(
+        "FAULTLINE_ELASTICSEARCH_URL"
+    )
+    elasticsearch_api_key = getattr(args, "elasticsearch_api_key", None) or os.environ.get(
+        "FAULTLINE_ELASTICSEARCH_API_KEY"
+    )
+    es_client = None
+    if elasticsearch_url:
+        es_client = HttpElasticsearchClient(elasticsearch_url, api_key=elasticsearch_api_key)
+        try:
+            ensure_index_templates(es_client)
+        except Exception as exc:  # noqa: BLE001 - ES persistence is optional
+            log.warning("could not ensure Elasticsearch index templates: %s", exc)
+        audit = TeeAuditSink(audit, ElasticsearchAuditSink(es_client), log=log)
     live_telemetry = None
     writer = None
     try:
@@ -152,12 +180,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         if args.telemetry == "sandbox":
             host = args.sandbox_host
-            elasticsearch_url = args.elasticsearch_url or os.environ.get("FAULTLINE_ELASTICSEARCH_URL")
-            writer = (
-                ElasticsearchFingerprintStore(HttpElasticsearchClient(elasticsearch_url))
-                if elasticsearch_url
-                else None
-            )
+            writer = ElasticsearchFingerprintStore(es_client) if es_client else None
             live_telemetry = LiveTelemetrySource(
                 orders_url=f"http://{host}:8101",
                 payments_url=f"http://{host}:8102",

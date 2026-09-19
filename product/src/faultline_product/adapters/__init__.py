@@ -1,3 +1,4 @@
+from .audit import TeeAuditSink
 from .brain import LiveBrain, build_live_brain
 from .canary import (
     CanaryPreparationError,
@@ -41,6 +42,7 @@ __all__ = [
     "LiveTelemetrySource",
     "SandboxLeverAdapter",
     "SandboxCanaryDeployer",
+    "TeeAuditSink",
     "TelemetryUnavailable",
     "build_live_brain",
     "fingerprint_from_snapshots",

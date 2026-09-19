@@ -13,11 +13,12 @@ class FakeElastic:
     def index(self, *, index, document):
         self.documents.append((index, document))
 
-    def search(self, *, index, query, sort):
+    def search(self, *, index, query, sort, size=10000):
         self.last_search = (index, query, sort)
         filters = query["bool"]["filter"]
-        incident_id = filters[0]["term"]["incident_id.keyword"]
-        clone_id = next((item["term"]["clone_id.keyword"] for item in filters if "term" in item and "clone_id.keyword" in item["term"]), None)
+        terms = {k.removesuffix(".keyword"): v for f in filters if "term" in f for k, v in f["term"].items()}
+        incident_id = terms["incident_id"]
+        clone_id = terms.get("clone_id")
         docs = [doc for _, doc in self.documents if doc["incident_id"] == incident_id and (clone_id is None or doc.get("clone_id") == clone_id)]
         return {"hits": {"hits": [{"_source": doc} for doc in docs]}}
 

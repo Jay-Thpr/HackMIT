@@ -15,6 +15,7 @@ class TelemetrySettings:
     """
 
     elasticsearch_url: str = "http://localhost:9200"
+    elasticsearch_api_key: str | None = None
     orders_stats_url: str = "http://localhost:8101/stats"
     payments_stats_url: str = "http://localhost:8102/stats"
     loadgen_stats_url: str = "http://localhost:8103/stats"

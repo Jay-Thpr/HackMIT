@@ -75,9 +75,9 @@ class ElasticsearchFingerprintStore:
             {"range": {"window_start": {"gte": start.isoformat(), "lt": end.isoformat()}}}
         ]
         if incident_id is not None:
-            filters.append({"term": {"incident_id.keyword": incident_id}})
+            filters.append({"term": {"incident_id": incident_id}})
         if clone_id is not None:
-            filters.append({"term": {"clone_id.keyword": clone_id}})
+            filters.append({"term": {"clone_id": clone_id}})
         response = self._client.search(
             index=self._index,
             query={"bool": {"filter": filters}},

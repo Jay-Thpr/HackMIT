@@ -121,13 +121,13 @@ class ElasticsearchTelemetryAnalytics:
                 raise ValueError("start and end must be provided together")
             filters.append({"range": {"window_start": {"gte": start.isoformat(), "lt": end.isoformat()}}})
         if incident_id is not None:
-            filters.append({"term": {"incident_id.keyword": incident_id}})
+            filters.append({"term": {"incident_id": incident_id}})
         elif incident_id_required:
             filters.append({"exists": {"field": "incident_id"}})
         if clone_id is not None:
-            filters.append({"term": {"clone_id.keyword": clone_id}})
+            filters.append({"term": {"clone_id": clone_id}})
         if environment is not None:
-            filters.append({"term": {"environment.keyword": environment}})
+            filters.append({"term": {"environment": environment}})
         query: dict[str, Any] = {"bool": {"filter": filters}} if filters else {"match_all": {}}
         response = self._client.search(index=self._index, query=query, sort=[{"window_start": "asc"}])
         return [self._record(hit["_source"]) for hit in response.get("hits", {}).get("hits", [])]

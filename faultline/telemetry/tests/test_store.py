@@ -8,7 +8,7 @@ from faultline_telemetry.store import ElasticsearchFingerprintStore
 class FakeElastic:
     def __init__(self): self.docs = []
     def index(self, *, index, document): self.docs.append((index, document))
-    def search(self, *, index, query, sort):
+    def search(self, *, index, query, sort, size=10000):
         filters = query["bool"]["filter"]
         time = filters[0]["range"]["window_start"]
         hits = [{"_source": doc} for name, doc in self.docs if name == index and time["gte"] <= doc["window_start"] < time["lt"]]

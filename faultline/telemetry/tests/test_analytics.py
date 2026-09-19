@@ -15,7 +15,7 @@ class FakeElastic:
     def index(self, *, index, document):
         self.docs.append((index, document))
 
-    def search(self, *, index, query, sort):
+    def search(self, *, index, query, sort, size=10000):
         filters = query.get("bool", {}).get("filter", [])
         docs = [doc for document_index, doc in self.docs if document_index == index]
         for item in filters:
