@@ -7,7 +7,6 @@ from faultline_contracts import (
     TelemetrySource,
     experiment_windows,
 )
-
 from faultline_product.adapters import (
     FixtureBrain,
     FixtureClock,
