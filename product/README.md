@@ -8,6 +8,15 @@ uv run faultline watch --fixture storm --incident demo-storm-001
 uv run faultline report --incident demo-storm-001
 ```
 
+Use the real Brain planner and math judge without an API key:
+
+```bash
+uv run faultline watch --brain live --incident brain-demo-001
+```
+
+For OpenAI-backed triage, install the optional client with `uv sync --extra llm`
+and set `OPENAI_API_KEY`.
+
 For live sandbox telemetry and control:
 
 ```bash

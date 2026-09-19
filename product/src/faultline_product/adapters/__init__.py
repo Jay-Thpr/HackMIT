@@ -1,3 +1,4 @@
+from .brain import LiveBrain, build_live_brain
 from .devin import DevinAdapter, FixtureDevinAdapter
 from .fixture import (
     FixtureBrain,
@@ -19,8 +20,10 @@ __all__ = [
     "FixtureDevinAdapter",
     "FixtureLeverAdapter",
     "FixtureTelemetrySource",
+    "LiveBrain",
     "LiveTelemetrySource",
     "SandboxLeverAdapter",
     "TelemetryUnavailable",
+    "build_live_brain",
     "fingerprint_from_snapshots",
 ]

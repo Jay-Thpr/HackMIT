@@ -22,12 +22,14 @@ class PatchProposal:
 class Brain(Protocol):
     def triage(self, incident_id: str, fingerprint: Fingerprint) -> TriageResult: ...
 
+    def triage_source(self) -> str | None: ...
+
     def plan(
         self,
         triage: TriageResult,
         catalog: list[LeverSpec],
         blast_radius: Callable[[str, dict], float],
-    ) -> Experiment: ...
+    ) -> Experiment | None: ...
 
     def judge(
         self,

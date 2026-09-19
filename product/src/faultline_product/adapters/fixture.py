@@ -50,6 +50,9 @@ class FixtureBrain:
         self._incident_id = incident_id
         return self._triage.model_copy(update={"incident_id": incident_id})
 
+    def triage_source(self) -> str | None:
+        return "fixture"
+
     def plan(self, triage, catalog, blast_radius) -> Experiment:
         del triage, catalog, blast_radius
         return self._experiment

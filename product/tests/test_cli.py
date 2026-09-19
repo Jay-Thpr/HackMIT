@@ -35,7 +35,7 @@ def test_storm_flow_uses_contract_boundaries(tmp_path):
     bundle = load_fixture("storm")
     audit = JsonlSink(tmp_path / "audit.jsonl")
     clock = FixtureClock(
-        bundle.telemetry.first_breach().window_end,
+        bundle.experiment_start,
         bundle.telemetry.last_window_end,
     )
     output = []
@@ -54,7 +54,7 @@ def test_storm_flow_uses_contract_boundaries(tmp_path):
         sleep=clock.sleep,
     )
 
-    result = orchestrator.run("demo-storm-001", bundle.telemetry.first_breach().window_end)
+    result = orchestrator.run("demo-storm-001", bundle.experiment_start)
 
     events = audit.query(result.incident_id)
     kinds = [event.kind for event in events]
@@ -76,9 +76,10 @@ def test_storm_flow_uses_contract_boundaries(tmp_path):
     assert {event.action_id for event in experiment_events if event.action_id} == {
         experiment_events[0].action_id
     }
-    assert output[3] == "[experiment] retry_cap on: {'max_retries': 0}"
-    assert output[4] == "[experiment] retry_cap released"
-    assert output[5].startswith("[observe] after-release window collected")
+    assert output[2] == "[triage] source: fixture"
+    assert output[4] == "[experiment] retry_cap on: {'max_retries': 0}"
+    assert output[5] == "[experiment] retry_cap released"
+    assert output[6].startswith("[observe] after-release window collected")
 
 
 def test_report_is_rebuilt_from_audit_log(tmp_path, capsys):
@@ -101,7 +102,9 @@ def test_report_is_rebuilt_from_audit_log(tmp_path, capsys):
     assert "experiment_start" in report
     assert "experiment_end" in report
     assert "Patch: devin://task/demo-storm-001" in report
-    assert "[report] ready" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "[judge] H_meta confirmed" in output
+    assert "[report] ready" in output
 
 
 def test_duplicate_incident_is_rejected(tmp_path, capsys):
