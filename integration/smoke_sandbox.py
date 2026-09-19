@@ -32,6 +32,7 @@ from typing import Any
 import httpx
 
 from faultline_contracts.fault import CpuStarveFault, DegradeDbFault, HttpFaultController, StormFault, World
+from faultline_telemetry.fingerprint import fingerprint_from_stats
 
 STATS_URLS = {
     "orders": os.environ.get("ORDERS_STATS_URL", "http://127.0.0.1:8101"),
@@ -47,69 +48,18 @@ ALL_LEVERS = {"retry_cap", "shed", "db_failover", "canary_weight"}
 Snap = dict[str, dict[str, Any]]
 
 
-# -- /stats -> C1 keys (sandbox/INTEGRATION.md, "Mapping to C1 keys") --------------------------------
-
-def _delta(prev: dict, cur: dict, name: str) -> float:
-    return cur["counters"].get(name, 0.0) - prev["counters"].get(name, 0.0)
-
-
-def _hist_delta(prev: dict, cur: dict, name: str) -> list[int] | None:
-    c = cur["hists"].get(name)
-    if c is None:
-        return None
-    p = prev["hists"].get(name)
-    return [a - (p["counts"][i] if p else 0) for i, a in enumerate(c["counts"])]
-
-
-def quantile(counts: list[int] | None, buckets_ms: list[float], q: float) -> float | None:
-    """Linear interpolation inside the bucket holding the q-quantile; the last bucket is +Inf. None if empty."""
-    if not counts or sum(counts) <= 0:
-        return None
-    rank, seen = q * sum(counts), 0
-    for i, n in enumerate(counts):
-        if n and seen + n >= rank:
-            lo = buckets_ms[i - 1] if i > 0 else 0.0
-            hi = buckets_ms[i] if i < len(buckets_ms) else buckets_ms[-1] * 2
-            return lo + (hi - lo) * (rank - seen) / n
-        seen += n
-    return buckets_ms[-1] * 2
-
-
-def _ratio(a: float, b: float) -> float | None:
-    return a / b if b > 0 else None
-
-
 def window_metrics(prev: Snap, cur: Snap) -> dict[str, Any]:
-    """One window's metrics. Missing data is None, never 0."""
-    o0, o1, p0, p1, l0, l1 = prev["orders"], cur["orders"], prev["payments"], cur["payments"], prev["loadgen"], cur["loadgen"]
-    dt = max(1e-6, o1["t"] - o0["t"])
-    b = o1["buckets_ms"]
-    req, att = _delta(o0, o1, "requests"), _delta(o0, o1, "attempts")
-    ok, err = _delta(o0, o1, "ok"), _delta(o0, o1, "errors")
-    lok, lerr = _delta(l0, l1, "ok"), _delta(l0, l1, "errors")
-    issued = _delta(p0, p1, "db_queries_issued")
-    db_hist = _hist_delta(p0, p1, "db_query")
-    pool_size = p1["gauges"].get("pool_size")
+    """One benchmark window using Owner 2's canonical public /stats -> C1 conversion."""
+    start = datetime.fromtimestamp(float(prev["orders"]["t"]), tz=timezone.utc)
+    end = datetime.fromtimestamp(float(cur["orders"]["t"]), tz=timezone.utc)
+    metrics = fingerprint_from_stats(prev, cur, start, end).metrics()
     return {
-        "dt_s": dt,
-        "svc.gateway.qps": _delta(l0, l1, "sent") / dt,
-        "svc.gateway.error_rate": _ratio(lerr, lok + lerr),
-        "svc.gateway.p99_ms": quantile(_hist_delta(l0, l1, "request"), l1["buckets_ms"], 0.99),
-        "svc.orders.qps": req / dt,
-        "svc.orders.error_rate": _ratio(err, ok + err),
-        "svc.orders.retry_ratio": _ratio(att, req),
-        "svc.orders.timeout_rate": _ratio(_delta(o0, o1, "attempt_timeouts"), att),
-        "svc.orders.p50_ms": quantile(_hist_delta(o0, o1, "request"), b, 0.50),
-        "svc.orders.p99_ms": quantile(_hist_delta(o0, o1, "request"), b, 0.99),
-        "svc.payments.qps": _delta(p0, p1, "requests") / dt,
-        "db.qps": issued / dt,
-        "db.query_p50_ms": quantile(db_hist, p1["buckets_ms"], 0.50),
-        "db.query_p99_ms": quantile(db_hist, p1["buckets_ms"], 0.99),
-        "db.pool_busy_ratio": min(1.0, _delta(p0, p1, "db_busy_s") / (dt * pool_size)) if pool_size else None,
+        "dt_s": float(cur["orders"]["t"]) - float(prev["orders"]["t"]),
+        **metrics,
         # gauges (config as the target reports it; used instead of hardcoded thresholds)
-        "orders.max_retries": o1["gauges"].get("max_retries"),
-        "orders.attempt_timeout_ms": o1["gauges"].get("attempt_timeout_ms"),
-        "payments.db_target": p1["gauges"].get("db_target"),
+        "orders.max_retries": cur["orders"].get("gauges", {}).get("max_retries"),
+        "orders.attempt_timeout_ms": cur["orders"].get("gauges", {}).get("attempt_timeout_ms"),
+        "payments.db_target": cur["payments"].get("gauges", {}).get("db_target"),
     }
 
 
@@ -117,21 +67,21 @@ def is_healthy(m: dict[str, Any]) -> bool:
     """Traffic flowing, requests succeed, no amplification, DB p99 under the attempt timeout Orders reports."""
     timeout_ms = m["orders.attempt_timeout_ms"]
     return (
-        m["svc.orders.qps"] > 0
-        and (m["svc.orders.error_rate"] if m["svc.orders.error_rate"] is not None else 1.0) <= 0.02
-        and (m["svc.orders.retry_ratio"] or 99.0) <= 1.10
+        (m.get("svc.orders.qps") or 0.0) > 0
+        and (m.get("svc.orders.error_rate") if m.get("svc.orders.error_rate") is not None else 1.0) <= 0.02
+        and (m.get("svc.orders.retry_ratio") or 99.0) <= 1.10
         and timeout_ms is not None
-        and m["db.query_p99_ms"] is not None
+        and m.get("db.query_p99_ms") is not None
         and m["db.query_p99_ms"] < timeout_ms
     )
 
 
 def is_incident(m: dict[str, Any]) -> bool:
-    return m["svc.orders.qps"] > 0 and (m["svc.orders.error_rate"] if m["svc.orders.error_rate"] is not None else 1.0) >= 0.5
+    return (m.get("svc.orders.qps") or 0.0) > 0 and (m.get("svc.orders.error_rate") if m.get("svc.orders.error_rate") is not None else 1.0) >= 0.5
 
 
 def is_amplified(m: dict[str, Any]) -> bool:
-    return (m["svc.orders.retry_ratio"] or 0.0) > 2.0
+    return (m.get("svc.orders.retry_ratio") or 0.0) > 2.0
 
 
 def fmt(m: dict[str, Any] | None) -> str:
