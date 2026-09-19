@@ -1,3 +1,4 @@
+import time
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
@@ -32,6 +33,10 @@ class FixtureClock:
         if self.limit is not None and self.now > self.limit:
             self.now = self.limit
 
+    def real_sleep(self, seconds: float) -> None:
+        time.sleep(seconds)
+        self.sleep(seconds)
+
 
 class FixtureBrain:
     def __init__(self, triage: TriageResult, experiment: Experiment, verdict: Verdict):
@@ -54,6 +59,36 @@ class FixtureBrain:
         return self._verdict.model_copy(update={"incident_id": self._incident_id})
 
 
+def validate_params(spec: LeverSpec, params: dict[str, Any], ttl_s: int) -> None:
+    if ttl_s <= 0 or ttl_s > spec.max_ttl_s:
+        raise LeverError(f"invalid ttl_s {ttl_s} for {spec.id}")
+    schema = spec.params_schema
+    properties = schema.get("properties", {})
+    missing = set(schema.get("required", [])) - params.keys()
+    unexpected = params.keys() - properties.keys()
+    if missing:
+        raise LeverError(f"{spec.id}: missing params {sorted(missing)}")
+    if unexpected:
+        raise LeverError(f"{spec.id}: unexpected params {sorted(unexpected)}")
+    for key, value in params.items():
+        rule = properties[key]
+        expected = rule.get("type")
+        valid = (
+            expected == "integer"
+            and isinstance(value, int)
+            and not isinstance(value, bool)
+            or expected == "number"
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+        )
+        if not valid:
+            raise LeverError(f"{spec.id}.{key}: expected {expected}")
+        if "minimum" in rule and value < rule["minimum"]:
+            raise LeverError(f"{spec.id}.{key}: below minimum")
+        if "maximum" in rule and value > rule["maximum"]:
+            raise LeverError(f"{spec.id}.{key}: above maximum")
+
+
 class FixtureLeverAdapter:
     """Public-C3-only adapter for local CLI runs."""
 
@@ -66,11 +101,17 @@ class FixtureLeverAdapter:
         return list(self._specs.values())
 
     def estimate_blast_radius(self, lever_id: str, params: dict[str, Any]) -> float:
-        self._validate(lever_id, params, ttl_s=1)
+        spec = self._specs.get(lever_id)
+        if spec is None:
+            raise LeverError(f"unknown lever {lever_id!r}")
+        validate_params(spec, params, ttl_s=1)
         return standard_blast_radius(lever_id, params)
 
     def apply(self, lever_id: str, params: dict[str, Any], ttl_s: int) -> ActionHandle:
-        self._validate(lever_id, params, ttl_s)
+        spec = self._specs.get(lever_id)
+        if spec is None:
+            raise LeverError(f"unknown lever {lever_id!r}")
+        validate_params(spec, params, ttl_s)
         handle = ActionHandle(
             action_id=uuid4().hex,
             lever_id=lever_id,
@@ -91,39 +132,6 @@ class FixtureLeverAdapter:
 
     def status(self, handle: ActionHandle) -> ActionStatus:
         return self._refresh(handle.action_id).status
-
-    def _validate(self, lever_id: str, params: dict[str, Any], ttl_s: int) -> LeverSpec:
-        spec = self._specs.get(lever_id)
-        if spec is None:
-            raise LeverError(f"unknown lever {lever_id!r}")
-        if ttl_s <= 0 or ttl_s > spec.max_ttl_s:
-            raise LeverError(f"invalid ttl_s {ttl_s} for {lever_id}")
-        schema = spec.params_schema
-        properties = schema.get("properties", {})
-        missing = set(schema.get("required", [])) - params.keys()
-        unexpected = params.keys() - properties.keys()
-        if missing:
-            raise LeverError(f"{lever_id}: missing params {sorted(missing)}")
-        if unexpected:
-            raise LeverError(f"{lever_id}: unexpected params {sorted(unexpected)}")
-        for key, value in params.items():
-            rule = properties[key]
-            expected = rule.get("type")
-            valid = (
-                expected == "integer"
-                and isinstance(value, int)
-                and not isinstance(value, bool)
-                or expected == "number"
-                and isinstance(value, (int, float))
-                and not isinstance(value, bool)
-            )
-            if not valid:
-                raise LeverError(f"{lever_id}.{key}: expected {expected}")
-            if "minimum" in rule and value < rule["minimum"]:
-                raise LeverError(f"{lever_id}.{key}: below minimum")
-            if "maximum" in rule and value > rule["maximum"]:
-                raise LeverError(f"{lever_id}.{key}: above maximum")
-        return spec
 
     def _require(self, action_id: str) -> ActionHandle:
         try:

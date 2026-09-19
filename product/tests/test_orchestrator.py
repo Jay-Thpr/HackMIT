@@ -1,6 +1,5 @@
 import pytest
-
-from faultline_contracts import EventKind, Experiment, JsonlSink, Stage
+from faultline_contracts import EventKind, JsonlSink, LeverError, Stage
 
 from faultline_product.adapters import (
     FixtureBrain,
@@ -13,7 +12,7 @@ from faultline_product.orchestrator import BudgetExceeded, Orchestrator
 from faultline_product.renderer import TerminalRenderer
 
 
-def _orchestrator(tmp_path, *, experiment=None, telemetry=None, budget=5):
+def _orchestrator(tmp_path, *, experiment=None, telemetry=None, budget=5, levers=None, output=None):
     bundle = load_fixture("storm")
     telemetry = telemetry or bundle.telemetry
     clock = FixtureClock(
@@ -21,12 +20,14 @@ def _orchestrator(tmp_path, *, experiment=None, telemetry=None, budget=5):
     )
     brain = FixtureBrain(bundle.triage, experiment or bundle.experiment, bundle.verdict)
     audit = JsonlSink(tmp_path / "audit.jsonl")
+    levers = levers or FixtureLeverAdapter(clock=clock)
+    output = output if output is not None else []
     return (
         Orchestrator(
-            FixtureLeverAdapter(clock=clock),
+            levers,
             audit,
             FixtureDevinAdapter(),
-            TerminalRenderer(lambda _: None),
+            TerminalRenderer(output.append),
             telemetry,
             brain,
             clock,
@@ -85,3 +86,41 @@ def test_canary_regression_auto_undoes_and_refuses(tmp_path):
         event.kind == EventKind.action_undo and event.stage == Stage.canary for event in events
     )
     assert any(event.kind == EventKind.refused and event.stage == Stage.canary for event in events)
+
+
+class CanaryRefusingLevers:
+    def __init__(self, delegate):
+        self.delegate = delegate
+
+    def catalog(self):
+        return self.delegate.catalog()
+
+    def estimate_blast_radius(self, lever_id, params):
+        return self.delegate.estimate_blast_radius(lever_id, params)
+
+    def apply(self, lever_id, params, ttl_s):
+        if lever_id == "canary_weight":
+            raise LeverError("orders-v2 is not running")
+        return self.delegate.apply(lever_id, params, ttl_s)
+
+    def undo(self, handle):
+        return self.delegate.undo(handle)
+
+    def status(self, handle):
+        return self.delegate.status(handle)
+
+
+def test_canary_refusal_finishes_run_and_pages_human(tmp_path):
+    output = []
+    levers = CanaryRefusingLevers(FixtureLeverAdapter())
+    orchestrator, audit, bundle = _orchestrator(tmp_path, levers=levers, output=output)
+
+    result = orchestrator.run("canary-refused", bundle.telemetry.first_breach().window_end)
+
+    assert result.patch is not None
+    events = audit.query("canary-refused")
+    canary_events = [event for event in events if event.stage == Stage.canary]
+    assert [event.kind for event in canary_events] == [EventKind.refused, EventKind.page_human]
+    assert not any(event.kind == EventKind.action_apply for event in canary_events)
+    assert events[-1].kind == EventKind.report
+    assert "[canary] canary_weight refused: orders-v2 is not running — paged human" in output

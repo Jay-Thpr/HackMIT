@@ -79,7 +79,7 @@ class DevinAdapter:
                 if time.monotonic() >= deadline:
                     return self._fallback_with_session(session_url)
                 self._sleep(self._poll_s)
-        except Exception:
+        except Exception:  # noqa: BLE001
             return self._fallback_with_summary("devin api error: request failed")
 
     def _call(

@@ -1,10 +1,9 @@
 import argparse
 import os
-import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-from faultline_contracts import JsonlSink
+from faultline_contracts import JsonlSink, utcnow
 
 from .adapters import (
     DevinAdapter,
@@ -12,6 +11,7 @@ from .adapters import (
     FixtureClock,
     FixtureDevinAdapter,
     FixtureLeverAdapter,
+    SandboxLeverAdapter,
 )
 from .fixtures import load_fixture
 from .orchestrator import Orchestrator
@@ -31,15 +31,21 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("--incident", help="override the generated incident id")
     watch.add_argument("--real-time", action="store_true")
     watch.add_argument("--devin", action="store_true")
+    watch.add_argument("--levers", choices=("fixture", "sandbox"), default="fixture")
+    watch.add_argument("--control-url", default="http://localhost:9901")
 
     investigate = commands.add_parser("investigate", help="detect, triage, and plan")
     investigate.add_argument("--fixture", choices=("storm",), default="storm")
     investigate.add_argument("--incident", help="override the generated incident id")
+    investigate.add_argument("--levers", choices=("fixture", "sandbox"), default="fixture")
+    investigate.add_argument("--control-url", default="http://localhost:9901")
 
     experiment = commands.add_parser("experiment", help="run a fixture experiment and judge it")
     experiment.add_argument("--fixture", choices=("storm",), default="storm")
     experiment.add_argument("--incident", help="override the generated incident id")
     experiment.add_argument("--id", required=True)
+    experiment.add_argument("--levers", choices=("fixture", "sandbox"), default="fixture")
+    experiment.add_argument("--control-url", default="http://localhost:9901")
 
     report = commands.add_parser("report", help="render an incident from the C4 audit log")
     report.add_argument("--incident", required=True)
@@ -61,8 +67,18 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         first_breach = bundle.telemetry.first_breach()
         clock = FixtureClock(first_breach.window_end, bundle.telemetry.last_window_end)
-        sleep = time.sleep if getattr(args, "real_time", False) else clock.sleep
-        levers = FixtureLeverAdapter(clock=clock)
+        use_real_time = getattr(args, "real_time", False)
+        sleep = clock.real_sleep if use_real_time else clock.sleep
+        if args.levers == "sandbox":
+            levers = SandboxLeverAdapter(base_url=args.control_url, clock=utcnow)
+            if not levers.healthz():
+                print(
+                    f"faultline: error: sandbox control service not reachable at {args.control_url} "
+                    "(cd sandbox && docker compose up -d)"
+                )
+                return 2
+        else:
+            levers = FixtureLeverAdapter(clock=clock)
         brain = FixtureBrain(bundle.triage, bundle.experiment, bundle.verdict)
         renderer = TerminalRenderer()
         orchestrator = Orchestrator(
@@ -104,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _run_incident_id(base: str) -> str:
-    suffix = datetime.now(timezone.utc).strftime("%H%M%S")
+    suffix = datetime.now(UTC).strftime("%H%M%S")
     return f"{base}-{suffix}"
 
 

@@ -2,7 +2,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from faultline_contracts import Experiment, Fingerprint, LeverSpec, TriageResult, Verdict
+from faultline_contracts import (
+    Experiment,
+    Fingerprint,
+    LeverSpec,
+    TriageResult,
+    Verdict,
+)
 
 
 @dataclass(frozen=True)
