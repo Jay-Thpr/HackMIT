@@ -1,4 +1,11 @@
-from .devin import FixtureDevinAdapter
-from .fixture import FixtureLeverAdapter, FixtureTelemetrySource
+from .devin import DevinAdapter, FixtureDevinAdapter
+from .fixture import FixtureBrain, FixtureClock, FixtureLeverAdapter, FixtureTelemetrySource
 
-__all__ = ["FixtureDevinAdapter", "FixtureLeverAdapter", "FixtureTelemetrySource"]
+__all__ = [
+    "DevinAdapter",
+    "FixtureBrain",
+    "FixtureClock",
+    "FixtureDevinAdapter",
+    "FixtureLeverAdapter",
+    "FixtureTelemetrySource",
+]

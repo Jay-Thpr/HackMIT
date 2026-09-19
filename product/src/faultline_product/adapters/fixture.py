@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -7,13 +7,50 @@ from faultline_contracts import (
     CATALOG,
     ActionHandle,
     ActionStatus,
+    Experiment,
     Fingerprint,
     LeverError,
     LeverSpec,
+    TriageResult,
     UndoSpec,
+    Verdict,
     standard_blast_radius,
     utcnow,
 )
+
+class FixtureClock:
+    def __init__(self, now: datetime, limit: datetime | None = None):
+        self.now = now
+        self.limit = limit
+
+    def __call__(self) -> datetime:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += timedelta(seconds=seconds)
+        if self.limit is not None and self.now > self.limit:
+            self.now = self.limit
+
+
+class FixtureBrain:
+    def __init__(self, triage: TriageResult, experiment: Experiment, verdict: Verdict):
+        self._triage = triage
+        self._experiment = experiment
+        self._verdict = verdict
+        self._incident_id = triage.incident_id
+
+    def triage(self, incident_id: str, fingerprint: Fingerprint) -> TriageResult:
+        del fingerprint
+        self._incident_id = incident_id
+        return self._triage.model_copy(update={"incident_id": incident_id})
+
+    def plan(self, triage, catalog, blast_radius) -> Experiment:
+        del triage, catalog, blast_radius
+        return self._experiment
+
+    def judge(self, triage, experiment, baseline, during, after_release) -> Verdict:
+        del triage, experiment, baseline, during, after_release
+        return self._verdict.model_copy(update={"incident_id": self._incident_id})
 
 
 class FixtureLeverAdapter:
@@ -113,18 +150,18 @@ class FixtureTelemetrySource:
         matches = [
             item
             for item in self._fingerprints
-            if item.window_start >= start and item.window_end <= end
+            if item.window_start < end and item.window_end > start
         ]
-        if len(matches) != 1:
-            raise ValueError(f"expected one recorded window in [{start}, {end}), got {len(matches)}")
-        return matches[0]
+        if not matches:
+            raise ValueError(f"no recorded window overlaps [{start}, {end})")
+        return max(matches, key=lambda item: item.window_end)
 
     def series(self, start: datetime, end: datetime, step_s: int = 5) -> list[Fingerprint]:
         del step_s
         return [
             item
             for item in self._fingerprints
-            if item.window_start >= start and item.window_end <= end
+            if item.window_start < end and item.window_end > start
         ]
 
     def first_breach(self) -> Fingerprint:
@@ -132,3 +169,7 @@ class FixtureTelemetrySource:
             if any(slo.breached for slo in item.slos):
                 return item
         raise ValueError("fixture contains no breached SLO window")
+
+    @property
+    def last_window_end(self) -> datetime:
+        return self._fingerprints[-1].window_end
