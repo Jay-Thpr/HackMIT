@@ -1,8 +1,8 @@
+import http.client
 import json
 import os
 import subprocess
 import time
-import urllib.error
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
@@ -12,10 +12,12 @@ from ..ports import CanaryPreparationError, CanaryTarget, PatchProposal
 
 
 def _get_json(url: str, timeout_s: float) -> dict[str, Any]:
+    # A container whose port is bound before uvicorn listens resets the connection
+    # (RemoteDisconnected); treat every transport failure as "not ready yet".
     try:
         with urllib.request.urlopen(url, timeout=timeout_s) as response:
             return json.loads(response.read())
-    except (urllib.error.URLError, json.JSONDecodeError) as exc:
+    except (OSError, http.client.HTTPException, json.JSONDecodeError) as exc:
         raise CanaryPreparationError(f"canary target unavailable at {url}") from exc
 
 
