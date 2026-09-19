@@ -1,6 +1,6 @@
 # AGENTS.md — Faultline
 
-Read this first. Then `PRD.md` (product plan) and `contracts/README.md` (interface spec).
+Read this first. Then `PRD.md` (product plan, v6: adds the clone lab) and `contracts/README.md` (interface spec).
 
 ## What Faultline is
 
@@ -11,7 +11,7 @@ An autonomous incident responder. When telemetry can't distinguish causes that f
 | Path | Owner | Status |
 |---|---|---|
 | `contracts/` | shared | Built — interfaces C1–C5, fakes, fixtures, schemas, tests |
-| `sandbox/` | 1 Sandbox + storm | Built — Docker Compose target system, Envoy, fault controller :9900, levers :9901; see `sandbox/INTEGRATION.md` |
+| `sandbox/` | 1 Sandbox + storm | Built — Docker Compose target system, Envoy, fault controller :9900, levers :9901; see `sandbox/INTEGRATION.md`. Next (v6): clone runtime + C6 lab API |
 | `faultline/telemetry/` | 2 Telemetry + Elastic | Not started — OTel → ES, fingerprint queries, ES audit sink |
 | `faultline/brain/` | 3 Brain | Not started — OpenAI triage, noise model, planner, judge |
 | `product/ (faultline_product)` | 4 Product | In progress — orchestrator, adapters, Devin adapter, CLI; UI not started |
@@ -37,6 +37,7 @@ Other packages depend on contracts via `uv add --editable ../contracts` (path ad
 | C3 | `levers.py` | `LeverAdapter` protocol (`catalog`, `estimate_blast_radius`, `apply(lever_id, params, ttl_s)`, `undo`, `status`); `CATALOG`: `retry_cap`, `shed`, `db_failover`, `canary_weight`; `Experiment` = apply → hold → undo | Adapters → Brain, Orchestrator |
 | C4 | `audit.py` | `AuditEvent` (stage 1–8, kind, actor); `AuditSink` protocol, `JsonlSink`; ES index `faultline-audit`; `experiment_windows()` derives phase boundaries | Orchestrator → ES, UI |
 | C5 | `fault.py` | Fault controller API (:9900) + `HttpFaultController`. **Hidden from Faultline** | Sandbox → `bench/` only |
+| C6 | *planned* | Clone lab: create/reset/destroy clones, replay workload, clone-only lab actions (retry/timeout, DB latency/capacity, CPU, batch pause, restart/kill). **Never touches production; never exposes hidden state** | Sandbox (Owner 1) → investigators (Owner 3), orchestrator (Owner 4) |
 
 `metrics.py` is the metric-key registry: `svc.<svc>.<field>`, `db.<field>`, `edge.<src>.<dst>.<field>`, `slo.<name>.value`.
 
@@ -51,6 +52,7 @@ Sandbox control endpoints for real levers (Owner 1 serves, Owner 4 calls) are de
 
 ## Rules
 
+- **Three environments (v6):** production (hidden cause; Faultline may only use C3 levers), clean clones (built only from observable config/versions/workload; C6 actions allowed), benchmark controller (C5; invisible to Faultline and investigators). Never copy hidden fault state into a clone.
 - **Fairness (enforced by `tests/test_boundary.py`):** code under `faultline/` must never import `faultline_contracts.fault`; runtime code must not import `faultline_contracts.fakes` (tests may). Never put world/fault labels or trigger timing in telemetry.
 - **Units:** `_ms`, `_qps`, ratios/rates in 0–1. UTC timestamps. 5 s windows (`WINDOW_S`).
 - **Missing data is omitted (`None`), never 0** — otherwise the judge reads a fake drop.
