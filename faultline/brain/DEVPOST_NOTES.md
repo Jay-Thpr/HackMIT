@@ -94,5 +94,5 @@ feedback, not evidence of H_db accuracy: host contention can have the same
 response to a retry cap. The prompt now requires a direct recovery experiment
 for a claimed capacity/dependency cause, and the judge measures the settled
 tail of the during phase so a short recovery is not diluted by the initial
-drain. Changing the frozen H_db fixture itself remains a contract-approved
-follow-up.
+drain. The C2 contract now marks retry-cap-only H_db evidence as diagnostic;
+the direct DB-failover recovery test is required for confirmation.

@@ -312,6 +312,7 @@ class Orchestrator:
         )
         if (
             confirming
+            and confirming.confirms_if is not None
             and confirming.confirms_if.phase.value == "after_release"
             and confirming.confirms_if.expect.value == "within_baseline"
         ):

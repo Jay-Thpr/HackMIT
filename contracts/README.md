@@ -95,7 +95,9 @@ breached = [s for s in fp.slos if s.breached]
   `ambiguous`, `reasoning`, `hypotheses: list[Hypothesis]`, `predictions: list[Prediction]`.
   A `Prediction` is per hypothesis × experiment: `during` / `after_release` lists of
   `MetricExpectation(metric, direction: up|down|flat)` plus `confirms_if: Confirmation(phase, metric,
-  expect: within_baseline|up|down|flat)`.
+  expect: within_baseline|up|down|flat) | null`. `null` means the experiment is
+  diagnostic only; every hypothesis in an ambiguous draft must still have at least
+  one non-null positive confirmation test on another prediction.
 - **`TriageResult`** = `TriageDraft` + `incident_id`, `created_at`, `schema_version` (added by our code, not the LLM).
 - **`draft.problems(known_metrics, experiment_ids)`** — semantic checks beyond the schema (unknown/malformed
   metric keys, predictions for unknown hypotheses or experiments, duplicate ids, reserved `none_of_the_above`).

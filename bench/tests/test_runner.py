@@ -31,13 +31,29 @@ def test_active_loop_confirms_the_storm_with_zero_blast_retry_cap():
 
 
 @pytest.mark.parametrize("seed", [1, 2, 3])
-def test_retry_cap_confirms_reduced_db_because_db_stays_slow_under_reduced_load(seed):
+def test_retry_cap_separates_but_does_not_confirm_reduced_db(seed):
     triage, candidates = inputs()
     result = run_hero_case(FakeWorld(seed=seed), lambda world: world.degrade_db(DegradeDbFault()), triage, candidates)
 
     assert result.selected_experiment_id == "retry_cap_0_20s"
-    # H_db's confirmation is a positive test: DB query time stays high while the cap
-    # holds load at 80/s, which neither the storm nor CPU starvation reproduces.
+    # A retry cap is diagnostic only: host contention can also remain slow under
+    # reduced retries. H_db needs the direct db_failover recovery test.
+    assert result.diagnosis == "none_of_the_above"
+    assert result.confirmed is False
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3])
+def test_db_failover_directly_confirms_reduced_db(seed):
+    triage, candidates = inputs()
+    result = run_hero_case(
+        FakeWorld(seed=seed),
+        lambda world: world.degrade_db(DegradeDbFault()),
+        triage,
+        candidates,
+        chooser=lambda _incident, items: next(item for item in items if item.id == "db_failover_30s"),
+    )
+
+    assert result.selected_experiment_id == "db_failover_30s"
     assert result.diagnosis == "H_db"
     assert result.confirmed is True
 

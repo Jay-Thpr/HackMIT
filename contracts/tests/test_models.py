@@ -127,6 +127,12 @@ def test_problems_catches_errors():
     bad.hypotheses[0].id = NONE_OF_THE_ABOVE
     assert any("reserved" in p for p in bad.problems())
 
+    bad = t.model_copy(deep=True)
+    for prediction in bad.predictions:
+        if prediction.hypothesis_id == "H_db":
+            prediction.confirms_if = None
+    assert any("H_db" in p and "positive confirmation" in p for p in bad.problems())
+
     assert any("unknown experiment" in p for p in t.problems(experiment_ids={"retry_cap_0_20s"}))
 
 

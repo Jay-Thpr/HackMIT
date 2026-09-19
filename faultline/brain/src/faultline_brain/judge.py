@@ -237,6 +237,8 @@ def _confirm(
         if pred.hypothesis_id != leader_id:
             continue
         confirms = pred.confirms_if
+        if confirms is None:
+            continue  # diagnostic evidence; this experiment cannot confirm a cause
         obs = obs_index.get((pred.experiment_id, confirms.phase, confirms.metric))
         if obs is None:
             continue  # this experiment's confirms_if metric was never measured

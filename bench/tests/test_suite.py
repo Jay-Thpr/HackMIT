@@ -20,5 +20,7 @@ def test_frozen_suite_aggregates_active_and_injected_baselines():
     ]
     report = run_frozen_suite(scenarios, [1, 2], triage, candidates, passive_diagnose=lambda _: "H_meta")
     assert len(report.runs) == 18  # three scenarios × two seeds × active/random/passive
-    assert report.accuracy("active") == 1.0
+    # The one-step active arm intentionally cannot claim H_db from a retry cap:
+    # it needs the subsequent direct db_failover recovery probe.
+    assert report.accuracy("active") == 2 / 3
     assert set(report.to_dict()["accuracy"]) == {"active", "passive", "random"}
