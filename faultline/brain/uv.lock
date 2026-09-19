@@ -58,7 +58,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "faultline-contracts", directory = "/Users/rishii3/HackMIT/contracts" },
+    { name = "faultline-contracts", editable = "../../contracts" },
     { name = "pydantic", specifier = ">=2" },
 ]
 
@@ -68,7 +68,7 @@ dev = [{ name = "pytest", specifier = ">=8" }]
 [[package]]
 name = "faultline-contracts"
 version = "0.1.0"
-source = { directory = "/Users/rishii3/HackMIT/contracts" }
+source = { editable = "../../contracts" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
