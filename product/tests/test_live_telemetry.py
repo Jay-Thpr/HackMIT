@@ -226,6 +226,23 @@ def test_wait_for_breach_and_timeout():
         source.wait_for_breach(timeout_s=0)
 
 
+def test_wait_for_breach_requires_sustained_breach():
+    # healthy, breached, healthy, breached, breached: one transient window must not count
+    source = _source(
+        [_snapshot(0), _snapshot(5, slow=True), _snapshot(10), _snapshot(15, slow=True), _snapshot(20, slow=True)]
+    )
+    source.snapshot()
+    source.snapshot()
+    assert source.latest().slos[0].breached
+    with pytest.raises(TimeoutError):
+        source.wait_for_breach(timeout_s=0.05, poll_s=0.01, sustain_s=10)
+    source.snapshot()  # healthy again: the breach clock must restart
+    source.snapshot()
+    source.snapshot()
+    fingerprint = source.wait_for_breach(timeout_s=1, poll_s=0.01, sustain_s=0.05)
+    assert fingerprint.slos[0].breached
+
+
 def test_unavailable_http_propagates_and_healthz_is_false():
     def failing_http(url, timeout):
         raise urllib.error.URLError("refused")

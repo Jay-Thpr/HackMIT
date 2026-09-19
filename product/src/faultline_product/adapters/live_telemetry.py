@@ -190,15 +190,29 @@ class LiveTelemetrySource:
         self._persist(fingerprint)
         return fingerprint
 
-    def wait_for_breach(self, timeout_s: float, poll_s: float = 1.0) -> Fingerprint:
+    def wait_for_breach(
+        self, timeout_s: float, poll_s: float = 1.0, sustain_s: float = 0
+    ) -> Fingerprint:
+        """Return the latest fingerprint once the SLO has been breached continuously for `sustain_s`.
+
+        A single breached window is a transient; acting on it means experimenting while the
+        trigger is still active, which confounds the judge (a retry cap during a 20 s DB hiccup
+        looks like a degraded DB). The PRD detector is "p99 above threshold for 60 s".
+        """
         if timeout_s <= 0:
             raise TimeoutError(f"no SLO breach observed within {timeout_s}s")
         deadline = time.monotonic() + timeout_s
+        breached_since: float | None = None
         while True:
             fingerprint = self.latest()
+            now = time.monotonic()
             if fingerprint is not None and any(slo.breached for slo in fingerprint.slos):
-                return fingerprint
-            remaining = deadline - time.monotonic()
+                breached_since = breached_since if breached_since is not None else now
+                if now - breached_since >= sustain_s:
+                    return fingerprint
+            else:
+                breached_since = None
+            remaining = deadline - now
             if remaining <= 0:
                 raise TimeoutError(f"no SLO breach observed within {timeout_s}s")
             self._stop.wait(min(max(poll_s, 0.01), remaining))

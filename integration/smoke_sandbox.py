@@ -31,7 +31,7 @@ from typing import Any
 
 import httpx
 
-from faultline_contracts.fault import DegradeDbFault, HttpFaultController, StormFault, World
+from faultline_contracts.fault import CpuStarveFault, DegradeDbFault, HttpFaultController, StormFault, World
 
 STATS_URLS = {
     "orders": os.environ.get("ORDERS_STATS_URL", "http://127.0.0.1:8101"),
@@ -392,9 +392,35 @@ class Smoke:
         span = self.phase(15, "after reset")
         self.assert_all_healthy("healthy baseline restored after final reset", span)
 
-    def run(self) -> Report:
+    def step_cpu(self, cpus: float = 0.1, cap_s: int = 20) -> None:
+        """None-of-the-above world: neither the retry cap nor failover heals it. Optional (needs the Docker socket)."""
+        self.begin("11-cpu-starve", f"C5 cpu_starve payments cpus={cpus}: neither lever should heal")
+        self.assert_all_healthy("healthy before cpu_starve", self.phase(10, "baseline"))
+        try:
+            st = self.fc.cpu_starve(CpuStarveFault(service="payments", cpus=cpus))
+        except httpx.HTTPStatusError as e:
+            self.check("C5 cpu_starve accepted", False, f"{e.response.status_code} {e.response.text[:160]} "
+                       "(501 = Docker socket not mounted; documented, skipping world)")
+            return
+        self.check("C5 cpu_starve returns world=cpu_starve active=True", st.world == World.cpu_starve and st.active, st.model_dump_json())
+        inc = self.phase(30, "incident")
+        self.check("cpu: incident develops", is_incident(self.s.tail(inc, 15)), fmt(self.s.tail(inc, 15)))
+        j = self.apply_lever("retry_override", {"max_retries": 0, "ttl_s": cap_s}, "retry_cap")
+        cap = self.phase(cap_s - 2, "retry cap 0")
+        self.wait_lever_expired("retry_cap", j["expires_at"] if j else None)
+        after = self.phase(30, "cap released")
+        self.check("cpu: retry cap does not permanently heal", not is_healthy(self.s.tail(after, 15)),
+                   f"during: {fmt(self.s.tail(cap, 10))} | after: {fmt(self.s.tail(after, 15))}")
+        self.apply_lever("db/failover", {"ttl_s": 60}, "db_failover")
+        fo = self.phase(30, "db failover")
+        self.check("cpu: db failover does not heal", not is_healthy(self.s.tail(fo, 15)), fmt(self.s.tail(fo, 15)))
+        self.begin("12-reset", "C5 reset after cpu_starve")
+        self.reset("cpu")
+        self.assert_all_healthy("healthy baseline restored after cpu reset", self.phase(15, "after reset"))
+
+    def run(self, with_cpu: bool = False) -> Report:
         steps = [self.step_baseline, self.step_storm, self.step_storm_cap, self.step_reset_mid, self.step_degraded,
-                 self.step_degraded_cap, self.step_failover, self.step_reset_end]
+                 self.step_degraded_cap, self.step_failover, self.step_reset_end] + ([self.step_cpu] if with_cpu else [])
         try:
             for st in steps:
                 st()
@@ -423,6 +449,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--quiet", action="store_true", help="suppress per-second rows")
     ap.add_argument("--report", type=Path, default=None, help="JSON report path (default runs/smoke-<utc>.json)")
+    ap.add_argument("--cpu", action="store_true", help="also run the cpu_starve (none-of-the-above) world")
+    ap.add_argument("--repeat", type=int, default=1, help="run the whole sequence N times; summary of pass counts and timings")
     args = ap.parse_args()
     try:
         httpx.get(f"{CONTROL_URL}/healthz", timeout=3).raise_for_status()
@@ -430,14 +458,20 @@ def main() -> None:
     except httpx.HTTPError as e:
         print(f"sandbox not reachable ({e!r}); start it with `cd sandbox && docker compose up -d --build`")
         sys.exit(2)
-    report = Smoke(verbose=not args.quiet).run()
-    out = args.report or Path(__file__).parent / "runs" / f"smoke-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.json"
-    write_report(report, out)
-    failed = report.failed
-    print(f"\n{len(report.checks) - len(failed)}/{len(report.checks)} checks passed; report: {out}")
-    for c in failed:
-        print(f"  FAILED [{c.step}] {c.name}  {c.detail}")
-    sys.exit(1 if failed or report.aborted else 0)
+    stamp = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}"
+    any_failed = False
+    for i in range(args.repeat):
+        if args.repeat > 1:
+            print(f"\n##### run {i + 1}/{args.repeat}", flush=True)
+        report = Smoke(verbose=not args.quiet).run(with_cpu=args.cpu)
+        out = args.report if args.repeat == 1 and args.report else Path(__file__).parent / "runs" / f"smoke-{stamp}-{i + 1}.json"
+        write_report(report, out)
+        failed = report.failed
+        any_failed |= bool(failed or report.aborted)
+        print(f"\n{len(report.checks) - len(failed)}/{len(report.checks)} checks passed; report: {out}")
+        for c in failed:
+            print(f"  FAILED [{c.step}] {c.name}  {c.detail}")
+    sys.exit(1 if any_failed else 0)
 
 
 if __name__ == "__main__":
