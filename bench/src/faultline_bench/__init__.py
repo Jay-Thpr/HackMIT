@@ -2,5 +2,6 @@
 
 from .runner import BenchmarkResult, run_hero_case, run_llm_only_case, run_passive_only_case, run_random_case
 from .baselines import AmbiguityReport, NearestCentroid, evaluate_passive
+from .suite import Scenario, SuiteReport, SuiteRun, run_frozen_suite
 
-__all__ = ["AmbiguityReport", "BenchmarkResult", "NearestCentroid", "evaluate_passive", "run_hero_case", "run_llm_only_case", "run_passive_only_case", "run_random_case"]
+__all__ = ["AmbiguityReport", "BenchmarkResult", "NearestCentroid", "Scenario", "SuiteReport", "SuiteRun", "evaluate_passive", "run_frozen_suite", "run_hero_case", "run_llm_only_case", "run_passive_only_case", "run_random_case"]
