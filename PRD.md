@@ -307,7 +307,7 @@ flowchart LR
 - Envoy in front of Orders and between Orders and Payments: timeouts, traffic weights, shedding, canary split. Retries live in Orders' own code (the thing Devin patches), with a runtime override endpoint for the retry-cap lever.
 - Fault controller (hidden from Faultline): DB delay trigger, batch-job load (World B), CPU limit (none-of-the-above).
 - **Clone runtime:** isolated Compose replicas of the target (own project, network and ports), each with its own lab API (C6): create/reset/destroy, workload replay, lab primitives, patched-version slot.
-- OTel auto-instrumentation → Collector → Elasticsearch.
+- **Two telemetry roles, one contract.** `/stats` → `fingerprint_from_stats` is the canonical C1 source for the loop and the benchmark through the freeze (deterministic, no ingest lag). OTel auto-instrumentation → Collector → Elastic Cloud is the evidence layer: raw traces/metrics/logs a judge can inspect in Kibana behind every Faultline decision, and what makes Faultline pluggable. *If ahead:* `fingerprint_from_otel` behind the same `TelemetrySource` protocol, validated against `fingerprint_from_stats` on the same windows before it feeds anything.
 
 ### Elastic tools we will use (Owner 2)
 
@@ -320,11 +320,15 @@ Docker Compose runs the target system and an OpenTelemetry Collector. **Elastic 
 - **Kibana Discover (demo support):** saved views expose raw OTLP signals alongside the C1 and C4 indices. This gives the distributed-systems owner a quick ingestion check and lets judges inspect the evidence behind a Faultline decision.
 - **`semantic_text` plus hybrid search (polish; never verdict input):** searches separately indexed human-readable log-highlight templates, audit details and incident summaries using both exact terms and semantic similarity. It helps a human find related incidents when wording differs, while the Brain's diagnosis remains based only on measured C1 evidence and the noise model.
 
+**OTel plan.** Python auto-instrumentation (FastAPI, httpx, asyncpg) in the shared app image via env, not code changes; `faultctl` and `control` are **not** instrumented. One `otel-collector` service per compose project (production and each clone) with an OTLP receiver, a `resource` processor setting `deployment.environment=production|clone-<slot>`, a `filter` processor dropping `/internal/*` and `/admin/*` spans, exporting to Elastic Cloud's OTLP endpoint with the API key. Owner 2 writes the collector config and env; Owner 1 lands it in `sandbox/` and re-runs two `sweep_lab.py` cells (rps 80, World A + B) to confirm the storm still ignites and heals with instrumentation on. Data streams: Elastic's default `traces-*`/`metrics-*`/`logs-*`; the Kibana APM service map is the demo view.
+
+**Credentials and environment.** The Elastic Cloud deployment runs on sponsor credits. Endpoint + API key live in the root `.env` as `FAULTLINE_ELASTICSEARCH_URL` / `FAULTLINE_ELASTICSEARCH_API_KEY` (auto-loaded by the CLI and the smoke script; `.env` is gitignored, `.env.example` is the template). The Collector reads the same two values. The local `faultline-es` container on `:9200` with no key is the offline fallback; **the demo laptop keeps it running as a hot spare.** Smoke: `cd faultline/telemetry && uv run python scripts/es_smoke.py`.
+
 **Faultline:**
 
 | Component | Responsibility |
 | --- | --- |
-| Telemetry adapter | ES queries → per-window fingerprint (p50/p99, QPS, errors, retry ratio, DB query time) |
+| Telemetry adapter | `/stats` deltas → per-window C1 fingerprint (p50/p99, QPS, errors, retry ratio, DB query time), persisted to `faultline-fingerprints`; ES Query DSL + ES\|QL for history, similarity and the timeline |
 | Detector | SLO threshold alert |
 | Triage | OpenAI call: fingerprint → hypotheses + predictions (schema above) |
 | Planner + judge | Noise model, lever ranking, support update, confirmation check |
@@ -336,7 +340,7 @@ Docker Compose runs the target system and an OpenTelemetry Collector. **Elastic 
 | CLI | `faultline watch`, `investigate`, `experiment`, `report` |
 | UI | Latency/load chart, hypotheses + evidence panels, planner candidate table, audit log, live investigator/clone panels |
 
-**Fairness rules:** fault-controller state, world labels and trigger timing are never visible to Faultline or its investigators; clones are built only from observable/configurable state; C6 actions only reach clones. On the OTel Demo, filter flagd attributes out of telemetry and never use flag flips as levers.
+**Fairness rules:** fault-controller state, world labels and trigger timing are never visible to Faultline or its investigators; clones are built only from observable/configurable state; C6 actions only reach clones. On the OTel Demo, filter flagd attributes out of telemetry and never use flag flips as levers. OTel resource and span attributes never carry world/fault labels, `io_profile`, or trigger timing; the collector drops fault-controller and admin spans.
 
 ## Demo
 
@@ -395,7 +399,7 @@ We target four primary challenges, each with one visible piece in the demo, plus
 | Warp: Best Developer Tool | Improving the dev lifecycle (create, modify, test) | Automated debugging and testing for live systems; CLI run in Warp | Product |
 | Cognition: Best Use of Devin | Creativity, novelty, polish | Diagnose → Devin patch → canary verify → evidence back to Devin for revision; also use Devin during the build | Product |
 | OpenAI | API use + how Codex helped build | API does triage, hypotheses, structured predictions, report; a concrete Codex story from the build log | Brain |
-| Elastic: Find the Signal | Elasticsearch turning messy data into insight/action | All telemetry and the audit log in Elasticsearch; triage queries; similar-past-incidents search | Telemetry |
+| Elastic: Find the Signal | Elasticsearch turning messy data into insight/action | OTel ingestion into Elastic Cloud; C1/C4 indices with explicit mappings; Query DSL for incident/experiment history; ES\|QL timeline in the CLI; similar-past-incidents search; Kibana APM + Discover as evidence | Telemetry |
 | The Token Company | LLM cost savings in the product | Tokens per incident: compressed fingerprint vs. raw telemetry dump | Brain |
 | Ramp | Saves time and money | Time to mitigation vs. a human paging loop | Anyone (write-up only) |
 
@@ -432,7 +436,7 @@ Build the core loop to 100% before any layer; the plan assumes 4 people and a Su
 | Owner | Builds (v5, kept) | Adds in v6 |
 | --- | --- | --- |
 | 1 Sandbox + storm | Services, Envoy, load generator, fault controller, storm gate | **The lab:** clone runtime (isolated Compose replicas), create/reset/destroy lifecycle, workload/incident replay, reproducible fault states, C6 lab actions (retry/timeout, load, DB latency/capacity, CPU, batch pause, restart/kill), patched-version slot in clones |
-| 2 Telemetry + Elastic | OTel, Collector, Elasticsearch, fingerprint queries, audit log store | Clone id on all telemetry, per-clone fingerprints, clone vs. production fingerprint comparison, reproduction-similarity metric, experiment-history storage and queries |
+| 2 Telemetry + Elastic | OTel, Collector, Elasticsearch, fingerprint queries, audit log store | ✅ Clone id on all telemetry, ✅ per-clone fingerprints, ✅ clone vs. production fingerprint comparison, ✅ experiment-history storage and queries; open: OTel → Elastic Cloud, reproduction-similarity metric, similar-incident search surfaced at triage |
 | 3 Brain | OpenAI triage and predictions, noise model, planner, judge, benchmark runner | **The scientist:** investigator agents (one per hypothesis), clone experiment selection, reproduction and falsification scoring, stopping rules, measured predictions for the production probe, clone arm in the benchmark; *v6.1:* reproduction recipes, patch-attack investigator |
 | 4 Product | Orchestrator, action and code adapters, Devin + canary, CLI, UI, demo | Launch clone investigations, C6 clone adapter, live investigator panels, send diagnosis + reproduction to Devin, route the patch through clone verification before the production canary; *v6.1:* replay-suite store, planner candidate table in the UI, counterexample back to Devin |
 
@@ -440,7 +444,7 @@ Build the core loop to 100% before any layer; the plan assumes 4 people and a Su
 
 | Time (Sat → Sun) | Milestone |
 | --- | --- |
-| now → 3:30 pm | Storm gate passes (or fallback chosen); skeleton services traced into Elasticsearch |
+| now → 3:30 pm | Storm gate passes (or fallback chosen); ~~skeleton services traced into Elasticsearch~~ (slipped: OTel → Collector → Elastic Cloud is now the 6 → 9 pm Owner 2 item) |
 | 3:30 → 9 pm | Ugly end-to-end loop: incident → triage → experiment → diagnosis. In parallel: C6 contract agreed, clone runtime up (Owner 1) |
 | 9 pm → 2 am | Devin + canary, chart UI, Elastic queries, CLI. Clone lab: 2 investigators reproduce both hero hypotheses; patch verification in a clone |
 | 2 → 6 am | Freeze; benchmark runs unattended; record fallback video; polish |
@@ -451,17 +455,17 @@ Build the core loop to 100% before any layer; the plan assumes 4 people and a Su
 | Phase | 1 Sandbox + storm | 2 Telemetry + Elastic | 3 Brain | 4 Product |
 | --- | --- | --- | --- | --- |
 | **→ 3:30 pm** | ✅ Services, Postgres, load generator; storm gate (5/5). ✅ Also done early: Envoy, retry override, World B, fault controller, v2 slot, CPU-starve world, `sandbox/INTEGRATION.md`. ✅ *C6 clone-lab contract drafted and approved by Owner 3* | Get OTel → Collector → ES running **first**, then the fingerprint query (sandbox `/stats` mapping in `sandbox/INTEGRATION.md`) | OpenAI triage prompt against C1 fixtures; noise model math; *review and approve C6* | Orchestrator state machine on fake adapters; CLI skeleton; Devin API access check |
-| **3:30 → 6 pm** | ✅ *Clone runtime: lab manager `:9910` (`sandbox/services/lab`), `clone.override.yml`, `validate_lab.py fairness` 8/8 (no faultctl, clean DB, production `:9900` refuses clone traffic)* | ✅ Live fingerprint adapter, ES store, audit index, ambiguity export. **Now:** stand up OTel Collector → ES in Compose; join the live-loop run | ✅ Noise, judge, planner, triage wiring, bench runners on `FakeWorld`. **Now:** ambiguity check *result* (centroid + passive LLM on live fingerprints); join the live-loop run | ✅ Orchestrator, CLI, sandbox + live-telemetry adapters, Devin adapter, canary flow. ✅ **First end-to-end v5 loop on the live sandbox** (`integration/live_loop.py`, PR #16): storm → H_meta confirmed (p50 −7.8σ during, −0.15σ after release), degraded → H_db confirmed (p50 flat during, +74σ after) — with fixture triage fallback; detector fixed to a sustained 60 s breach. **Now:** same run with `OPENAI_API_KEY` set (real triage); verify Devin API access |
-| **6 → 9 pm** | ✅ *C6 API checks 24/24 (`validate_lab.py api`); reproduction recipes documented in `INTEGRATION.md`; production + 2 clones profiled (~300 MB, ~0.2 CPU each)*. **Now:** support Owners 3/4 first live clone runs | *Clone id on all telemetry, per-clone fingerprints*; UI data queries | *Investigator loop for one hypothesis on one clone*; **live-sandbox benchmark runner** (C5 + `:9901` + `/stats`/ES; scaffolding exists in `integration/live_loop.py` — reset → inject → run → score → reset) | *C6 clone adapter*; UI chart + two panels + **planner candidate table**; prebuilt fallback patch |
+| **3:30 → 6 pm** | ✅ *Clone runtime: lab manager `:9910` (`sandbox/services/lab`), `clone.override.yml`, `validate_lab.py fairness` 8/8 (no faultctl, clean DB, production `:9900` refuses clone traffic)* | ✅ Live fingerprint adapter, ES store, audit index, ambiguity export. ✅ Elastic Cloud auth (ApiKey), index templates (keyword ids, date windows, double metrics), audit sink wired into the CLI, ES\|QL `incident_timeline`, search-size fix, root `.env` loading, live smoke against ES 8.15. **Now:** stand up OTel Collector → Elastic Cloud in Compose (plan above); join the live-loop run | ✅ Noise, judge, planner, triage wiring, bench runners on `FakeWorld`. **Now:** ambiguity check *result* (centroid + passive LLM on live fingerprints); join the live-loop run | ✅ Orchestrator, CLI, sandbox + live-telemetry adapters, Devin adapter, canary flow. ✅ **First end-to-end v5 loop on the live sandbox** (`integration/live_loop.py`, PR #16): storm → H_meta confirmed (p50 −7.8σ during, −0.15σ after release), degraded → H_db confirmed (p50 flat during, +74σ after) — with fixture triage fallback; detector fixed to a sustained 60 s breach. **Now:** same run with `OPENAI_API_KEY` set (real triage); verify Devin API access |
+| **6 → 9 pm** | ✅ *C6 API checks 24/24 (`validate_lab.py api`); reproduction recipes documented in `INTEGRATION.md`; production + 2 clones profiled (~300 MB, ~0.2 CPU each)*. **Now:** support Owners 3/4 first live clone runs | ✅ *Clone id on all telemetry, per-clone fingerprints (PR #17)*. **Now:** OTel Collector → Elastic Cloud, Kibana APM service map showing production vs. clone; UI data queries | *Investigator loop for one hypothesis on one clone*; **live-sandbox benchmark runner** (C5 + `:9901` + `/stats`/ES; scaffolding exists in `integration/live_loop.py` — reset → inject → run → score → reset) | *C6 clone adapter*; UI chart + two panels + **planner candidate table**; prebuilt fallback patch |
 | **9 pm → 2 am** | ✅ *Both hero hypotheses reproduce in clones, CPU world fails both tests (`validate_lab.py storm|degraded|cpu` 25/25); patched orders-v2 builds and canaries in a clone via `patch_ref`.* Remaining: clone reset reliability under repeated runs | **Similar-incident search** over fingerprints + recipes; tokens-per-incident metric; *clone-vs-production similarity metric; experiment-history queries* | *2 investigators, reproduction/falsification scoring, measured predictions for the production probe; reproduction recipes saved; patch-attack investigator*; baselines complete (passive-only, production-only, LLM-only, centroid, random, **clone arm**) | Devin → *replay suite + patch attack in a clone* → build v2 → canary → verify → revise; replay-suite store; *investigator panels*; counterexample back to Devin |
 | **2 → 6 am** | Harden storm reliability (✅ 5/5 already); *clone reset reliability* | Support benchmark runs | **Run the overnight benchmark on the live sandbox on frozen code** (*clone arm if stable*) | Report, record fallback video |
 | **6 am →** | Rehearse the demo | Elastic Devpost write-up | OpenAI + Token Co write-ups, Codex log | Warp + Devin write-ups, demo driver |
 
-**Cut order if behind:** OTel Demo suite → easy case → none-of-the-above in the live demo (keep it in the benchmark) → similar-incident search (keep storage) → patch attack (keep replay) → benchmark clone arm → clone-lab extras (keep 2 investigators) → live-sandbox benchmark (fall back to `FakeWorld`, labelled as simulator numbers) → live canary (show recorded) → Devin live (use fallback patch). If the clone lab threatens the proven storm → experiment → judge loop, fall back to the v5 loop. Never cut: storm, experiment, judge vs. noise, the chart, the benchmark table.
+**Cut order if behind:** OTel Demo suite → easy case → none-of-the-above in the live demo (keep it in the benchmark) → `semantic_text`/hybrid search → similar-incident search (keep storage) → patch attack (keep replay) → benchmark clone arm → clone-lab extras (keep 2 investigators) → live-sandbox benchmark (fall back to `FakeWorld`, labelled as simulator numbers) → live canary (show recorded) → Devin live (use fallback patch). If the clone lab threatens the proven storm → experiment → judge loop, fall back to the v5 loop. Never cut: storm, experiment, judge vs. noise, the chart, the benchmark table.
 
 ## Definition of done
 
-The project is done when a judge watching the demo can see all twelve of these, and the build checks below pass. Interface details live in the [Contracts](file/d0142742-f4d4) tab.
+The project is done when a judge watching the demo can see all thirteen of these, and the build checks below pass. Interface details live in the [Contracts](file/d0142742-f4d4) tab.
 
 **What a judge must see:**
 
@@ -477,6 +481,7 @@ The project is done when a judge watching the demo can see all twelve of these, 
 10. A benchmark table shows experiments beating passive-only and LLM-only on ambiguous incidents.
 11. Two investigators each reproduce their hypothesis in a clean clone and measure its response to the retry cap before production is touched.
 12. The Devin patch survives the incident replay suite and an investigator's attempt to break it in a clone before its canary.
+13. Kibana shows the raw OTel traces of the incident the demo just diagnosed, tagged production vs. clone, next to the C1/C4 indices Faultline wrote.
 
 **Build checks:**
 
