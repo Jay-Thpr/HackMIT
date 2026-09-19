@@ -1,0 +1,130 @@
+# Faultline hero sandbox:  loadgen -> Envoy(:8080) -> orders -> Envoy(:8081) -> payments -> Postgres
+#
+# Host ports (127.0.0.1 only):
+#   8080  gateway (Envoy front door)
+#   9901  control API: operator levers, the only write path Faultline may use
+#   9900  fault controller: HIDDEN, benchmark/demo only
+#   8101/8102/8103  orders/payments/loadgen GET /stats (app telemetry, for diagnostics)
+#
+# Tunables: override any ${VAR} from the shell or a .env file next to this file.
+name: faultline-sandbox
+
+x-tunables: &tunables
+  SANDBOX_TOKEN: ${SANDBOX_TOKEN:-sandbox-internal}
+  LOAD_RPS: ${LOAD_RPS:-80}
+  ORDERS_MAX_RETRIES: ${ORDERS_MAX_RETRIES:-3}
+  ORDERS_ATTEMPT_TIMEOUT_MS: ${ORDERS_ATTEMPT_TIMEOUT_MS:-500}
+  DB_POOL_SIZE: ${DB_POOL_SIZE:-4}
+  STANDBY_POOL_SIZE: ${STANDBY_POOL_SIZE:-16}
+  DB_BASE_MS: ${DB_BASE_MS:-38}
+  PAYMENTS_CPU_WORK_MS: ${PAYMENTS_CPU_WORK_MS:-1}
+  DB_ACQUIRE_TIMEOUT_MS: ${DB_ACQUIRE_TIMEOUT_MS:-1000}
+  RESET_TIMEOUT_S: ${RESET_TIMEOUT_S:-120}
+
+x-app: &app
+  image: faultline-sandbox-app:latest
+  build: {context: .., dockerfile: sandbox/Dockerfile}
+  restart: unless-stopped
+
+x-db: &db
+  image: postgres:16-alpine
+  restart: unless-stopped
+  environment:
+    POSTGRES_USER: app
+    POSTGRES_DB: shop
+    POSTGRES_HOST_AUTH_METHOD: trust
+  command: [postgres, -c, max_connections=200, -c, synchronous_commit=off]
+  volumes:
+    - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+  healthcheck:
+    test: [CMD, pg_isready, -U, app, -d, shop]
+    interval: 2s
+    timeout: 2s
+    retries: 30
+
+services:
+  db-primary:
+    <<: *db
+  db-standby:
+    <<: *db
+
+  payments:
+    <<: *app
+    cpus: ${PAYMENTS_CPUS:-2}   # explicit limit so cpu_starve can restore it exactly
+    command: [uvicorn, services.payments.app:app, --host, 0.0.0.0, --port, "8000", --no-access-log, --timeout-keep-alive, "120"]
+    environment:
+      <<: *tunables
+      PRIMARY_DSN: postgresql://app@db-primary:5432/shop
+      STANDBY_DSN: postgresql://app@db-standby:5432/shop
+    ports: ["127.0.0.1:8102:8000"]
+    depends_on:
+      db-primary: {condition: service_healthy}
+      db-standby: {condition: service_healthy}
+
+  orders:
+    <<: *app
+    command: [uvicorn, services.orders.app:app, --host, 0.0.0.0, --port, "8000", --no-access-log, --timeout-keep-alive, "120"]
+    environment:
+      <<: *tunables
+      SERVICE_VERSION: v1
+      PAYMENTS_URL: http://envoy:8081/pay
+    ports: ["127.0.0.1:8101:8000"]
+    depends_on: [payments]
+
+  # Canary build. Off by default; Owner 4 builds it from a patched checkout:
+  #   ORDERS_V2_CONTEXT=/path/to/patched/repo docker compose --profile canary up -d --build orders-v2
+  orders-v2:
+    image: faultline-sandbox-orders-v2:latest
+    restart: unless-stopped
+    profiles: [canary]
+    build: {context: "${ORDERS_V2_CONTEXT:-..}", dockerfile: sandbox/Dockerfile}
+    command: [uvicorn, services.orders.app:app, --host, 0.0.0.0, --port, "8000", --no-access-log, --timeout-keep-alive, "120"]
+    environment:
+      <<: *tunables
+      SERVICE_VERSION: v2
+      PAYMENTS_URL: http://envoy:8081/pay
+    ports: ["127.0.0.1:8104:8000"]
+    depends_on: [payments]
+
+  envoy:
+    image: envoyproxy/envoy:v1.31-latest
+    restart: unless-stopped
+    command: [envoy, -c, /etc/envoy/envoy.yaml, --log-level, warn]
+    volumes:
+      - ./envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on: [orders, payments]
+
+  loadgen:
+    <<: *app
+    command: [uvicorn, services.loadgen.app:app, --host, 0.0.0.0, --port, "8000", --no-access-log]
+    environment:
+      <<: *tunables
+      TARGET_URL: http://envoy:8080/checkout
+    ports: ["127.0.0.1:8103:8000"]
+    depends_on: [envoy]
+
+  control:
+    <<: *app
+    command: [uvicorn, services.control.app:app, --host, 0.0.0.0, --port, "8000", --no-access-log]
+    environment:
+      <<: *tunables
+      ORDERS_URLS: http://orders:8000
+      ORDERS_V2_URL: http://orders-v2:8000
+      PAYMENTS_URL: http://payments:8000
+      ENVOY_ADMIN_URL: http://envoy:9902
+    ports: ["127.0.0.1:9901:8000"]
+    depends_on: [envoy]
+
+  faultctl:
+    <<: *app
+    command: [uvicorn, services.faultctl.app:app, --host, 0.0.0.0, --port, "8000", --no-access-log]
+    environment:
+      <<: *tunables
+      PRIMARY_ADMIN_DSN: postgresql://app@db-primary:5432/shop
+      STANDBY_ADMIN_DSN: postgresql://app@db-standby:5432/shop
+      CONTROL_URL: http://control:8000
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports: ["127.0.0.1:9900:8000"]
+    depends_on: [control, loadgen]

@@ -11,7 +11,7 @@ An autonomous incident responder. When telemetry can't distinguish causes that f
 | Path | Owner | Status |
 |---|---|---|
 | `contracts/` | shared | Built — interfaces C1–C5, fakes, fixtures, schemas, tests |
-| `sandbox/` | 1 Sandbox + storm | Not started — Docker Compose target system, Envoy, fault controller |
+| `sandbox/` | 1 Sandbox + storm | Built — Docker Compose target system, Envoy, fault controller :9900, levers :9901; see `sandbox/INTEGRATION.md` |
 | `faultline/telemetry/` | 2 Telemetry + Elastic | Not started — OTel → ES, fingerprint queries, ES audit sink |
 | `faultline/brain/` | 3 Brain | Not started — OpenAI triage, noise model, planner, judge |
 | `faultline/{adapters,orchestrator,cli,ui}/` | 4 Product | Not started — lever/code adapters, state machine, CLI, UI |
