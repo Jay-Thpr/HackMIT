@@ -28,3 +28,4 @@ observable output without reading hidden fault state.
 | `fingerprint.py` | C1 five-second fingerprint assembly from public stats deltas |
 | `source.py` | Polling `TelemetrySource`, with optional ES persistence |
 | `store.py` | Elasticsearch C1 fingerprint window/series reads |
+| `ambiguity.py` | Label-free canonical metric exports for passive ambiguity checks |
