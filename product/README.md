@@ -34,7 +34,9 @@ uv run faultline watch \
 The patch reference decides what gets built as orders-v2: a Devin PR URL is fetched as
 `refs/pull/N/head`, `branch:<name>` (the prebuilt fallback) is fetched from origin, each into a
 detached worktree under `.faultline/worktrees/`. `--canary-context <dir>` overrides this with an
-operator checkout. With `--devin` and `DEVIN_API_KEY`, a Devin session writes the fix; when clone
+operator checkout. With `--devin`, `DEVIN_API_KEY` (a `cog_` service-user key; the Devin API v3 rejects legacy
+`apk_` keys) and `DEVIN_ORG_ID`, a Devin session writes the fix (capped at `--devin-acu-limit`
+ACUs, default 5); when clone
 verification or the production canary fails, the measured evidence is posted back into the same
 session and the revised PR is fetched and verified again (`--max-revisions`, default 1). A patch
 that cannot be revised pages a human with the evidence.

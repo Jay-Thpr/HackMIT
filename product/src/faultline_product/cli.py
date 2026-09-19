@@ -55,7 +55,8 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("--fixture", choices=("storm",), default="storm")
     watch.add_argument("--incident", help="override the generated incident id")
     watch.add_argument("--real-time", action="store_true")
-    watch.add_argument("--devin", action="store_true")
+    watch.add_argument("--devin", action="store_true", help="ask Devin for the durable fix (needs DEVIN_API_KEY + DEVIN_ORG_ID)")
+    watch.add_argument("--devin-acu-limit", type=int, default=5, help="max ACUs a Faultline-created Devin session may spend")
     watch.add_argument("--levers", choices=("fixture", "sandbox"), default="fixture")
     watch.add_argument("--control-url")
     watch.add_argument("--telemetry", choices=("fixture", "sandbox"), default="fixture")
@@ -294,12 +295,21 @@ def _patch_adapter(args):
         reference="branch:faultline/fallback-retry-cap",
         summary="Prebuilt patch: bounded retries with exponential backoff and jitter",
     )
-    if getattr(args, "devin", False) or getattr(args, "levers", "fixture") == "sandbox":
-        return DevinAdapter(
-            api_key=os.getenv("DEVIN_API_KEY") if getattr(args, "devin", False) else None,
+    use_devin = getattr(args, "devin", False)
+    if use_devin or getattr(args, "levers", "fixture") == "sandbox":
+        adapter = DevinAdapter(
+            api_key=os.getenv("DEVIN_API_KEY") if use_devin else None,
+            org_id=os.getenv("DEVIN_ORG_ID") if use_devin else None,
             repo="github.com/Jay-Thpr/HackMIT",
             fallback=fallback,
+            max_acu_limit=getattr(args, "devin_acu_limit", 5),
         )
+        if use_devin and not adapter.enabled:
+            print(
+                "[patch] --devin set but DEVIN_API_KEY/DEVIN_ORG_ID missing "
+                "(v3 needs a cog_ service-user key and the org id); using the fallback patch"
+            )
+        return adapter
     return FixtureDevinAdapter()
 
 
