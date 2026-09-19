@@ -1,0 +1,17 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "cpus": {
+      "default": 0.1,
+      "title": "Cpus",
+      "type": "number"
+    },
+    "service": {
+      "default": "payments",
+      "title": "Service",
+      "type": "string"
+    }
+  },
+  "title": "CpuStarveFault",
+  "type": "object"
+}

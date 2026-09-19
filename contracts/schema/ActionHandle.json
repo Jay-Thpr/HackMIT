@@ -1,0 +1,75 @@
+{
+  "$defs": {
+    "ActionStatus": {
+      "enum": [
+        "active",
+        "undone",
+        "expired",
+        "failed"
+      ],
+      "title": "ActionStatus",
+      "type": "string"
+    },
+    "UndoSpec": {
+      "additionalProperties": false,
+      "description": "Enough to undo an action from a fresh process (serializable).",
+      "properties": {
+        "lever_id": {
+          "title": "Lever Id",
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "title": "Payload",
+          "type": "object"
+        }
+      },
+      "required": [
+        "lever_id"
+      ],
+      "title": "UndoSpec",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "action_id": {
+      "title": "Action Id",
+      "type": "string"
+    },
+    "applied_at": {
+      "format": "date-time",
+      "title": "Applied At",
+      "type": "string"
+    },
+    "lever_id": {
+      "title": "Lever Id",
+      "type": "string"
+    },
+    "params": {
+      "additionalProperties": true,
+      "title": "Params",
+      "type": "object"
+    },
+    "status": {
+      "$ref": "#/$defs/ActionStatus",
+      "default": "active"
+    },
+    "ttl_s": {
+      "title": "Ttl S",
+      "type": "integer"
+    },
+    "undo": {
+      "$ref": "#/$defs/UndoSpec"
+    }
+  },
+  "required": [
+    "action_id",
+    "lever_id",
+    "params",
+    "ttl_s",
+    "undo"
+  ],
+  "title": "ActionHandle",
+  "type": "object"
+}

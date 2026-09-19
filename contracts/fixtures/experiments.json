@@ -1,0 +1,36 @@
+[
+  {
+    "id": "retry_cap_0_20s",
+    "lever_id": "retry_cap",
+    "params": {
+      "max_retries": 0
+    },
+    "hold_s": 20,
+    "blast_radius_pct": 0.0
+  },
+  {
+    "id": "shed_10_20s",
+    "lever_id": "shed",
+    "params": {
+      "fraction": 0.1
+    },
+    "hold_s": 20,
+    "blast_radius_pct": 10.0
+  },
+  {
+    "id": "shed_50_20s",
+    "lever_id": "shed",
+    "params": {
+      "fraction": 0.5
+    },
+    "hold_s": 20,
+    "blast_radius_pct": 50.0
+  },
+  {
+    "id": "db_failover_30s",
+    "lever_id": "db_failover",
+    "params": {},
+    "hold_s": 30,
+    "blast_radius_pct": 1.0
+  }
+]

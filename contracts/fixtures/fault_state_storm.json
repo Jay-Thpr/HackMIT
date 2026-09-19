@@ -1,0 +1,9 @@
+{
+  "world": "storm",
+  "active": false,
+  "params": {
+    "delay_ms": 800,
+    "duration_s": 20
+  },
+  "started_at": "2026-09-19T15:01:00Z"
+}

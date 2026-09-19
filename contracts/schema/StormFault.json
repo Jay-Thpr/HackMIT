@@ -1,0 +1,17 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "delay_ms": {
+      "default": 800,
+      "title": "Delay Ms",
+      "type": "integer"
+    },
+    "duration_s": {
+      "default": 20,
+      "title": "Duration S",
+      "type": "integer"
+    }
+  },
+  "title": "StormFault",
+  "type": "object"
+}

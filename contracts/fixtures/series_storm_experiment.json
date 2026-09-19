@@ -1,0 +1,3254 @@
+[
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:00:00Z",
+    "window_end": "2026-09-19T15:00:05Z",
+    "services": {
+      "gateway": {
+        "qps": 84.6,
+        "p50_ms": 35.1,
+        "p99_ms": 126.2,
+        "error_rate": 0.0019,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 76.5,
+        "p50_ms": null,
+        "p99_ms": 110.1,
+        "error_rate": 0.0019,
+        "retry_ratio": 1.0,
+        "timeout_rate": 0.0
+      },
+      "payments": {
+        "qps": 80.6,
+        "p50_ms": 22.1,
+        "p99_ms": 61.3,
+        "error_rate": 0.001,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 80.0,
+        "p50_ms": null,
+        "p99_ms": 12.0,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 75.2,
+      "query_p50_ms": 15.3,
+      "query_p99_ms": 45.6,
+      "pool_busy_ratio": 0.383
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 80.6,
+        "p99_ms": 109.4,
+        "error_rate": 0.0021
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 80.6,
+        "p99_ms": 62.2,
+        "error_rate": 0.001
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 80.7,
+        "p99_ms": 46.8,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 82.2,
+        "p99_ms": 12.1,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 126.2,
+        "breached": false
+      }
+    ],
+    "log_highlights": [],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:00:05Z",
+    "window_end": "2026-09-19T15:00:10Z",
+    "services": {
+      "gateway": {
+        "qps": 81.4,
+        "p50_ms": 35.1,
+        "p99_ms": 114.8,
+        "error_rate": 0.0021,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 80.7,
+        "p50_ms": null,
+        "p99_ms": 114.8,
+        "error_rate": 0.002,
+        "retry_ratio": 1.0,
+        "timeout_rate": 0.0
+      },
+      "payments": {
+        "qps": 82.1,
+        "p50_ms": 21.0,
+        "p99_ms": 59.0,
+        "error_rate": 0.001,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 86.3,
+        "p50_ms": null,
+        "p99_ms": 12.0,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 82.1,
+      "query_p50_ms": 15.4,
+      "query_p99_ms": 44.5,
+      "pool_busy_ratio": 0.328
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 83.1,
+        "p99_ms": 108.2,
+        "error_rate": 0.0021
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 75.8,
+        "p99_ms": 58.9,
+        "error_rate": 0.0011
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 84.6,
+        "p99_ms": 42.7,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 75.7,
+        "p99_ms": 12.0,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 114.8,
+        "breached": false
+      }
+    ],
+    "log_highlights": [],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:00:10Z",
+    "window_end": "2026-09-19T15:00:15Z",
+    "services": {
+      "gateway": {
+        "qps": 80.5,
+        "p50_ms": 35.4,
+        "p99_ms": 123.5,
+        "error_rate": 0.0019,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 81.9,
+        "p50_ms": null,
+        "p99_ms": 114.9,
+        "error_rate": 0.002,
+        "retry_ratio": 1.0,
+        "timeout_rate": 0.0
+      },
+      "payments": {
+        "qps": 77.6,
+        "p50_ms": 22.7,
+        "p99_ms": 55.8,
+        "error_rate": 0.001,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 76.8,
+        "p50_ms": null,
+        "p99_ms": 11.9,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 79.2,
+      "query_p50_ms": 15.0,
+      "query_p99_ms": 47.7,
+      "pool_busy_ratio": 0.356
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 84.3,
+        "p99_ms": 109.4,
+        "error_rate": 0.002
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 81.2,
+        "p99_ms": 53.2,
+        "error_rate": 0.001
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 80.5,
+        "p99_ms": 42.8,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 81.5,
+        "p99_ms": 11.7,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 123.5,
+        "breached": false
+      }
+    ],
+    "log_highlights": [],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:00:15Z",
+    "window_end": "2026-09-19T15:00:20Z",
+    "services": {
+      "gateway": {
+        "qps": 79.3,
+        "p50_ms": 33.6,
+        "p99_ms": 108.2,
+        "error_rate": 0.002,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 79.5,
+        "p50_ms": null,
+        "p99_ms": 115.5,
+        "error_rate": 0.002,
+        "retry_ratio": 1.0,
+        "timeout_rate": 0.0
+      },
+      "payments": {
+        "qps": 81.2,
+        "p50_ms": 20.4,
+        "p99_ms": 63.0,
+        "error_rate": 0.001,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 81.4,
+        "p50_ms": null,
+        "p99_ms": 11.5,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 76.9,
+      "query_p50_ms": 14.8,
+      "query_p99_ms": 48.4,
+      "pool_busy_ratio": 0.36
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 78.1,
+        "p99_ms": 108.7,
+        "error_rate": 0.0019
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 79.9,
+        "p99_ms": 58.6,
+        "error_rate": 0.001
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 75.7,
+        "p99_ms": 44.4,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 77.3,
+        "p99_ms": 11.7,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 108.2,
+        "breached": false
+      }
+    ],
+    "log_highlights": [],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:00:20Z",
+    "window_end": "2026-09-19T15:00:25Z",
+    "services": {
+      "gateway": {
+        "qps": 80.4,
+        "p50_ms": 35.8,
+        "p99_ms": 123.4,
+        "error_rate": 0.0021,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 83.7,
+        "p50_ms": null,
+        "p99_ms": 104.0,
+        "error_rate": 0.002,
+        "retry_ratio": 1.0,
+        "timeout_rate": 0.0
+      },
+      "payments": {
+        "qps": 79.8,
+        "p50_ms": 23.7,
+        "p99_ms": 59.5,
+        "error_rate": 0.001,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 80.5,
+        "p50_ms": null,
+        "p99_ms": 12.0,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 80.1,
+      "query_p50_ms": 14.5,
+      "query_p99_ms": 46.9,
+      "pool_busy_ratio": 0.362
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 79.3,
+        "p99_ms": 111.4,
+        "error_rate": 0.0021
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 83.3,
+        "p99_ms": 60.9,
+        "error_rate": 0.001
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 79.2,
+        "p99_ms": 43.1,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 78.4,
+        "p99_ms": 12.5,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 123.4,
+        "breached": false
+      }
+    ],
+    "log_highlights": [],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:00:25Z",
+    "window_end": "2026-09-19T15:00:30Z",
+    "services": {
+      "gateway": {
+        "qps": 80.5,
+        "p50_ms": 34.2,
+        "p99_ms": 124.7,
+        "error_rate": 0.002,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 85.3,
+        "p50_ms": null,
+        "p99_ms": 116.0,
+        "error_rate": 0.0019,
+        "retry_ratio": 1.0,
+        "timeout_rate": 0.0
+      },
+      "payments": {
+        "qps": 75.4,
+        "p50_ms": 21.0,
+        "p99_ms": 60.5,
+        "error_rate": 0.001,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 83.1,
+        "p50_ms": null,
+        "p99_ms": 12.6,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 82.7,
+      "query_p50_ms": 15.8,
+      "query_p99_ms": 44.0,
+      "pool_busy_ratio": 0.334
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 81.6,
+        "p99_ms": 121.8,
+        "error_rate": 0.002
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 76.3,
+        "p99_ms": 60.6,
+        "error_rate": 0.0011
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 76.7,
+        "p99_ms": 46.4,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 78.0,
+        "p99_ms": 12.6,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 124.7,
+        "breached": false
+      }
+    ],
+    "log_highlights": [],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:00:30Z",
+    "window_end": "2026-09-19T15:00:35Z",
+    "services": {
+      "gateway": {
+        "qps": 81.0,
+        "p50_ms": 37.8,
+        "p99_ms": 123.8,
+        "error_rate": 0.002,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 77.8,
+        "p50_ms": null,
+        "p99_ms": 118.2,
+        "error_rate": 0.0019,
+        "retry_ratio": 1.0,
+        "timeout_rate": 0.0
+      },
+      "payments": {
+        "qps": 79.9,
+        "p50_ms": 21.1,
+        "p99_ms": 60.0,
+        "error_rate": 0.001,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 80.6,
+        "p50_ms": null,
+        "p99_ms": 11.9,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 83.5,
+      "query_p50_ms": 13.6,
+      "query_p99_ms": 44.0,
+      "pool_busy_ratio": 0.346
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 85.8,
+        "p99_ms": 101.2,
+        "error_rate": 0.002
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 76.3,
+        "p99_ms": 58.4,
+        "error_rate": 0.001
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 81.3,
+        "p99_ms": 47.6,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 78.1,
+        "p99_ms": 12.1,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 123.8,
+        "breached": false
+      }
+    ],
+    "log_highlights": [],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:00:35Z",
+    "window_end": "2026-09-19T15:00:40Z",
+    "services": {
+      "gateway": {
+        "qps": 82.9,
+        "p50_ms": 34.5,
+        "p99_ms": 125.6,
+        "error_rate": 0.0021,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 77.0,
+        "p50_ms": null,
+        "p99_ms": 117.9,
+        "error_rate": 0.002,
+        "retry_ratio": 1.0,
+        "timeout_rate": 0.0
+      },
+      "payments": {
+        "qps": 80.9,
+        "p50_ms": 22.7,
+        "p99_ms": 64.2,
+        "error_rate": 0.001,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 78.8,
+        "p50_ms": null,
+        "p99_ms": 12.3,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 77.2,
+      "query_p50_ms": 14.0,
+      "query_p99_ms": 46.5,
+      "pool_busy_ratio": 0.345
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 83.6,
+        "p99_ms": 105.5,
+        "error_rate": 0.0018
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 80.9,
+        "p99_ms": 60.4,
+        "error_rate": 0.0011
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 81.7,
+        "p99_ms": 45.6,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 81.9,
+        "p99_ms": 11.8,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 125.6,
+        "breached": false
+      }
+    ],
+    "log_highlights": [],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:00:40Z",
+    "window_end": "2026-09-19T15:00:45Z",
+    "services": {
+      "gateway": {
+        "qps": 75.7,
+        "p50_ms": 35.7,
+        "p99_ms": 120.4,
+        "error_rate": 0.0019,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 78.6,
+        "p50_ms": null,
+        "p99_ms": 113.1,
+        "error_rate": 0.0021,
+        "retry_ratio": 1.0,
+        "timeout_rate": 0.0
+      },
+      "payments": {
+        "qps": 86.4,
+        "p50_ms": 21.5,
+        "p99_ms": 62.0,
+        "error_rate": 0.001,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 80.7,
+        "p50_ms": null,
+        "p99_ms": 12.1,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 85.8,
+      "query_p50_ms": 15.5,
+      "query_p99_ms": 45.8,
+      "pool_busy_ratio": 0.324
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 77.6,
+        "p99_ms": 115.1,
+        "error_rate": 0.002
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 76.9,
+        "p99_ms": 58.5,
+        "error_rate": 0.001
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 82.2,
+        "p99_ms": 45.7,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 83.2,
+        "p99_ms": 11.6,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 120.4,
+        "breached": false
+      }
+    ],
+    "log_highlights": [],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:00:45Z",
+    "window_end": "2026-09-19T15:00:50Z",
+    "services": {
+      "gateway": {
+        "qps": 78.4,
+        "p50_ms": 34.6,
+        "p99_ms": 124.7,
+        "error_rate": 0.0021,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 80.2,
+        "p50_ms": null,
+        "p99_ms": 109.4,
+        "error_rate": 0.002,
+        "retry_ratio": 1.0,
+        "timeout_rate": 0.0
+      },
+      "payments": {
+        "qps": 85.0,
+        "p50_ms": 23.2,
+        "p99_ms": 61.7,
+        "error_rate": 0.001,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 83.3,
+        "p50_ms": null,
+        "p99_ms": 12.0,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 81.4,
+      "query_p50_ms": 15.2,
+      "query_p99_ms": 45.2,
+      "pool_busy_ratio": 0.373
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 85.6,
+        "p99_ms": 115.8,
+        "error_rate": 0.0018
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 85.9,
+        "p99_ms": 61.7,
+        "error_rate": 0.001
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 79.9,
+        "p99_ms": 47.0,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 83.8,
+        "p99_ms": 12.4,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 124.7,
+        "breached": false
+      }
+    ],
+    "log_highlights": [],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:00:50Z",
+    "window_end": "2026-09-19T15:00:55Z",
+    "services": {
+      "gateway": {
+        "qps": 80.1,
+        "p50_ms": 36.2,
+        "p99_ms": 120.7,
+        "error_rate": 0.002,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 77.1,
+        "p50_ms": null,
+        "p99_ms": 107.3,
+        "error_rate": 0.002,
+        "retry_ratio": 1.0,
+        "timeout_rate": 0.0
+      },
+      "payments": {
+        "qps": 87.2,
+        "p50_ms": 20.8,
+        "p99_ms": 61.1,
+        "error_rate": 0.001,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 81.0,
+        "p50_ms": null,
+        "p99_ms": 12.6,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 84.0,
+      "query_p50_ms": 14.9,
+      "query_p99_ms": 44.0,
+      "pool_busy_ratio": 0.331
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 79.8,
+        "p99_ms": 115.5,
+        "error_rate": 0.002
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 82.3,
+        "p99_ms": 61.7,
+        "error_rate": 0.001
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 83.5,
+        "p99_ms": 44.8,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 77.3,
+        "p99_ms": 11.4,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 120.7,
+        "breached": false
+      }
+    ],
+    "log_highlights": [],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:00:55Z",
+    "window_end": "2026-09-19T15:01:00Z",
+    "services": {
+      "gateway": {
+        "qps": 78.8,
+        "p50_ms": 34.6,
+        "p99_ms": 124.4,
+        "error_rate": 0.0021,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 77.5,
+        "p50_ms": null,
+        "p99_ms": 117.8,
+        "error_rate": 0.0021,
+        "retry_ratio": 1.0,
+        "timeout_rate": 0.0
+      },
+      "payments": {
+        "qps": 78.0,
+        "p50_ms": 23.0,
+        "p99_ms": 57.2,
+        "error_rate": 0.001,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 80.0,
+        "p50_ms": null,
+        "p99_ms": 12.1,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 80.0,
+      "query_p50_ms": 15.2,
+      "query_p99_ms": 44.3,
+      "pool_busy_ratio": 0.348
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 84.0,
+        "p99_ms": 112.8,
+        "error_rate": 0.002
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 85.5,
+        "p99_ms": 55.2,
+        "error_rate": 0.001
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 82.1,
+        "p99_ms": 46.8,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 80.4,
+        "p99_ms": 11.8,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 124.4,
+        "breached": false
+      }
+    ],
+    "log_highlights": [],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:01:00Z",
+    "window_end": "2026-09-19T15:01:05Z",
+    "services": {
+      "gateway": {
+        "qps": 81.5,
+        "p50_ms": 1682.9,
+        "p99_ms": 2098.0,
+        "error_rate": 0.8731,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 77.5,
+        "p50_ms": null,
+        "p99_ms": 2075.3,
+        "error_rate": 0.8857,
+        "retry_ratio": 3.87,
+        "timeout_rate": 0.9057
+      },
+      "payments": {
+        "qps": 307.0,
+        "p50_ms": 651.1,
+        "p99_ms": 1726.0,
+        "error_rate": 0.5547,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 310.3,
+        "p50_ms": null,
+        "p99_ms": 12.5,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 343.1,
+      "query_p50_ms": 637.9,
+      "query_p99_ms": 1560.1,
+      "pool_busy_ratio": 1.0
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 75.5,
+        "p99_ms": 1981.4,
+        "error_rate": 0.84
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 305.3,
+        "p99_ms": 1766.9,
+        "error_rate": 0.5428
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 299.6,
+        "p99_ms": 1699.6,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 316.6,
+        "p99_ms": 13.9,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 2098.0,
+        "breached": true
+      }
+    ],
+    "log_highlights": [
+      {
+        "service": "orders",
+        "level": "WARN",
+        "message": "payments call timed out after 500ms, retrying (attempt <n> of 4)",
+        "count": 1130
+      },
+      {
+        "service": "orders",
+        "level": "ERROR",
+        "message": "checkout failed: payments unavailable after 4 attempts",
+        "count": 314
+      },
+      {
+        "service": "payments",
+        "level": "WARN",
+        "message": "db connection pool exhausted, waited <t>ms for a connection",
+        "count": 876
+      },
+      {
+        "service": "payments",
+        "level": "WARN",
+        "message": "slow query: SELECT ... FROM accounts took <t>ms",
+        "count": 1303
+      }
+    ],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:01:05Z",
+    "window_end": "2026-09-19T15:01:10Z",
+    "services": {
+      "gateway": {
+        "qps": 81.8,
+        "p50_ms": 1899.2,
+        "p99_ms": 1977.5,
+        "error_rate": 0.8676,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 78.0,
+        "p50_ms": null,
+        "p99_ms": 1933.9,
+        "error_rate": 0.8489,
+        "retry_ratio": 3.79,
+        "timeout_rate": 0.8746
+      },
+      "payments": {
+        "qps": 307.8,
+        "p50_ms": 651.0,
+        "p99_ms": 1788.3,
+        "error_rate": 0.5621,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 318.0,
+        "p50_ms": null,
+        "p99_ms": 12.5,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 303.8,
+      "query_p50_ms": 639.9,
+      "query_p99_ms": 1700.9,
+      "pool_busy_ratio": 1.0
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 76.3,
+        "p99_ms": 1983.1,
+        "error_rate": 0.8381
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 301.2,
+        "p99_ms": 1705.9,
+        "error_rate": 0.5171
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 319.1,
+        "p99_ms": 1779.3,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 303.2,
+        "p99_ms": 13.0,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 1977.5,
+        "breached": true
+      }
+    ],
+    "log_highlights": [
+      {
+        "service": "orders",
+        "level": "WARN",
+        "message": "payments call timed out after 500ms, retrying (attempt <n> of 4)",
+        "count": 1099
+      },
+      {
+        "service": "orders",
+        "level": "ERROR",
+        "message": "checkout failed: payments unavailable after 4 attempts",
+        "count": 338
+      },
+      {
+        "service": "payments",
+        "level": "WARN",
+        "message": "db connection pool exhausted, waited <t>ms for a connection",
+        "count": 956
+      },
+      {
+        "service": "payments",
+        "level": "WARN",
+        "message": "slow query: SELECT ... FROM accounts took <t>ms",
+        "count": 1207
+      }
+    ],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:01:10Z",
+    "window_end": "2026-09-19T15:01:15Z",
+    "services": {
+      "gateway": {
+        "qps": 81.2,
+        "p50_ms": 1908.7,
+        "p99_ms": 2031.3,
+        "error_rate": 0.7897,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 79.5,
+        "p50_ms": null,
+        "p99_ms": 2073.4,
+        "error_rate": 0.9094,
+        "retry_ratio": 4.12,
+        "timeout_rate": 0.9026
+      },
+      "payments": {
+        "qps": 304.8,
+        "p50_ms": 622.4,
+        "p99_ms": 1622.7,
+        "error_rate": 0.5263,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 326.0,
+        "p50_ms": null,
+        "p99_ms": 12.9,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 301.0,
+      "query_p50_ms": 652.7,
+      "query_p99_ms": 1586.3,
+      "pool_busy_ratio": 1.0
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 79.0,
+        "p99_ms": 2027.2,
+        "error_rate": 0.8834
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 315.3,
+        "p99_ms": 1839.0,
+        "error_rate": 0.5504
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 313.8,
+        "p99_ms": 1655.0,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 294.0,
+        "p99_ms": 12.6,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 2031.3,
+        "breached": true
+      }
+    ],
+    "log_highlights": [
+      {
+        "service": "orders",
+        "level": "WARN",
+        "message": "payments call timed out after 500ms, retrying (attempt <n> of 4)",
+        "count": 1195
+      },
+      {
+        "service": "orders",
+        "level": "ERROR",
+        "message": "checkout failed: payments unavailable after 4 attempts",
+        "count": 340
+      },
+      {
+        "service": "payments",
+        "level": "WARN",
+        "message": "db connection pool exhausted, waited <t>ms for a connection",
+        "count": 939
+      },
+      {
+        "service": "payments",
+        "level": "WARN",
+        "message": "slow query: SELECT ... FROM accounts took <t>ms",
+        "count": 1408
+      }
+    ],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:01:15Z",
+    "window_end": "2026-09-19T15:01:20Z",
+    "services": {
+      "gateway": {
+        "qps": 75.8,
+        "p50_ms": 1881.5,
+        "p99_ms": 2108.5,
+        "error_rate": 0.9355,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 81.7,
+        "p50_ms": null,
+        "p99_ms": 1989.0,
+        "error_rate": 0.8706,
+        "retry_ratio": 3.98,
+        "timeout_rate": 0.8133
+      },
+      "payments": {
+        "qps": 301.6,
+        "p50_ms": 606.5,
+        "p99_ms": 1600.3,
+        "error_rate": 0.5669,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 324.1,
+        "p50_ms": null,
+        "p99_ms": 12.9,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 322.4,
+      "query_p50_ms": 595.0,
+      "query_p99_ms": 1730.8,
+      "pool_busy_ratio": 1.0
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 84.9,
+        "p99_ms": 2124.9,
+        "error_rate": 0.8768
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 310.4,
+        "p99_ms": 1692.2,
+        "error_rate": 0.5367
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 325.8,
+        "p99_ms": 1738.5,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 312.2,
+        "p99_ms": 13.9,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 2108.5,
+        "breached": true
+      }
+    ],
+    "log_highlights": [
+      {
+        "service": "orders",
+        "level": "WARN",
+        "message": "payments call timed out after 500ms, retrying (attempt <n> of 4)",
+        "count": 1179
+      },
+      {
+        "service": "orders",
+        "level": "ERROR",
+        "message": "checkout failed: payments unavailable after 4 attempts",
+        "count": 330
+      },
+      {
+        "service": "payments",
+        "level": "WARN",
+        "message": "db connection pool exhausted, waited <t>ms for a connection",
+        "count": 883
+      },
+      {
+        "service": "payments",
+        "level": "WARN",
+        "message": "slow query: SELECT ... FROM accounts took <t>ms",
+        "count": 1273
+      }
+    ],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:01:20Z",
+    "window_end": "2026-09-19T15:01:25Z",
+    "services": {
+      "gateway": {
+        "qps": 81.1,
+        "p50_ms": 1855.5,
+        "p99_ms": 1972.2,
+        "error_rate": 0.8507,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 83.9,
+        "p50_ms": null,
+        "p99_ms": 1984.6,
+        "error_rate": 0.9052,
+        "retry_ratio": 3.75,
+        "timeout_rate": 0.8797
+      },
+      "payments": {
+        "qps": 330.9,
+        "p50_ms": 651.9,
+        "p99_ms": 1626.9,
+        "error_rate": 0.5772,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 309.4,
+        "p50_ms": null,
+        "p99_ms": 12.0,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 319.4,
+      "query_p50_ms": 623.9,
+      "query_p99_ms": 1612.2,
+      "pool_busy_ratio": 0.976
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 81.8,
+        "p99_ms": 2113.0,
+        "error_rate": 0.8992
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 327.3,
+        "p99_ms": 1828.4,
+        "error_rate": 0.4953
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 308.8,
+        "p99_ms": 1712.7,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 278.4,
+        "p99_ms": 13.4,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 1972.2,
+        "breached": true
+      }
+    ],
+    "log_highlights": [
+      {
+        "service": "orders",
+        "level": "WARN",
+        "message": "payments call timed out after 500ms, retrying (attempt <n> of 4)",
+        "count": 1191
+      },
+      {
+        "service": "orders",
+        "level": "ERROR",
+        "message": "checkout failed: payments unavailable after 4 attempts",
+        "count": 319
+      },
+      {
+        "service": "payments",
+        "level": "WARN",
+        "message": "db connection pool exhausted, waited <t>ms for a connection",
+        "count": 876
+      },
+      {
+        "service": "payments",
+        "level": "WARN",
+        "message": "slow query: SELECT ... FROM accounts took <t>ms",
+        "count": 1222
+      }
+    ],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:01:25Z",
+    "window_end": "2026-09-19T15:01:30Z",
+    "services": {
+      "gateway": {
+        "qps": 80.0,
+        "p50_ms": 1822.3,
+        "p99_ms": 2048.5,
+        "error_rate": 0.8733,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 78.9,
+        "p50_ms": null,
+        "p99_ms": 2076.0,
+        "error_rate": 0.8708,
+        "retry_ratio": 3.89,
+        "timeout_rate": 0.8278
+      },
+      "payments": {
+        "qps": 294.0,
+        "p50_ms": 641.8,
+        "p99_ms": 1716.0,
+        "error_rate": 0.5603,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 322.1,
+        "p50_ms": null,
+        "p99_ms": 13.0,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 296.6,
+      "query_p50_ms": 590.4,
+      "query_p99_ms": 1738.9,
+      "pool_busy_ratio": 0.958
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 83.5,
+        "p99_ms": 1992.7,
+        "error_rate": 0.8779
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 301.0,
+        "p99_ms": 1743.0,
+        "error_rate": 0.4849
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 315.4,
+        "p99_ms": 1739.1,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 300.8,
+        "p99_ms": 12.6,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 2048.5,
+        "breached": true
+      }
+    ],
+    "log_highlights": [
+      {
+        "service": "orders",
+        "level": "WARN",
+        "message": "payments call timed out after 500ms, retrying (attempt <n> of 4)",
+        "count": 1147
+      },
+      {
+        "service": "orders",
+        "level": "ERROR",
+        "message": "checkout failed: payments unavailable after 4 attempts",
+        "count": 330
+      },
+      {
+        "service": "payments",
+        "level": "WARN",
+        "message": "db connection pool exhausted, waited <t>ms for a connection",
+        "count": 861
+      },
+      {
+        "service": "payments",
+        "level": "WARN",
+        "message": "slow query: SELECT ... FROM accounts took <t>ms",
+        "count": 1304
+      }
+    ],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:01:30Z",
+    "window_end": "2026-09-19T15:01:35Z",
+    "services": {
+      "gateway": {
+        "qps": 75.5,
+        "p50_ms": 1837.4,
+        "p99_ms": 1915.1,
+        "error_rate": 0.9058,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 76.8,
+        "p50_ms": null,
+        "p99_ms": 1867.7,
+        "error_rate": 0.8626,
+        "retry_ratio": 4.07,
+        "timeout_rate": 0.8476
+      },
+      "payments": {
+        "qps": 298.1,
+        "p50_ms": 622.0,
+        "p99_ms": 1697.9,
+        "error_rate": 0.5286,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 299.2,
+        "p50_ms": null,
+        "p99_ms": 13.8,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 309.4,
+      "query_p50_ms": 644.1,
+      "query_p99_ms": 1604.5,
+      "pool_busy_ratio": 1.0
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 76.0,
+        "p99_ms": 1963.3,
+        "error_rate": 0.8819
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 305.4,
+        "p99_ms": 1612.5,
+        "error_rate": 0.5378
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 316.0,
+        "p99_ms": 1739.0,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 299.5,
+        "p99_ms": 12.8,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 1915.1,
+        "breached": true
+      }
+    ],
+    "log_highlights": [
+      {
+        "service": "orders",
+        "level": "WARN",
+        "message": "payments call timed out after 500ms, retrying (attempt <n> of 4)",
+        "count": 1152
+      },
+      {
+        "service": "orders",
+        "level": "ERROR",
+        "message": "checkout failed: payments unavailable after 4 attempts",
+        "count": 308
+      },
+      {
+        "service": "payments",
+        "level": "WARN",
+        "message": "db connection pool exhausted, waited <t>ms for a connection",
+        "count": 886
+      },
+      {
+        "service": "payments",
+        "level": "WARN",
+        "message": "slow query: SELECT ... FROM accounts took <t>ms",
+        "count": 1227
+      }
+    ],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:01:35Z",
+    "window_end": "2026-09-19T15:01:40Z",
+    "services": {
+      "gateway": {
+        "qps": 79.5,
+        "p50_ms": 1716.5,
+        "p99_ms": 2085.9,
+        "error_rate": 0.8563,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 78.8,
+        "p50_ms": null,
+        "p99_ms": 1924.5,
+        "error_rate": 0.8424,
+        "retry_ratio": 3.88,
+        "timeout_rate": 0.8355
+      },
+      "payments": {
+        "qps": 314.2,
+        "p50_ms": 656.9,
+        "p99_ms": 1791.8,
+        "error_rate": 0.5386,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 333.0,
+        "p50_ms": null,
+        "p99_ms": 13.4,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 305.9,
+      "query_p50_ms": 616.5,
+      "query_p99_ms": 1589.2,
+      "pool_busy_ratio": 0.995
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 82.3,
+        "p99_ms": 2101.5,
+        "error_rate": 0.8456
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 289.7,
+        "p99_ms": 1738.1,
+        "error_rate": 0.5799
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 319.8,
+        "p99_ms": 1786.7,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 322.3,
+        "p99_ms": 13.8,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 2085.9,
+        "breached": true
+      }
+    ],
+    "log_highlights": [
+      {
+        "service": "orders",
+        "level": "WARN",
+        "message": "payments call timed out after 500ms, retrying (attempt <n> of 4)",
+        "count": 1177
+      },
+      {
+        "service": "orders",
+        "level": "ERROR",
+        "message": "checkout failed: payments unavailable after 4 attempts",
+        "count": 321
+      },
+      {
+        "service": "payments",
+        "level": "WARN",
+        "message": "db connection pool exhausted, waited <t>ms for a connection",
+        "count": 905
+      },
+      {
+        "service": "payments",
+        "level": "WARN",
+        "message": "slow query: SELECT ... FROM accounts took <t>ms",
+        "count": 1398
+      }
+    ],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:01:40Z",
+    "window_end": "2026-09-19T15:01:45Z",
+    "services": {
+      "gateway": {
+        "qps": 86.7,
+        "p50_ms": 1931.1,
+        "p99_ms": 2007.5,
+        "error_rate": 0.8384,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 78.1,
+        "p50_ms": null,
+        "p99_ms": 1876.8,
+        "error_rate": 0.8842,
+        "retry_ratio": 3.61,
+        "timeout_rate": 0.885
+      },
+      "payments": {
+        "qps": 304.1,
+        "p50_ms": 629.2,
+        "p99_ms": 1720.0,
+        "error_rate": 0.5735,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 309.7,
+        "p50_ms": null,
+        "p99_ms": 13.7,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 307.3,
+      "query_p50_ms": 604.8,
+      "query_p99_ms": 1667.2,
+      "pool_busy_ratio": 0.978
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 79.7,
+        "p99_ms": 2082.0,
+        "error_rate": 0.9016
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 298.6,
+        "p99_ms": 1839.5,
+        "error_rate": 0.5521
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 338.2,
+        "p99_ms": 1688.6,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 301.6,
+        "p99_ms": 13.4,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 2007.5,
+        "breached": true
+      }
+    ],
+    "log_highlights": [
+      {
+        "service": "orders",
+        "level": "WARN",
+        "message": "payments call timed out after 500ms, retrying (attempt <n> of 4)",
+        "count": 1178
+      },
+      {
+        "service": "orders",
+        "level": "ERROR",
+        "message": "checkout failed: payments unavailable after 4 attempts",
+        "count": 323
+      },
+      {
+        "service": "payments",
+        "level": "WARN",
+        "message": "db connection pool exhausted, waited <t>ms for a connection",
+        "count": 890
+      },
+      {
+        "service": "payments",
+        "level": "WARN",
+        "message": "slow query: SELECT ... FROM accounts took <t>ms",
+        "count": 1276
+      }
+    ],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:01:45Z",
+    "window_end": "2026-09-19T15:01:50Z",
+    "services": {
+      "gateway": {
+        "qps": 76.1,
+        "p50_ms": 1904.2,
+        "p99_ms": 2075.5,
+        "error_rate": 0.8689,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 78.3,
+        "p50_ms": null,
+        "p99_ms": 1859.2,
+        "error_rate": 0.9062,
+        "retry_ratio": 3.63,
+        "timeout_rate": 0.8692
+      },
+      "payments": {
+        "qps": 298.9,
+        "p50_ms": 680.8,
+        "p99_ms": 1829.3,
+        "error_rate": 0.5728,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 322.4,
+        "p50_ms": null,
+        "p99_ms": 13.3,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 305.6,
+      "query_p50_ms": 620.8,
+      "query_p99_ms": 1724.2,
+      "pool_busy_ratio": 1.0
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 81.5,
+        "p99_ms": 1919.4,
+        "error_rate": 0.8392
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 307.9,
+        "p99_ms": 1736.3,
+        "error_rate": 0.5308
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 294.8,
+        "p99_ms": 1617.3,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 315.8,
+        "p99_ms": 13.0,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 2075.5,
+        "breached": true
+      }
+    ],
+    "log_highlights": [
+      {
+        "service": "orders",
+        "level": "WARN",
+        "message": "payments call timed out after 500ms, retrying (attempt <n> of 4)",
+        "count": 1176
+      },
+      {
+        "service": "orders",
+        "level": "ERROR",
+        "message": "checkout failed: payments unavailable after 4 attempts",
+        "count": 305
+      },
+      {
+        "service": "payments",
+        "level": "WARN",
+        "message": "db connection pool exhausted, waited <t>ms for a connection",
+        "count": 875
+      },
+      {
+        "service": "payments",
+        "level": "WARN",
+        "message": "slow query: SELECT ... FROM accounts took <t>ms",
+        "count": 1315
+      }
+    ],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:01:50Z",
+    "window_end": "2026-09-19T15:01:55Z",
+    "services": {
+      "gateway": {
+        "qps": 74.7,
+        "p50_ms": 1992.1,
+        "p99_ms": 1889.1,
+        "error_rate": 0.8611,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 78.2,
+        "p50_ms": null,
+        "p99_ms": 2012.0,
+        "error_rate": 0.8569,
+        "retry_ratio": 3.73,
+        "timeout_rate": 0.9119
+      },
+      "payments": {
+        "qps": 326.6,
+        "p50_ms": 663.4,
+        "p99_ms": 1774.0,
+        "error_rate": 0.5668,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 322.1,
+        "p50_ms": null,
+        "p99_ms": 13.6,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 294.6,
+      "query_p50_ms": 628.6,
+      "query_p99_ms": 1705.3,
+      "pool_busy_ratio": 1.0
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 79.2,
+        "p99_ms": 1994.1,
+        "error_rate": 0.877
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 314.5,
+        "p99_ms": 1759.0,
+        "error_rate": 0.5264
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 302.0,
+        "p99_ms": 1649.1,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 289.8,
+        "p99_ms": 12.7,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 1889.1,
+        "breached": true
+      }
+    ],
+    "log_highlights": [
+      {
+        "service": "orders",
+        "level": "WARN",
+        "message": "payments call timed out after 500ms, retrying (attempt <n> of 4)",
+        "count": 1110
+      },
+      {
+        "service": "orders",
+        "level": "ERROR",
+        "message": "checkout failed: payments unavailable after 4 attempts",
+        "count": 306
+      },
+      {
+        "service": "payments",
+        "level": "WARN",
+        "message": "db connection pool exhausted, waited <t>ms for a connection",
+        "count": 820
+      },
+      {
+        "service": "payments",
+        "level": "WARN",
+        "message": "slow query: SELECT ... FROM accounts took <t>ms",
+        "count": 1246
+      }
+    ],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:01:55Z",
+    "window_end": "2026-09-19T15:02:00Z",
+    "services": {
+      "gateway": {
+        "qps": 82.8,
+        "p50_ms": 1840.6,
+        "p99_ms": 2002.5,
+        "error_rate": 0.8428,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 76.8,
+        "p50_ms": null,
+        "p99_ms": 1937.0,
+        "error_rate": 0.8479,
+        "retry_ratio": 4.24,
+        "timeout_rate": 0.8783
+      },
+      "payments": {
+        "qps": 304.2,
+        "p50_ms": 661.0,
+        "p99_ms": 1795.1,
+        "error_rate": 0.593,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 295.7,
+        "p50_ms": null,
+        "p99_ms": 13.4,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 313.2,
+      "query_p50_ms": 580.2,
+      "query_p99_ms": 1679.5,
+      "pool_busy_ratio": 0.934
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 79.9,
+        "p99_ms": 2219.0,
+        "error_rate": 0.9049
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 334.7,
+        "p99_ms": 1833.6,
+        "error_rate": 0.5159
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 323.3,
+        "p99_ms": 1709.7,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 317.4,
+        "p99_ms": 12.5,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 2002.5,
+        "breached": true
+      }
+    ],
+    "log_highlights": [
+      {
+        "service": "orders",
+        "level": "WARN",
+        "message": "payments call timed out after 500ms, retrying (attempt <n> of 4)",
+        "count": 1058
+      },
+      {
+        "service": "orders",
+        "level": "ERROR",
+        "message": "checkout failed: payments unavailable after 4 attempts",
+        "count": 357
+      },
+      {
+        "service": "payments",
+        "level": "WARN",
+        "message": "db connection pool exhausted, waited <t>ms for a connection",
+        "count": 932
+      },
+      {
+        "service": "payments",
+        "level": "WARN",
+        "message": "slow query: SELECT ... FROM accounts took <t>ms",
+        "count": 1285
+      }
+    ],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:02:00Z",
+    "window_end": "2026-09-19T15:02:05Z",
+    "services": {
+      "gateway": {
+        "qps": 80.6,
+        "p50_ms": 38.0,
+        "p99_ms": 156.9,
+        "error_rate": 0.0104,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 80.5,
+        "p50_ms": null,
+        "p99_ms": 109.3,
+        "error_rate": 0.0098,
+        "retry_ratio": 1.0,
+        "timeout_rate": 0.0
+      },
+      "payments": {
+        "qps": 80.4,
+        "p50_ms": 21.6,
+        "p99_ms": 77.9,
+        "error_rate": 0.001,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 79.7,
+        "p50_ms": null,
+        "p99_ms": 11.6,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 83.9,
+      "query_p50_ms": 17.9,
+      "query_p99_ms": 56.5,
+      "pool_busy_ratio": 0.371
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 78.9,
+        "p99_ms": 114.4,
+        "error_rate": 0.01
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 84.1,
+        "p99_ms": 73.7,
+        "error_rate": 0.001
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 81.7,
+        "p99_ms": 49.6,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 78.7,
+        "p99_ms": 11.9,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 156.9,
+        "breached": false
+      }
+    ],
+    "log_highlights": [
+      {
+        "service": "orders",
+        "level": "INFO",
+        "message": "retry override active: max_retries=0",
+        "count": 15
+      }
+    ],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:02:05Z",
+    "window_end": "2026-09-19T15:02:10Z",
+    "services": {
+      "gateway": {
+        "qps": 85.1,
+        "p50_ms": 39.8,
+        "p99_ms": 154.3,
+        "error_rate": 0.0103,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 75.7,
+        "p50_ms": null,
+        "p99_ms": 100.9,
+        "error_rate": 0.0098,
+        "retry_ratio": 1.0,
+        "timeout_rate": 0.0
+      },
+      "payments": {
+        "qps": 77.7,
+        "p50_ms": 22.5,
+        "p99_ms": 77.4,
+        "error_rate": 0.001,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 79.8,
+        "p50_ms": null,
+        "p99_ms": 11.6,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 83.5,
+      "query_p50_ms": 18.2,
+      "query_p99_ms": 56.1,
+      "pool_busy_ratio": 0.392
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 77.7,
+        "p99_ms": 108.8,
+        "error_rate": 0.0104
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 77.6,
+        "p99_ms": 79.4,
+        "error_rate": 0.001
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 80.0,
+        "p99_ms": 57.9,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 85.7,
+        "p99_ms": 11.8,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 154.3,
+        "breached": false
+      }
+    ],
+    "log_highlights": [
+      {
+        "service": "orders",
+        "level": "INFO",
+        "message": "retry override active: max_retries=0",
+        "count": 16
+      }
+    ],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:02:10Z",
+    "window_end": "2026-09-19T15:02:15Z",
+    "services": {
+      "gateway": {
+        "qps": 83.7,
+        "p50_ms": 36.5,
+        "p99_ms": 176.2,
+        "error_rate": 0.0101,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 87.6,
+        "p50_ms": null,
+        "p99_ms": 104.9,
+        "error_rate": 0.0104,
+        "retry_ratio": 1.0,
+        "timeout_rate": 0.0
+      },
+      "payments": {
+        "qps": 85.1,
+        "p50_ms": 21.3,
+        "p99_ms": 77.4,
+        "error_rate": 0.001,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 71.1,
+        "p50_ms": null,
+        "p99_ms": 11.3,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 81.1,
+      "query_p50_ms": 16.0,
+      "query_p99_ms": 55.0,
+      "pool_busy_ratio": 0.385
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 84.3,
+        "p99_ms": 107.8,
+        "error_rate": 0.0096
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 82.1,
+        "p99_ms": 78.7,
+        "error_rate": 0.001
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 80.9,
+        "p99_ms": 56.1,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 78.4,
+        "p99_ms": 11.4,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 176.2,
+        "breached": false
+      }
+    ],
+    "log_highlights": [
+      {
+        "service": "orders",
+        "level": "INFO",
+        "message": "retry override active: max_retries=0",
+        "count": 16
+      }
+    ],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:02:15Z",
+    "window_end": "2026-09-19T15:02:20Z",
+    "services": {
+      "gateway": {
+        "qps": 75.6,
+        "p50_ms": 41.4,
+        "p99_ms": 157.7,
+        "error_rate": 0.0102,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 80.5,
+        "p50_ms": null,
+        "p99_ms": 106.7,
+        "error_rate": 0.0099,
+        "retry_ratio": 1.0,
+        "timeout_rate": 0.0
+      },
+      "payments": {
+        "qps": 81.6,
+        "p50_ms": 21.3,
+        "p99_ms": 72.3,
+        "error_rate": 0.001,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 80.6,
+        "p50_ms": null,
+        "p99_ms": 12.4,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 76.3,
+      "query_p50_ms": 17.6,
+      "query_p99_ms": 58.9,
+      "pool_busy_ratio": 0.415
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 80.4,
+        "p99_ms": 114.0,
+        "error_rate": 0.0095
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 78.6,
+        "p99_ms": 81.2,
+        "error_rate": 0.0009
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 76.3,
+        "p99_ms": 56.8,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 77.9,
+        "p99_ms": 11.7,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 157.7,
+        "breached": false
+      }
+    ],
+    "log_highlights": [
+      {
+        "service": "orders",
+        "level": "INFO",
+        "message": "retry override active: max_retries=0",
+        "count": 15
+      }
+    ],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:02:20Z",
+    "window_end": "2026-09-19T15:02:25Z",
+    "services": {
+      "gateway": {
+        "qps": 78.1,
+        "p50_ms": 34.6,
+        "p99_ms": 128.1,
+        "error_rate": 0.0019,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 82.5,
+        "p50_ms": null,
+        "p99_ms": 110.0,
+        "error_rate": 0.002,
+        "retry_ratio": 1.0,
+        "timeout_rate": 0.0
+      },
+      "payments": {
+        "qps": 80.5,
+        "p50_ms": 21.0,
+        "p99_ms": 57.6,
+        "error_rate": 0.001,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 84.2,
+        "p50_ms": null,
+        "p99_ms": 11.4,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 79.2,
+      "query_p50_ms": 14.9,
+      "query_p99_ms": 46.2,
+      "pool_busy_ratio": 0.338
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 81.0,
+        "p99_ms": 113.4,
+        "error_rate": 0.002
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 79.7,
+        "p99_ms": 61.5,
+        "error_rate": 0.001
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 84.0,
+        "p99_ms": 43.1,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 83.9,
+        "p99_ms": 11.9,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 128.1,
+        "breached": false
+      }
+    ],
+    "log_highlights": [],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:02:25Z",
+    "window_end": "2026-09-19T15:02:30Z",
+    "services": {
+      "gateway": {
+        "qps": 78.2,
+        "p50_ms": 33.3,
+        "p99_ms": 114.5,
+        "error_rate": 0.002,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 83.3,
+        "p50_ms": null,
+        "p99_ms": 100.1,
+        "error_rate": 0.0019,
+        "retry_ratio": 1.0,
+        "timeout_rate": 0.0
+      },
+      "payments": {
+        "qps": 79.0,
+        "p50_ms": 22.7,
+        "p99_ms": 56.8,
+        "error_rate": 0.001,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 71.7,
+        "p50_ms": null,
+        "p99_ms": 11.6,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 82.4,
+      "query_p50_ms": 15.7,
+      "query_p99_ms": 47.9,
+      "pool_busy_ratio": 0.349
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 77.2,
+        "p99_ms": 108.3,
+        "error_rate": 0.0018
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 84.3,
+        "p99_ms": 62.8,
+        "error_rate": 0.001
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 85.9,
+        "p99_ms": 42.6,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 81.8,
+        "p99_ms": 11.6,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 114.5,
+        "breached": false
+      }
+    ],
+    "log_highlights": [],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:02:30Z",
+    "window_end": "2026-09-19T15:02:35Z",
+    "services": {
+      "gateway": {
+        "qps": 81.3,
+        "p50_ms": 33.4,
+        "p99_ms": 111.7,
+        "error_rate": 0.0021,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 77.1,
+        "p50_ms": null,
+        "p99_ms": 110.5,
+        "error_rate": 0.002,
+        "retry_ratio": 1.0,
+        "timeout_rate": 0.0
+      },
+      "payments": {
+        "qps": 78.0,
+        "p50_ms": 22.7,
+        "p99_ms": 61.5,
+        "error_rate": 0.001,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 79.6,
+        "p50_ms": null,
+        "p99_ms": 12.9,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 77.8,
+      "query_p50_ms": 14.7,
+      "query_p99_ms": 46.4,
+      "pool_busy_ratio": 0.35
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 74.8,
+        "p99_ms": 109.4,
+        "error_rate": 0.002
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 76.8,
+        "p99_ms": 60.5,
+        "error_rate": 0.001
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 79.2,
+        "p99_ms": 43.0,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 85.0,
+        "p99_ms": 11.9,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 111.7,
+        "breached": false
+      }
+    ],
+    "log_highlights": [],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:02:35Z",
+    "window_end": "2026-09-19T15:02:40Z",
+    "services": {
+      "gateway": {
+        "qps": 80.9,
+        "p50_ms": 36.0,
+        "p99_ms": 122.1,
+        "error_rate": 0.002,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 82.4,
+        "p50_ms": null,
+        "p99_ms": 110.5,
+        "error_rate": 0.0018,
+        "retry_ratio": 1.0,
+        "timeout_rate": 0.0
+      },
+      "payments": {
+        "qps": 75.9,
+        "p50_ms": 22.8,
+        "p99_ms": 60.5,
+        "error_rate": 0.001,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 71.9,
+        "p50_ms": null,
+        "p99_ms": 11.0,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 76.2,
+      "query_p50_ms": 14.8,
+      "query_p99_ms": 42.5,
+      "pool_busy_ratio": 0.378
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 81.5,
+        "p99_ms": 109.6,
+        "error_rate": 0.0019
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 78.9,
+        "p99_ms": 59.4,
+        "error_rate": 0.001
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 79.8,
+        "p99_ms": 46.4,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 74.4,
+        "p99_ms": 12.1,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 122.1,
+        "breached": false
+      }
+    ],
+    "log_highlights": [],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:02:40Z",
+    "window_end": "2026-09-19T15:02:45Z",
+    "services": {
+      "gateway": {
+        "qps": 75.6,
+        "p50_ms": 34.7,
+        "p99_ms": 125.3,
+        "error_rate": 0.002,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 76.3,
+        "p50_ms": null,
+        "p99_ms": 114.2,
+        "error_rate": 0.002,
+        "retry_ratio": 1.0,
+        "timeout_rate": 0.0
+      },
+      "payments": {
+        "qps": 81.3,
+        "p50_ms": 21.8,
+        "p99_ms": 60.7,
+        "error_rate": 0.001,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 74.7,
+        "p50_ms": null,
+        "p99_ms": 12.7,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 81.2,
+      "query_p50_ms": 15.7,
+      "query_p99_ms": 41.7,
+      "pool_busy_ratio": 0.365
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 82.6,
+        "p99_ms": 109.8,
+        "error_rate": 0.0018
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 80.3,
+        "p99_ms": 58.4,
+        "error_rate": 0.001
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 80.2,
+        "p99_ms": 43.4,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 79.6,
+        "p99_ms": 12.0,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 125.3,
+        "breached": false
+      }
+    ],
+    "log_highlights": [],
+    "change_events": []
+  },
+  {
+    "schema_version": "1",
+    "window_start": "2026-09-19T15:02:45Z",
+    "window_end": "2026-09-19T15:02:50Z",
+    "services": {
+      "gateway": {
+        "qps": 79.7,
+        "p50_ms": 38.3,
+        "p99_ms": 127.0,
+        "error_rate": 0.0019,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 79.6,
+        "p50_ms": null,
+        "p99_ms": 115.5,
+        "error_rate": 0.0019,
+        "retry_ratio": 1.0,
+        "timeout_rate": 0.0
+      },
+      "payments": {
+        "qps": 81.3,
+        "p50_ms": 21.5,
+        "p99_ms": 59.4,
+        "error_rate": 0.0011,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "fraud_check": {
+        "qps": 78.6,
+        "p50_ms": null,
+        "p99_ms": 12.1,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 81.4,
+      "query_p50_ms": 15.7,
+      "query_p99_ms": 41.3,
+      "pool_busy_ratio": 0.329
+    },
+    "edges": [
+      {
+        "src": "gateway",
+        "dst": "orders",
+        "qps": 75.7,
+        "p99_ms": 108.8,
+        "error_rate": 0.002
+      },
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 82.7,
+        "p99_ms": 59.3,
+        "error_rate": 0.0011
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 79.8,
+        "p99_ms": 46.2,
+        "error_rate": null
+      },
+      {
+        "src": "payments",
+        "dst": "fraud_check",
+        "qps": 77.6,
+        "p99_ms": 12.4,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 127.0,
+        "breached": false
+      }
+    ],
+    "log_highlights": [],
+    "change_events": []
+  }
+]

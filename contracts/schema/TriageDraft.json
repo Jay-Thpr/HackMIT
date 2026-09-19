@@ -1,0 +1,175 @@
+{
+  "$defs": {
+    "ConfirmExpect": {
+      "enum": [
+        "within_baseline",
+        "up",
+        "down",
+        "flat"
+      ],
+      "title": "ConfirmExpect",
+      "type": "string"
+    },
+    "Confirmation": {
+      "additionalProperties": false,
+      "properties": {
+        "expect": {
+          "$ref": "#/$defs/ConfirmExpect"
+        },
+        "metric": {
+          "title": "Metric",
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/$defs/Phase"
+        }
+      },
+      "required": [
+        "phase",
+        "metric",
+        "expect"
+      ],
+      "title": "Confirmation",
+      "type": "object"
+    },
+    "Direction": {
+      "enum": [
+        "up",
+        "down",
+        "flat"
+      ],
+      "title": "Direction",
+      "type": "string"
+    },
+    "Hypothesis": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "description",
+        "evidence"
+      ],
+      "title": "Hypothesis",
+      "type": "object"
+    },
+    "MetricExpectation": {
+      "additionalProperties": false,
+      "properties": {
+        "direction": {
+          "$ref": "#/$defs/Direction"
+        },
+        "metric": {
+          "title": "Metric",
+          "type": "string"
+        }
+      },
+      "required": [
+        "metric",
+        "direction"
+      ],
+      "title": "MetricExpectation",
+      "type": "object"
+    },
+    "Phase": {
+      "enum": [
+        "during",
+        "after_release"
+      ],
+      "title": "Phase",
+      "type": "string"
+    },
+    "Prediction": {
+      "additionalProperties": false,
+      "properties": {
+        "after_release": {
+          "items": {
+            "$ref": "#/$defs/MetricExpectation"
+          },
+          "title": "After Release",
+          "type": "array"
+        },
+        "confirms_if": {
+          "$ref": "#/$defs/Confirmation"
+        },
+        "during": {
+          "items": {
+            "$ref": "#/$defs/MetricExpectation"
+          },
+          "title": "During",
+          "type": "array"
+        },
+        "experiment_id": {
+          "title": "Experiment Id",
+          "type": "string"
+        },
+        "hypothesis_id": {
+          "title": "Hypothesis Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "hypothesis_id",
+        "experiment_id",
+        "during",
+        "after_release",
+        "confirms_if"
+      ],
+      "title": "Prediction",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "ambiguous": {
+      "title": "Ambiguous",
+      "type": "boolean"
+    },
+    "hypotheses": {
+      "items": {
+        "$ref": "#/$defs/Hypothesis"
+      },
+      "title": "Hypotheses",
+      "type": "array"
+    },
+    "predictions": {
+      "items": {
+        "$ref": "#/$defs/Prediction"
+      },
+      "title": "Predictions",
+      "type": "array"
+    },
+    "reasoning": {
+      "title": "Reasoning",
+      "type": "string"
+    }
+  },
+  "required": [
+    "ambiguous",
+    "reasoning",
+    "hypotheses",
+    "predictions"
+  ],
+  "title": "TriageDraft",
+  "type": "object"
+}

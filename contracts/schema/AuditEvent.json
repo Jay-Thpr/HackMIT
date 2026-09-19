@@ -1,0 +1,120 @@
+{
+  "$defs": {
+    "Actor": {
+      "enum": [
+        "llm",
+        "math",
+        "adapter",
+        "orchestrator",
+        "human"
+      ],
+      "title": "Actor",
+      "type": "string"
+    },
+    "EventKind": {
+      "enum": [
+        "detect",
+        "triage",
+        "experiment_start",
+        "experiment_end",
+        "action_apply",
+        "action_undo",
+        "refused",
+        "verdict",
+        "mitigation",
+        "patch_opened",
+        "canary_update",
+        "report",
+        "page_human"
+      ],
+      "title": "EventKind",
+      "type": "string"
+    },
+    "Stage": {
+      "enum": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "title": "Stage",
+      "type": "integer"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "action_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Action Id"
+    },
+    "actor": {
+      "$ref": "#/$defs/Actor"
+    },
+    "event_id": {
+      "title": "Event Id",
+      "type": "string"
+    },
+    "experiment_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Experiment Id"
+    },
+    "incident_id": {
+      "title": "Incident Id",
+      "type": "string"
+    },
+    "kind": {
+      "$ref": "#/$defs/EventKind"
+    },
+    "payload": {
+      "additionalProperties": true,
+      "title": "Payload",
+      "type": "object"
+    },
+    "schema_version": {
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "stage": {
+      "$ref": "#/$defs/Stage"
+    },
+    "summary": {
+      "title": "Summary",
+      "type": "string"
+    },
+    "ts": {
+      "format": "date-time",
+      "title": "Ts",
+      "type": "string"
+    }
+  },
+  "required": [
+    "incident_id",
+    "stage",
+    "kind",
+    "actor",
+    "summary"
+  ],
+  "title": "AuditEvent",
+  "type": "object"
+}

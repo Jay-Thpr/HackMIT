@@ -1,0 +1,152 @@
+{
+  "$defs": {
+    "Direction": {
+      "enum": [
+        "up",
+        "down",
+        "flat"
+      ],
+      "title": "Direction",
+      "type": "string"
+    },
+    "HypothesisSupport": {
+      "additionalProperties": false,
+      "properties": {
+        "confirmed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confirmed"
+        },
+        "hypothesis_id": {
+          "title": "Hypothesis Id",
+          "type": "string"
+        },
+        "support": {
+          "title": "Support",
+          "type": "number"
+        }
+      },
+      "required": [
+        "hypothesis_id",
+        "support"
+      ],
+      "title": "HypothesisSupport",
+      "type": "object"
+    },
+    "Observation": {
+      "additionalProperties": false,
+      "properties": {
+        "baseline": {
+          "title": "Baseline",
+          "type": "number"
+        },
+        "direction": {
+          "$ref": "#/$defs/Direction"
+        },
+        "experiment_id": {
+          "title": "Experiment Id",
+          "type": "string"
+        },
+        "measured": {
+          "title": "Measured",
+          "type": "number"
+        },
+        "metric": {
+          "title": "Metric",
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/$defs/Phase"
+        },
+        "sigma": {
+          "title": "Sigma",
+          "type": "number"
+        },
+        "z": {
+          "title": "Z",
+          "type": "number"
+        }
+      },
+      "required": [
+        "experiment_id",
+        "metric",
+        "phase",
+        "baseline",
+        "measured",
+        "sigma",
+        "z",
+        "direction"
+      ],
+      "title": "Observation",
+      "type": "object"
+    },
+    "Phase": {
+      "enum": [
+        "during",
+        "after_release"
+      ],
+      "title": "Phase",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "confirmed": {
+      "title": "Confirmed",
+      "type": "boolean"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "diagnosis": {
+      "title": "Diagnosis",
+      "type": "string"
+    },
+    "incident_id": {
+      "title": "Incident Id",
+      "type": "string"
+    },
+    "observations": {
+      "items": {
+        "$ref": "#/$defs/Observation"
+      },
+      "title": "Observations",
+      "type": "array"
+    },
+    "schema_version": {
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "summary": {
+      "default": "",
+      "title": "Summary",
+      "type": "string"
+    },
+    "support": {
+      "items": {
+        "$ref": "#/$defs/HypothesisSupport"
+      },
+      "title": "Support",
+      "type": "array"
+    }
+  },
+  "required": [
+    "incident_id",
+    "diagnosis",
+    "confirmed",
+    "support",
+    "observations"
+  ],
+  "title": "Verdict",
+  "type": "object"
+}

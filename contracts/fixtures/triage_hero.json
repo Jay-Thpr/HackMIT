@@ -1,0 +1,151 @@
+{
+  "ambiguous": true,
+  "reasoning": "DB receives ~4x the checkout rate (retry_ratio ~4) with query p50 above the 500ms client timeout and the pool saturated. This is consistent both with a retry loop that keeps a healthy DB overloaded and with a DB whose capacity dropped below 80 queries/s. Telemetry alone cannot separate them.",
+  "hypotheses": [
+    {
+      "id": "H_meta",
+      "label": "Self-sustaining retry loop",
+      "description": "A transient DB slowdown pushed queries past the 500ms timeout; Orders' retries (4 attempts) now keep DB load at ~320/s, which sustains the slowness after the trigger ended.",
+      "evidence": [
+        "db.qps ~320 vs 80 checkouts/s",
+        "svc.orders.retry_ratio ~3.9",
+        "db.query_p50_ms ~620 > 500ms client timeout"
+      ]
+    },
+    {
+      "id": "H_db",
+      "label": "DB capacity reduced",
+      "description": "Something outside the app (e.g. a batch job) cut the DB's capacity below the 80/s demand; retries amplify load but are a symptom, not the cause.",
+      "evidence": [
+        "db.pool_busy_ratio 1.0",
+        "db.query_p99_ms ~1700",
+        "no deploy or config change events in the window"
+      ]
+    }
+  ],
+  "predictions": [
+    {
+      "hypothesis_id": "H_meta",
+      "experiment_id": "retry_cap_0_20s",
+      "during": [
+        {
+          "metric": "db.query_p50_ms",
+          "direction": "down"
+        },
+        {
+          "metric": "db.qps",
+          "direction": "down"
+        },
+        {
+          "metric": "svc.gateway.error_rate",
+          "direction": "down"
+        }
+      ],
+      "after_release": [
+        {
+          "metric": "db.query_p50_ms",
+          "direction": "flat"
+        },
+        {
+          "metric": "svc.orders.retry_ratio",
+          "direction": "flat"
+        }
+      ],
+      "confirms_if": {
+        "phase": "after_release",
+        "metric": "db.query_p50_ms",
+        "expect": "within_baseline"
+      }
+    },
+    {
+      "hypothesis_id": "H_db",
+      "experiment_id": "retry_cap_0_20s",
+      "during": [
+        {
+          "metric": "db.query_p50_ms",
+          "direction": "flat"
+        },
+        {
+          "metric": "db.qps",
+          "direction": "down"
+        },
+        {
+          "metric": "svc.gateway.error_rate",
+          "direction": "flat"
+        }
+      ],
+      "after_release": [
+        {
+          "metric": "db.query_p50_ms",
+          "direction": "flat"
+        },
+        {
+          "metric": "svc.orders.retry_ratio",
+          "direction": "up"
+        }
+      ],
+      "confirms_if": {
+        "phase": "after_release",
+        "metric": "svc.orders.retry_ratio",
+        "expect": "up"
+      }
+    },
+    {
+      "hypothesis_id": "H_meta",
+      "experiment_id": "db_failover_30s",
+      "during": [
+        {
+          "metric": "db.query_p50_ms",
+          "direction": "flat"
+        },
+        {
+          "metric": "svc.orders.retry_ratio",
+          "direction": "flat"
+        }
+      ],
+      "after_release": [
+        {
+          "metric": "db.query_p50_ms",
+          "direction": "flat"
+        }
+      ],
+      "confirms_if": {
+        "phase": "during",
+        "metric": "db.query_p50_ms",
+        "expect": "flat"
+      }
+    },
+    {
+      "hypothesis_id": "H_db",
+      "experiment_id": "db_failover_30s",
+      "during": [
+        {
+          "metric": "db.query_p50_ms",
+          "direction": "down"
+        },
+        {
+          "metric": "svc.orders.retry_ratio",
+          "direction": "down"
+        },
+        {
+          "metric": "svc.gateway.error_rate",
+          "direction": "down"
+        }
+      ],
+      "after_release": [
+        {
+          "metric": "db.query_p50_ms",
+          "direction": "up"
+        }
+      ],
+      "confirms_if": {
+        "phase": "during",
+        "metric": "db.query_p50_ms",
+        "expect": "down"
+      }
+    }
+  ],
+  "schema_version": "1",
+  "incident_id": "inc-20260919-150100",
+  "created_at": "2026-09-19T15:01:40Z"
+}

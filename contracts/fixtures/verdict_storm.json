@@ -1,0 +1,72 @@
+{
+  "schema_version": "1",
+  "incident_id": "inc-20260919-150100",
+  "diagnosis": "H_meta",
+  "confirmed": true,
+  "support": [
+    {
+      "hypothesis_id": "H_meta",
+      "support": 0.93,
+      "confirmed": true
+    },
+    {
+      "hypothesis_id": "H_db",
+      "support": 0.07,
+      "confirmed": null
+    }
+  ],
+  "observations": [
+    {
+      "experiment_id": "retry_cap_0_20s",
+      "metric": "db.query_p50_ms",
+      "phase": "during",
+      "baseline": 620.0,
+      "measured": 17.2,
+      "sigma": 62.0,
+      "z": -9.72,
+      "direction": "down"
+    },
+    {
+      "experiment_id": "retry_cap_0_20s",
+      "metric": "db.qps",
+      "phase": "during",
+      "baseline": 318.0,
+      "measured": 80.4,
+      "sigma": 31.8,
+      "z": -7.47,
+      "direction": "down"
+    },
+    {
+      "experiment_id": "retry_cap_0_20s",
+      "metric": "svc.gateway.error_rate",
+      "phase": "during",
+      "baseline": 0.86,
+      "measured": 0.011,
+      "sigma": 0.086,
+      "z": -9.87,
+      "direction": "down"
+    },
+    {
+      "experiment_id": "retry_cap_0_20s",
+      "metric": "db.query_p50_ms",
+      "phase": "after_release",
+      "baseline": 15.0,
+      "measured": 15.6,
+      "sigma": 1.5,
+      "z": 0.4,
+      "direction": "flat"
+    },
+    {
+      "experiment_id": "retry_cap_0_20s",
+      "metric": "svc.orders.retry_ratio",
+      "phase": "after_release",
+      "baseline": 1.0,
+      "measured": 1.0,
+      "sigma": 0.1,
+      "z": 0.0,
+      "direction": "flat"
+    }
+  ],
+  "summary": "Capping retries collapsed DB query time to baseline and it stayed there after release: the loop was self-sustaining (H_meta). The cap was the fix; confirmation passed.",
+  "created_at": "2026-09-19T15:02:50Z"
+}

@@ -1,0 +1,111 @@
+{
+  "schema_version": "1",
+  "window_start": "2026-09-19T15:01:30Z",
+  "window_end": "2026-09-19T15:01:35Z",
+  "services": {
+    "gateway": {
+      "qps": 75.5,
+      "p50_ms": 1837.4,
+      "p99_ms": 1915.1,
+      "error_rate": 0.9058,
+      "retry_ratio": null,
+      "timeout_rate": null
+    },
+    "orders": {
+      "qps": 76.8,
+      "p50_ms": null,
+      "p99_ms": 1867.7,
+      "error_rate": 0.8626,
+      "retry_ratio": 4.07,
+      "timeout_rate": 0.8476
+    },
+    "payments": {
+      "qps": 298.1,
+      "p50_ms": 622.0,
+      "p99_ms": 1697.9,
+      "error_rate": 0.5286,
+      "retry_ratio": null,
+      "timeout_rate": null
+    },
+    "fraud_check": {
+      "qps": 299.2,
+      "p50_ms": null,
+      "p99_ms": 13.8,
+      "error_rate": 0.0,
+      "retry_ratio": null,
+      "timeout_rate": null
+    }
+  },
+  "db": {
+    "qps": 309.4,
+    "query_p50_ms": 644.1,
+    "query_p99_ms": 1604.5,
+    "pool_busy_ratio": 1.0
+  },
+  "edges": [
+    {
+      "src": "gateway",
+      "dst": "orders",
+      "qps": 76.0,
+      "p99_ms": 1963.3,
+      "error_rate": 0.8819
+    },
+    {
+      "src": "orders",
+      "dst": "payments",
+      "qps": 305.4,
+      "p99_ms": 1612.5,
+      "error_rate": 0.5378
+    },
+    {
+      "src": "payments",
+      "dst": "db",
+      "qps": 316.0,
+      "p99_ms": 1739.0,
+      "error_rate": null
+    },
+    {
+      "src": "payments",
+      "dst": "fraud_check",
+      "qps": 299.5,
+      "p99_ms": 12.8,
+      "error_rate": 0.0
+    }
+  ],
+  "slos": [
+    {
+      "name": "checkout",
+      "metric": "svc.gateway.p99_ms",
+      "threshold": 1000.0,
+      "value": 1915.1,
+      "breached": true
+    }
+  ],
+  "log_highlights": [
+    {
+      "service": "orders",
+      "level": "WARN",
+      "message": "payments call timed out after 500ms, retrying (attempt <n> of 4)",
+      "count": 1152
+    },
+    {
+      "service": "orders",
+      "level": "ERROR",
+      "message": "checkout failed: payments unavailable after 4 attempts",
+      "count": 308
+    },
+    {
+      "service": "payments",
+      "level": "WARN",
+      "message": "db connection pool exhausted, waited <t>ms for a connection",
+      "count": 886
+    },
+    {
+      "service": "payments",
+      "level": "WARN",
+      "message": "slow query: SELECT ... FROM accounts took <t>ms",
+      "count": 1227
+    }
+  ],
+  "change_events": []
+}

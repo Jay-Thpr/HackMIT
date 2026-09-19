@@ -1,0 +1,86 @@
+[
+  {
+    "id": "retry_cap",
+    "kind": "call_policy",
+    "description": "Cap the retries Orders makes to Payments (runtime override).",
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "max_retries": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        }
+      },
+      "required": [
+        "max_retries"
+      ],
+      "additionalProperties": false
+    },
+    "speed": "config",
+    "reversible": true,
+    "default_watch_s": 20,
+    "max_ttl_s": 300
+  },
+  {
+    "id": "shed",
+    "kind": "traffic",
+    "description": "Reject a fraction of incoming checkout traffic at the gateway (Envoy).",
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "fraction": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "required": [
+        "fraction"
+      ],
+      "additionalProperties": false
+    },
+    "speed": "config",
+    "reversible": true,
+    "default_watch_s": 20,
+    "max_ttl_s": 300
+  },
+  {
+    "id": "db_failover",
+    "kind": "dependency",
+    "description": "Move Payments to the standby DB path (pauses the batch job in the sandbox).",
+    "params_schema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "speed": "config",
+    "reversible": true,
+    "default_watch_s": 30,
+    "max_ttl_s": 900
+  },
+  {
+    "id": "canary_weight",
+    "kind": "code",
+    "description": "Send a fraction of Orders traffic to orders-v2 (Envoy weighted cluster).",
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "v2_weight": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "required": [
+        "v2_weight"
+      ],
+      "additionalProperties": false
+    },
+    "speed": "canary",
+    "reversible": true,
+    "default_watch_s": 120,
+    "max_ttl_s": 1800
+  }
+]

@@ -1,0 +1,48 @@
+{
+  "$defs": {
+    "World": {
+      "enum": [
+        "none",
+        "storm",
+        "degraded_db",
+        "cpu_starve"
+      ],
+      "title": "World",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "active": {
+      "title": "Active",
+      "type": "boolean"
+    },
+    "params": {
+      "additionalProperties": true,
+      "title": "Params",
+      "type": "object"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Started At"
+    },
+    "world": {
+      "$ref": "#/$defs/World"
+    }
+  },
+  "required": [
+    "world",
+    "active"
+  ],
+  "title": "FaultState",
+  "type": "object"
+}

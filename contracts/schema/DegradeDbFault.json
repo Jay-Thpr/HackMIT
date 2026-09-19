@@ -1,0 +1,12 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "capacity_qps": {
+      "default": 40.0,
+      "title": "Capacity Qps",
+      "type": "number"
+    }
+  },
+  "title": "DegradeDbFault",
+  "type": "object"
+}

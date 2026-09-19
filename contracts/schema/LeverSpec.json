@@ -1,0 +1,68 @@
+{
+  "$defs": {
+    "LeverKind": {
+      "enum": [
+        "traffic",
+        "call_policy",
+        "dependency",
+        "code"
+      ],
+      "title": "LeverKind",
+      "type": "string"
+    },
+    "LeverSpeed": {
+      "enum": [
+        "config",
+        "canary"
+      ],
+      "title": "LeverSpeed",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "default_watch_s": {
+      "title": "Default Watch S",
+      "type": "integer"
+    },
+    "description": {
+      "title": "Description",
+      "type": "string"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "kind": {
+      "$ref": "#/$defs/LeverKind"
+    },
+    "max_ttl_s": {
+      "title": "Max Ttl S",
+      "type": "integer"
+    },
+    "params_schema": {
+      "additionalProperties": true,
+      "title": "Params Schema",
+      "type": "object"
+    },
+    "reversible": {
+      "default": true,
+      "title": "Reversible",
+      "type": "boolean"
+    },
+    "speed": {
+      "$ref": "#/$defs/LeverSpeed"
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "description",
+    "params_schema",
+    "speed",
+    "default_watch_s",
+    "max_ttl_s"
+  ],
+  "title": "LeverSpec",
+  "type": "object"
+}

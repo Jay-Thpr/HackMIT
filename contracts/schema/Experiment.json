@@ -1,0 +1,35 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "blast_radius_pct": {
+      "title": "Blast Radius Pct",
+      "type": "number"
+    },
+    "hold_s": {
+      "title": "Hold S",
+      "type": "integer"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "lever_id": {
+      "title": "Lever Id",
+      "type": "string"
+    },
+    "params": {
+      "additionalProperties": true,
+      "title": "Params",
+      "type": "object"
+    }
+  },
+  "required": [
+    "id",
+    "lever_id",
+    "params",
+    "hold_s",
+    "blast_radius_pct"
+  ],
+  "title": "Experiment",
+  "type": "object"
+}

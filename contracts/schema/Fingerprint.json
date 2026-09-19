@@ -1,0 +1,363 @@
+{
+  "$defs": {
+    "ChangeEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "default": "",
+          "title": "Detail",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "target": {
+          "title": "Target",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ts",
+        "kind",
+        "target"
+      ],
+      "title": "ChangeEvent",
+      "type": "object"
+    },
+    "DbStats": {
+      "additionalProperties": false,
+      "properties": {
+        "pool_busy_ratio": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pool Busy Ratio"
+        },
+        "qps": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Qps"
+        },
+        "query_p50_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Query P50 Ms"
+        },
+        "query_p99_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Query P99 Ms"
+        }
+      },
+      "title": "DbStats",
+      "type": "object"
+    },
+    "Edge": {
+      "additionalProperties": false,
+      "properties": {
+        "dst": {
+          "title": "Dst",
+          "type": "string"
+        },
+        "error_rate": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Rate"
+        },
+        "p99_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "P99 Ms"
+        },
+        "qps": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Qps"
+        },
+        "src": {
+          "title": "Src",
+          "type": "string"
+        }
+      },
+      "required": [
+        "src",
+        "dst"
+      ],
+      "title": "Edge",
+      "type": "object"
+    },
+    "LogHighlight": {
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "title": "Count",
+          "type": "integer"
+        },
+        "level": {
+          "title": "Level",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "service": {
+          "title": "Service",
+          "type": "string"
+        }
+      },
+      "required": [
+        "service",
+        "level",
+        "message",
+        "count"
+      ],
+      "title": "LogHighlight",
+      "type": "object"
+    },
+    "ServiceStats": {
+      "additionalProperties": false,
+      "properties": {
+        "error_rate": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Rate"
+        },
+        "p50_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "P50 Ms"
+        },
+        "p99_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "P99 Ms"
+        },
+        "qps": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Qps"
+        },
+        "retry_ratio": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retry Ratio"
+        },
+        "timeout_rate": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeout Rate"
+        }
+      },
+      "title": "ServiceStats",
+      "type": "object"
+    },
+    "SloStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "breached": {
+          "title": "Breached",
+          "type": "boolean"
+        },
+        "metric": {
+          "title": "Metric",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "threshold": {
+          "title": "Threshold",
+          "type": "number"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "name",
+        "metric",
+        "threshold",
+        "breached"
+      ],
+      "title": "SloStatus",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "change_events": {
+      "items": {
+        "$ref": "#/$defs/ChangeEvent"
+      },
+      "title": "Change Events",
+      "type": "array"
+    },
+    "db": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DbStats"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "edges": {
+      "items": {
+        "$ref": "#/$defs/Edge"
+      },
+      "title": "Edges",
+      "type": "array"
+    },
+    "log_highlights": {
+      "items": {
+        "$ref": "#/$defs/LogHighlight"
+      },
+      "title": "Log Highlights",
+      "type": "array"
+    },
+    "schema_version": {
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "services": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ServiceStats"
+      },
+      "title": "Services",
+      "type": "object"
+    },
+    "slos": {
+      "items": {
+        "$ref": "#/$defs/SloStatus"
+      },
+      "title": "Slos",
+      "type": "array"
+    },
+    "window_end": {
+      "format": "date-time",
+      "title": "Window End",
+      "type": "string"
+    },
+    "window_start": {
+      "format": "date-time",
+      "title": "Window Start",
+      "type": "string"
+    }
+  },
+  "required": [
+    "window_start",
+    "window_end"
+  ],
+  "title": "Fingerprint",
+  "type": "object"
+}
