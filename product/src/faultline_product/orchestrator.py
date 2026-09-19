@@ -31,6 +31,9 @@ from .ports import (
     CanaryTarget,
     PatchAdapter,
     PatchProposal,
+    PatchVerification,
+    PatchVerifier,
+    VerificationStatus,
 )
 from .renderer import TerminalRenderer
 
@@ -47,6 +50,7 @@ class RunResult:
     diagnosis: str
     patch: PatchProposal | None
     canary: CanaryResult | None = None
+    verification: PatchVerification | None = None
 
 
 class Orchestrator:
@@ -62,9 +66,11 @@ class Orchestrator:
         clock: Callable[[], datetime] = utcnow,
         sleep: Callable[[float], None] = time.sleep,
         action_budget: int = 5,
+        verifier: PatchVerifier | None = None,
     ):
         self._levers, self._audit, self._patches = levers, audit, patches
         self._canary_deployer = canary_deployer
+        self._verifier = verifier
         self._renderer, self._telemetry, self._brain = renderer, telemetry, brain
         self._clock, self._sleep, self._action_budget = clock, sleep, action_budget
         self._actions = 0
@@ -101,7 +107,13 @@ class Orchestrator:
             return RunResult(incident_id, verdict.diagnosis, None)
         mitigation = self.mitigate(incident_id, triage, experiment, verdict)
         patch = self.patch(incident_id, verdict, triage)
-        canary = self.canary(incident_id, patch, mitigation)
+        verification = self.verify_patch(incident_id, patch, verdict.diagnosis)
+        if verification.status == VerificationStatus.failed:
+            canary = self._refuse_canary(
+                incident_id, f"patch failed clone verification: {verification.detail}"
+            )
+        else:
+            canary = self.canary(incident_id, patch, mitigation)
         report_ready = canary.status == CanaryStatus.passed
         report_summary = (
             "incident report ready"
@@ -117,6 +129,7 @@ class Orchestrator:
             {
                 "diagnosis": verdict.diagnosis,
                 "patch_reference": patch.reference,
+                "clone_verification": verification.status.value,
                 "canary_status": canary.status.value,
                 "canary_detail": canary.detail,
             },
@@ -125,7 +138,7 @@ class Orchestrator:
         self._renderer.event(
             "report", f"{report_label}: faultline report --incident {incident_id}"
         )
-        return RunResult(incident_id, verdict.diagnosis, patch, canary)
+        return RunResult(incident_id, verdict.diagnosis, patch, canary, verification)
 
     def detect(self, incident_id: str, now: datetime) -> Fingerprint:
         fp = self._telemetry.window(now - timedelta(seconds=WINDOW_S), now)
@@ -370,6 +383,43 @@ class Orchestrator:
         )
         self._renderer.event("patch", f"{patch.provider} patch prepared")
         return patch
+
+    def verify_patch(
+        self, incident_id: str, patch: PatchProposal, diagnosis: str
+    ) -> PatchVerification:
+        """Stage 6b (PRD v6): replay the reproduced incident against the patch in a clean clone.
+
+        Runs behind the v5 path: without a lab the result is ``skipped`` and the production
+        canary proceeds. A ``failed`` result refuses the canary and pages a human with evidence.
+        """
+        if self._verifier is None:
+            verification = PatchVerification(VerificationStatus.skipped, "no clone lab configured")
+        else:
+            self._renderer.event("verify", "replaying the reproduced incident against the patch in a clone")
+            verification = self._verifier.verify(incident_id, patch, diagnosis)
+        payload = {
+            "status": verification.status.value,
+            "clone_id": verification.clone_id,
+            "recipe": verification.recipe,
+            "evidence": verification.evidence,
+            "patch_reference": patch.reference,
+        }
+        if verification.status == VerificationStatus.failed:
+            self._record(
+                incident_id, Stage.patch, EventKind.refused, Actor.math,
+                f"patch failed clone verification: {verification.detail}", payload,
+            )
+            self._record(
+                incident_id, Stage.patch, EventKind.page_human, Actor.orchestrator,
+                "patch did not survive the replayed incident; page human", {},
+            )
+        else:
+            self._record(
+                incident_id, Stage.patch, EventKind.canary_update, Actor.math,
+                f"clone verification {verification.status.value}: {verification.detail}", payload,
+            )
+        self._renderer.event("verify", f"{verification.status.value}: {verification.detail}")
+        return verification
 
     def canary(
         self,

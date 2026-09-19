@@ -4,6 +4,7 @@ from .canary import (
     FixtureCanaryDeployer,
     SandboxCanaryDeployer,
 )
+from .clone import DEFAULT_RECIPES, FixturePatchVerifier, LabPatchVerifier
 from .devin import DevinAdapter, FixtureDevinAdapter
 from .fixture import (
     FixtureBrain,
@@ -19,7 +20,10 @@ from .live_telemetry import (
 from .sandbox import SandboxLeverAdapter
 
 __all__ = [
+    "DEFAULT_RECIPES",
     "DevinAdapter",
+    "FixturePatchVerifier",
+    "LabPatchVerifier",
     "CanaryPreparationError",
     "FixtureBrain",
     "FixtureCanaryDeployer",

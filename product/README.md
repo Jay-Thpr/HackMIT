@@ -31,6 +31,14 @@ uv run faultline watch \
   --incident live-1
 ```
 
+Add `--lab-url http://127.0.0.1:9910` (clone manager: `cd sandbox && uv run uvicorn
+services.lab.app:app --port 9910`) and, before the production canary, Faultline builds the
+patch into a clean C6 clone, routes all clone traffic to the patched orders-v2, replays the
+reproduction recipe for the diagnosis (`H_meta`: 800 ms DB latency for 20 s; `H_db`: DB capacity
+40 qps) and requires the clone's checkout SLO to recover on its own. A patch that fails is
+refused with the measured evidence and a human is paged; without a lab the step is `skipped`
+and the v5 canary path runs unchanged. Production is never touched; the clone is destroyed.
+
 Sandbox telemetry and levers are an atomic live profile. Live mode automatically selects
 the measured Brain planner/judge and refuses fixture evidence. The canary checkout is built
 as orders-v2 before traffic shifts; if it cannot be prepared or measured, the run is reported

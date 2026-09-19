@@ -77,3 +77,30 @@ class PatchAdapter(Protocol):
 @runtime_checkable
 class CanaryDeployer(Protocol):
     def prepare(self, patch: PatchProposal) -> CanaryTarget: ...
+
+
+class VerificationStatus(str, Enum):
+    passed = "passed"  # the patch survived the replayed incident in a clean clone
+    failed = "failed"  # the incident came back or the clone never recovered
+    skipped = "skipped"  # no clone lab available: fall through to the production canary (v5 path)
+
+
+@dataclass(frozen=True)
+class PatchVerification:
+    status: VerificationStatus
+    detail: str
+    clone_id: str | None = None
+    recipe: dict | None = None  # the lab action that replayed the reproduced incident
+    evidence: dict | None = None  # measured numbers behind the decision, for the audit log / Devin
+
+
+@runtime_checkable
+class PatchVerifier(Protocol):
+    """Stage 6b: replay the reproduced incident against the patch in a disposable clone (C6).
+
+    Never touches production. ``diagnosis`` selects the reproduction recipe.
+    """
+
+    def verify(
+        self, incident_id: str, patch: PatchProposal, diagnosis: str
+    ) -> PatchVerification: ...

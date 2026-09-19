@@ -15,6 +15,8 @@ from .adapters import (
     FixtureBrain,
     FixtureClock,
     FixtureDevinAdapter,
+    FixturePatchVerifier,
+    LabPatchVerifier,
     FixtureLeverAdapter,
     LiveTelemetrySource,
     SandboxLeverAdapter,
@@ -59,6 +61,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--canary-context",
         type=Path,
         help="patched Git checkout to build as sandbox orders-v2",
+    )
+    watch.add_argument(
+        "--lab-url",
+        help="C6 clone manager (e.g. http://127.0.0.1:9910): replay the incident against the "
+        "patch in a clean clone before the production canary",
     )
 
     investigate = commands.add_parser("investigate", help="detect, triage, and plan")
@@ -183,6 +190,7 @@ def main(argv: list[str] | None = None) -> int:
             audit=audit,
             patches=_patch_adapter(args),
             canary_deployer=_canary_deployer(args),
+            verifier=_patch_verifier(args),
             renderer=renderer,
             telemetry=telemetry,
             brain=brain,
@@ -239,6 +247,17 @@ def _patch_adapter(args):
             fallback=fallback,
         )
     return FixtureDevinAdapter()
+
+
+def _patch_verifier(args):
+    if getattr(args, "levers", "fixture") != "sandbox":
+        return FixturePatchVerifier()
+    lab_url = getattr(args, "lab_url", None)
+    if not lab_url:
+        return None
+    from faultline_contracts.clone import HttpCloneLab
+
+    return LabPatchVerifier(HttpCloneLab(lab_url), context=getattr(args, "canary_context", None))
 
 
 def _canary_deployer(args):
