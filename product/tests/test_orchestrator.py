@@ -123,3 +123,23 @@ def test_canary_refusal_finishes_run_and_pages_human(tmp_path):
     assert not any(event.kind == EventKind.action_apply for event in canary_events)
     assert events[-1].kind == EventKind.report
     assert "[canary] canary_weight refused: orders-v2 is not running — paged human" in output
+
+
+class NoExperimentBrain(FixtureBrain):
+    def plan(self, triage, catalog, blast_radius):
+        del triage, catalog, blast_radius
+
+
+def test_no_separating_experiment_finishes_run_and_pages_human(tmp_path):
+    orchestrator, audit, bundle = _orchestrator(tmp_path)
+    orchestrator._brain = NoExperimentBrain(bundle.triage, bundle.experiment, bundle.verdict)
+
+    result = orchestrator.run("no-experiment", bundle.telemetry.first_breach().window_end)
+
+    assert result.diagnosis == "refused"
+    events = audit.query("no-experiment")
+    assert [event.kind for event in events if event.stage == Stage.experiment] == [
+        EventKind.refused,
+        EventKind.page_human,
+    ]
+    assert events[-1].kind == EventKind.report

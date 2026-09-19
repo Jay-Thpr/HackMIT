@@ -63,6 +63,15 @@ class Orchestrator:
         triage = self.triage(incident_id, fp)
         experiment = self.plan(incident_id, triage)
         if experiment is None:
+            self._record(
+                incident_id,
+                Stage.report,
+                EventKind.report,
+                Actor.orchestrator,
+                "incident report ready",
+                {"diagnosis": "refused"},
+            )
+            self._renderer.event("report", f"ready: faultline report --incident {incident_id}")
             return RunResult(incident_id, "refused", None)
         baseline, during, after_release = self.experiment(incident_id, experiment, now)
         verdict = self.judge(incident_id, triage, experiment, baseline, during, after_release)
@@ -118,12 +127,34 @@ class Orchestrator:
             {"hypotheses": ids, "ambiguous": triage.ambiguous},
         )
         self._renderer.event("triage", f"ambiguous: {' vs '.join(ids)}")
+        source = getattr(self._brain, "last_triage_note", None)
+        if source is not None:
+            self._renderer.event("triage", f"source: {source}")
         return triage
 
     def plan(self, incident_id: str, triage: TriageResult) -> Experiment | None:
         experiment = self._brain.plan(
             triage, self._levers.catalog(), self._levers.estimate_blast_radius
         )
+        if experiment is None:
+            self._record(
+                incident_id,
+                Stage.experiment,
+                EventKind.refused,
+                Actor.orchestrator,
+                "no experiment separates the hypotheses",
+                {"hypotheses": [hypothesis.id for hypothesis in triage.hypotheses]},
+            )
+            self._record(
+                incident_id,
+                Stage.experiment,
+                EventKind.page_human,
+                Actor.orchestrator,
+                "experiment unavailable; page human",
+                {},
+            )
+            self._renderer.event("plan", "no separating experiment — paged human")
+            return None
         radius = experiment.blast_radius_pct
         self._renderer.event("plan", f"{experiment.id} selected, blast radius {radius:g}%")
         if radius > 50:
