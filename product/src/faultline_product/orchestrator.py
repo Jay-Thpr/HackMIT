@@ -14,6 +14,7 @@ from faultline_contracts import (
     Experiment,
     Fingerprint,
     LeverAdapter,
+    LeverError,
     Stage,
     TelemetrySource,
     TriageResult,
@@ -310,7 +311,33 @@ class Orchestrator:
 
     def canary(self, incident_id: str, patch: PatchProposal) -> None:
         del patch
-        canary = self._apply(incident_id, "canary_weight", {"v2_weight": 0.05}, 300, Stage.canary)
+        try:
+            canary = self._apply(
+                incident_id,
+                "canary_weight",
+                {"v2_weight": 0.05},
+                300,
+                Stage.canary,
+            )
+        except LeverError as exc:
+            self._record(
+                incident_id,
+                Stage.canary,
+                EventKind.refused,
+                Actor.orchestrator,
+                f"canary_weight refused: {exc}",
+                {"lever_id": "canary_weight", "params": {"v2_weight": 0.05}},
+            )
+            self._record(
+                incident_id,
+                Stage.canary,
+                EventKind.page_human,
+                Actor.orchestrator,
+                "canary unavailable; page human",
+                {},
+            )
+            self._renderer.event("canary", f"canary_weight refused: {exc} — paged human")
+            return
         self._record(
             incident_id,
             Stage.canary,

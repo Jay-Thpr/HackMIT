@@ -1,3 +1,4 @@
+import time
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
@@ -31,6 +32,10 @@ class FixtureClock:
         self.now += timedelta(seconds=seconds)
         if self.limit is not None and self.now > self.limit:
             self.now = self.limit
+
+    def real_sleep(self, seconds: float) -> None:
+        time.sleep(seconds)
+        self.sleep(seconds)
 
 
 class FixtureBrain:

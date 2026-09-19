@@ -68,7 +68,8 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         first_breach = bundle.telemetry.first_breach()
         clock = FixtureClock(first_breach.window_end, bundle.telemetry.last_window_end)
-        sleep = time.sleep if getattr(args, "real_time", False) else clock.sleep
+        use_real_time = getattr(args, "real_time", False)
+        sleep = clock.real_sleep if use_real_time else clock.sleep
         if args.levers == "sandbox":
             levers = SandboxLeverAdapter(base_url=args.control_url, clock=utcnow)
             if not levers.healthz():
