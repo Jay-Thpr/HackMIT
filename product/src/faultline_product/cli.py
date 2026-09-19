@@ -6,6 +6,7 @@ from pathlib import Path
 
 from faultline_brain import DEFAULT_MODEL
 from faultline_contracts import JsonlSink, LeverError, utcnow
+from faultline_telemetry import ElasticsearchFingerprintStore, HttpElasticsearchClient
 
 from .adapters import (
     DevinAdapter,
@@ -43,6 +44,8 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("--control-url")
     watch.add_argument("--telemetry", choices=("fixture", "sandbox"), default="fixture")
     watch.add_argument("--sandbox-host", default="127.0.0.1")
+    watch.add_argument("--elasticsearch-url", help="persist sandbox C1 windows to this Elasticsearch endpoint")
+    watch.add_argument("--clone-id", help="tag sandbox telemetry as this C6 clone in Elasticsearch")
     watch.add_argument("--detect-timeout", type=float, default=300)
     watch.add_argument("--brain", choices=("fixture", "live"))
     watch.add_argument("--openai-model", default=DEFAULT_MODEL)
@@ -59,6 +62,8 @@ def build_parser() -> argparse.ArgumentParser:
     investigate.add_argument("--control-url")
     investigate.add_argument("--telemetry", choices=("fixture", "sandbox"), default="fixture")
     investigate.add_argument("--sandbox-host", default="127.0.0.1")
+    investigate.add_argument("--elasticsearch-url", help="persist sandbox C1 windows to this Elasticsearch endpoint")
+    investigate.add_argument("--clone-id", help="tag sandbox telemetry as this C6 clone in Elasticsearch")
     investigate.add_argument("--detect-timeout", type=float, default=300)
     investigate.add_argument("--brain", choices=("fixture", "live"))
     investigate.add_argument("--openai-model", default=DEFAULT_MODEL)
@@ -71,6 +76,8 @@ def build_parser() -> argparse.ArgumentParser:
     experiment.add_argument("--control-url")
     experiment.add_argument("--telemetry", choices=("fixture", "sandbox"), default="fixture")
     experiment.add_argument("--sandbox-host", default="127.0.0.1")
+    experiment.add_argument("--elasticsearch-url", help="persist sandbox C1 windows to this Elasticsearch endpoint")
+    experiment.add_argument("--clone-id", help="tag sandbox telemetry as this C6 clone in Elasticsearch")
     experiment.add_argument("--detect-timeout", type=float, default=300)
     experiment.add_argument("--brain", choices=("fixture", "live"))
     experiment.add_argument("--openai-model", default=DEFAULT_MODEL)
@@ -103,11 +110,20 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         if args.telemetry == "sandbox":
             host = args.sandbox_host
+            elasticsearch_url = args.elasticsearch_url or os.environ.get("FAULTLINE_ELASTICSEARCH_URL")
+            writer = (
+                ElasticsearchFingerprintStore(HttpElasticsearchClient(elasticsearch_url))
+                if elasticsearch_url
+                else None
+            )
             live_telemetry = LiveTelemetrySource(
                 orders_url=f"http://{host}:8101",
                 payments_url=f"http://{host}:8102",
                 loadgen_url=f"http://{host}:8103",
                 orders_v2_url=f"http://{host}:8104",
+                writer=writer,
+                incident_id=incident_id,
+                clone_id=args.clone_id,
             )
             if not live_telemetry.healthz():
                 print(

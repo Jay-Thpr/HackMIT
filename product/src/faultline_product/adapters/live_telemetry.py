@@ -6,12 +6,20 @@ import urllib.request
 from collections import deque
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Protocol
 
 from faultline_contracts import WINDOW_S, Fingerprint
 from faultline_telemetry.fingerprint import fingerprint_from_stats
 
 Snapshot = dict[str, dict[str, Any]]
+
+
+class FingerprintWriter(Protocol):
+    """Track 2 persistence boundary; metadata remains outside the C1 payload."""
+
+    def write(
+        self, fingerprint: Fingerprint, *, incident_id: str | None = None, clone_id: str | None = None
+    ) -> None: ...
 
 
 class TelemetryUnavailable(RuntimeError):
@@ -61,6 +69,9 @@ class LiveTelemetrySource:
         timeout_s: float = 3.0,
         retain_s: float = 1800,
         http: Callable[[str, float], dict] = _get_json,
+        writer: FingerprintWriter | None = None,
+        incident_id: str | None = None,
+        clone_id: str | None = None,
     ):
         self._required_urls = {
             "orders": orders_url.rstrip("/") + "/stats",
@@ -75,6 +86,10 @@ class LiveTelemetrySource:
         self._timeout_s = timeout_s
         self._retain_s = retain_s
         self._http = http
+        self._writer = writer
+        self._incident_id = incident_id
+        self._clone_id = clone_id
+        self._persisted_windows: set[tuple[datetime, datetime]] = set()
         self._snapshots: deque[tuple[datetime, Snapshot]] = deque()
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -141,9 +156,11 @@ class LiveTelemetrySource:
         )
         if current_index is None or previous_index == current_index:
             raise ValueError(f"no telemetry covering [{start}, {end})")
-        return fingerprint_from_snapshots(
+        fingerprint = fingerprint_from_snapshots(
             entries[previous_index][1], entries[current_index][1], start, end
         )
+        self._persist(fingerprint)
+        return fingerprint
 
     def series(
         self,
@@ -169,7 +186,9 @@ class LiveTelemetrySource:
             if len(self._snapshots) < 2:
                 return None
             previous, current = list(self._snapshots)[-2:]
-        return fingerprint_from_snapshots(previous[1], current[1])
+        fingerprint = fingerprint_from_snapshots(previous[1], current[1])
+        self._persist(fingerprint)
+        return fingerprint
 
     def wait_for_breach(self, timeout_s: float, poll_s: float = 1.0) -> Fingerprint:
         if timeout_s <= 0:
@@ -197,6 +216,24 @@ class LiveTelemetrySource:
             return self._http(url, self._timeout_s)
         except urllib.error.URLError as exc:
             raise TelemetryUnavailable(f"telemetry unavailable at {url}") from exc
+
+    def _persist(self, fingerprint: Fingerprint) -> None:
+        """Index each live C1 window once, regardless of how often consumers read it."""
+        if self._writer is None:
+            return
+        identity = (fingerprint.window_start, fingerprint.window_end)
+        with self._lock:
+            if identity in self._persisted_windows:
+                return
+            self._persisted_windows.add(identity)
+        try:
+            self._writer.write(
+                fingerprint, incident_id=self._incident_id, clone_id=self._clone_id
+            )
+        except Exception:
+            with self._lock:
+                self._persisted_windows.discard(identity)
+            raise
 
     def _run(self, period_s: float) -> None:
         while not self._stop.is_set():

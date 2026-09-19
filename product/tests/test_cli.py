@@ -14,7 +14,7 @@ from faultline_product.adapters import (
     FixtureDevinAdapter,
     FixtureLeverAdapter,
 )
-from faultline_product.cli import main
+from faultline_product.cli import build_parser, main
 from faultline_product.fixtures import load_fixture
 from faultline_product.orchestrator import Orchestrator
 from faultline_product.renderer import TerminalRenderer
@@ -157,3 +157,14 @@ def test_unreachable_sandbox_profile_reports_health_error(tmp_path, capsys):
     )
     assert result == 2
     assert "sandbox /stats not reachable" in capsys.readouterr().out
+
+
+def test_sandbox_cli_accepts_elasticsearch_and_clone_metadata_options():
+    args = build_parser().parse_args(
+        [
+            "watch", "--telemetry", "sandbox", "--levers", "sandbox",
+            "--elasticsearch-url", "http://elastic:9200", "--clone-id", "clone-h-meta",
+        ]
+    )
+    assert args.elasticsearch_url == "http://elastic:9200"
+    assert args.clone_id == "clone-h-meta"

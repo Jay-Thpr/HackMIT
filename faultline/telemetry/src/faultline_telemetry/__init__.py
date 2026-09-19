@@ -10,12 +10,13 @@ from .analytics import (
 )
 from .ambiguity import ambiguity_rows, export_ambiguity_window
 from .config import TelemetrySettings
+from .elasticsearch import HttpElasticsearchClient
 from .fingerprint import fingerprint_from_stats
 from .source import HttpSandboxStats, PollingTelemetrySource
 from .store import ElasticsearchFingerprintStore, FINGERPRINT_INDEX
 
 __all__ = [
-    "ElasticsearchAuditSink", "ElasticsearchFingerprintStore", "ElasticsearchTelemetryAnalytics", "FINGERPRINT_INDEX", "FingerprintRecord", "HttpSandboxStats",
+    "ElasticsearchAuditSink", "ElasticsearchFingerprintStore", "ElasticsearchTelemetryAnalytics", "FINGERPRINT_INDEX", "FingerprintRecord", "HttpElasticsearchClient", "HttpSandboxStats",
     "PollingTelemetrySource", "TelemetrySettings", "ambiguity_rows", "export_ambiguity_window", "fingerprint_from_stats",
     "fingerprint_similarity", "ReproductionSimilarity", "SimilarIncident",
 ]
