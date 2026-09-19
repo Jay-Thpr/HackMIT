@@ -26,7 +26,7 @@ CLIENT_TIMEOUT_S = float(os.environ.get("LOAD_CLIENT_TIMEOUT_MS", "10000")) / 10
 seed = os.environ.get("LOAD_SEED")
 rng = random.Random(int(seed) if seed else None)
 
-stats = Stats("loadgen")
+stats = Stats("loadgen", counters=("sent", "ok", "errors", "client_timeouts_or_conn_errors"), hists=("request",))
 state = {"rps": DEFAULT_RPS}
 _session: aiohttp.ClientSession | None = None
 _tasks: set[asyncio.Task] = set()

@@ -30,7 +30,8 @@ PAYMENTS_URL = os.environ.get("PAYMENTS_URL", "http://envoy:8081/pay")
 DEFAULT_MAX_RETRIES = int(os.environ.get("ORDERS_MAX_RETRIES", "3"))
 ATTEMPT_TIMEOUT_S = float(os.environ.get("ORDERS_ATTEMPT_TIMEOUT_MS", "500")) / 1000.0
 
-stats = Stats("orders")
+stats = Stats("orders", counters=("requests", "attempts", "retries", "ok", "errors", "attempt_timeouts", "attempt_errors"),
+              hists=("request", "attempt"))
 _override: dict[str, Any] = {"max_retries": None, "timeout_s": None, "expires": 0.0}
 _session: aiohttp.ClientSession | None = None
 _in_flight = 0

@@ -40,10 +40,13 @@ class Hist:
 
 
 class Stats:
-    def __init__(self, service: str) -> None:
+    def __init__(self, service: str, counters: tuple[str, ...] = (), hists: tuple[str, ...] = ()) -> None:
+        """Declare the counters and histograms up front so they exist at 0 from the first snapshot.
+        A counter that only appears once incremented would make a healthy window's error rate
+        *missing* rather than 0, and the judge then has no healthy baseline for it."""
         self.service = service
-        self.counters: dict[str, float] = defaultdict(float)
-        self.hists: dict[str, Hist] = defaultdict(Hist)
+        self.counters: dict[str, float] = defaultdict(float, {c: 0.0 for c in counters})
+        self.hists: dict[str, Hist] = defaultdict(Hist, {h: Hist() for h in hists})
         self.gauges: dict[str, Any] = {}
 
     def inc(self, name: str, n: float = 1) -> None:

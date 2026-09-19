@@ -24,9 +24,11 @@ x-tunables: &tunables
   DB_ACQUIRE_TIMEOUT_MS: ${DB_ACQUIRE_TIMEOUT_MS:-1000}
   RESET_TIMEOUT_S: ${RESET_TIMEOUT_S:-120}
 
+# One image for all Python services. Only `payments` carries the build section: five services building
+# the same tag in parallel race on `docker tag` ("already exists"). The others reuse the built image.
 x-app: &app
   image: faultline-sandbox-app:latest
-  build: {context: .., dockerfile: sandbox/Dockerfile}
+  pull_policy: never
   restart: unless-stopped
 
 x-db: &db
@@ -53,6 +55,7 @@ services:
 
   payments:
     <<: *app
+    build: {context: .., dockerfile: sandbox/Dockerfile}
     cpus: ${PAYMENTS_CPUS:-2}   # explicit limit so cpu_starve can restore it exactly
     command: [uvicorn, services.payments.app:app, --host, 0.0.0.0, --port, "8000", --no-access-log, --timeout-keep-alive, "120"]
     environment:
