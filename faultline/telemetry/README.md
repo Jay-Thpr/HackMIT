@@ -2,8 +2,11 @@
 
 This package owns C1 production telemetry and the C4 Elasticsearch audit sink.
 
-Stage 1 provides configuration, dependency ports, and a tested audit sink. The
-next stage will add snapshot polling/OTel ingestion and C1 fingerprint assembly.
+The first implementation slices provide configuration, a C4 Elasticsearch audit
+sink, public `/stats` polling, C1 fingerprint assembly, and Elasticsearch C1
+window persistence/querying. OTel Collector deployment itself is an Owner 1
+Compose/service integration dependency; this adapter is ready to consume its
+observable output without reading hidden fault state.
 
 ## Non-negotiable telemetry semantics
 
@@ -22,4 +25,7 @@ next stage will add snapshot polling/OTel ingestion and C1 fingerprint assembly.
 | `config.py` | Local endpoint and index configuration |
 | `ports.py` | Small Elasticsearch and stats-source dependency ports |
 | `audit.py` | C4 `AuditSink` implementation backed by `faultline-audit` |
-| `fingerprint.py` | Stage 2 C1 five-second fingerprint assembly |
+| `fingerprint.py` | C1 five-second fingerprint assembly from public stats deltas |
+| `source.py` | Polling `TelemetrySource`, with optional ES persistence |
+| `store.py` | Elasticsearch C1 fingerprint window/series reads |
+| `ambiguity.py` | Label-free canonical metric exports for passive ambiguity checks |
