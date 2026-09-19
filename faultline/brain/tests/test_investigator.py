@@ -72,19 +72,21 @@ def test_investigator_reproduces_recovers_and_cleans_up_clone():
     healthy, incident = series[0], series[12]
     observed = iter([incident, healthy])
     lab = FakeCloneLab()
-    investigator = CloneInvestigator(lab, lambda _clone: next(observed))
+    waits = []
+    investigator = CloneInvestigator(lab, lambda _clone: next(observed), waits.append)
 
     evidence = investigator.investigate(
         "H_meta",
         CloneSpec(name="h-meta"),
         incident,
         healthy,
-        LabExperiment("db_latency", {"extra_ms": 800}, 20),
+        LabExperiment("db_latency", {"extra_ms": 800}, 20, observe_after_s=30, recovery_wait_s=5),
     )
 
     assert evidence.reproduction.reproduced is True
     assert evidence.recovery.recovered is True
     assert evidence.survives_falsification is True
+    assert waits == [30, 5]
     assert lab.events == ["create", "apply:db_latency", "undo:db_latency", "reset:clone-a", "destroy:clone-a"]
 
 

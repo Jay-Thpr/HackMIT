@@ -32,6 +32,8 @@ class LabExperiment:
     action: str
     params: dict
     ttl_s: int
+    observe_after_s: float = 0.0
+    recovery_wait_s: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -167,9 +169,15 @@ class CloneInvestigator:
     running or consumes a clone slot after an observation/probe failure.
     """
 
-    def __init__(self, lab: CloneLab, observe: CloneObserver):
+    def __init__(
+        self,
+        lab: CloneLab,
+        observe: CloneObserver,
+        wait: Callable[[float], None] | None = None,
+    ):
         self._lab = lab
         self._observe = observe
+        self._wait = wait or (lambda _seconds: None)
 
     def investigate(
         self,
@@ -189,12 +197,14 @@ class CloneInvestigator:
         handle: LabActionHandle | None = None
         try:
             handle = self._lab.apply(clone.clone_id, experiment.action, experiment.params, experiment.ttl_s)
+            self._wait(experiment.observe_after_s)
             reproduced = similarity(production_incident, self._observe(clone))
             reproduction = ReproductionEvidence(
                 hypothesis_id, clone.clone_id, experiment, reproduced, reproduced.matches
             )
             self._lab.undo(handle)
             handle = None
+            self._wait(experiment.recovery_wait_s)
             recovery = similarity(healthy_reference, self._observe(clone))
             recovery_evidence = RecoveryEvidence(clone.clone_id, recovery, recovery.matches)
             probe_evidence = None
