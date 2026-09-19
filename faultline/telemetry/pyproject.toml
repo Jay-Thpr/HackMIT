@@ -1,0 +1,19 @@
+[project]
+name = "faultline-telemetry"
+version = "0.1.0"
+description = "C1 telemetry and C4 Elasticsearch audit adapters for Faultline"
+requires-python = ">=3.11"
+dependencies = ["faultline-contracts", "httpx>=0.27"]
+
+[tool.uv.sources]
+faultline-contracts = { path = "../../contracts" }
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/faultline_telemetry"]
