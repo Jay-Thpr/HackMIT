@@ -3,6 +3,7 @@ from typing import Any, Literal
 
 from faultline_brain import (
     DEFAULT_MODEL,
+    SYSTEM_PROMPT,
     NoiseModel,
     confirmation_experiment,
     judge,
@@ -20,6 +21,36 @@ from faultline_contracts import (
 from faultline_contracts.triage import NONE_OF_THE_ABOVE
 
 INCIDENT_STEADY_WINDOWS = 6
+
+# Product's additions to Owner 3's triage prompt, learned from the first live OpenAI run
+# (live-12): the model predicted each hypothesis only for its favourite experiment, so no
+# experiment had two hypotheses to compare and the planner found nothing separating. It also
+# invented ids per run, which breaks the clone reproduction recipes keyed by class id.
+TAXONOMY = """
+Hypothesis ids MUST come from this sustaining-cause taxonomy (PRD v6.1); use the id of the
+class you mean, and add a short `label`:
+  H_meta   self-sustaining retry storm (metastable): the trigger is gone, retries themselves keep
+           the dependency saturated. Breaking the loop (e.g. a retry cap) ends it; after the cap is
+           released the system STAYS healthy because there is no longer a backlog to retry.
+  H_db     degraded dependency / DB capacity (e.g. a batch job): the dependency is genuinely slow
+           at normal load. Reducing load lowers its queue but latency per query stays high, and
+           once load returns the incident returns; relieving the dependency (failover) heals it.
+  H_cpu    resource exhaustion of a service (CPU, pool, FDs): service p99 high while the DB is fine.
+  H_deploy bad deploy or config change preceding the breach.
+  H_queue  consumer backlog / queue lag.
+  H_hotkey hot key or hot shard dominating dependency time.
+  H_cache  cache stampede at a TTL edge.
+  H_node   one bad node / noisy neighbour, peers fine.
+Propose only classes the fingerprint makes plausible (normally two or three).
+
+Predictions MUST form a full matrix: for EVERY hypothesis, give one prediction for EVERY
+candidate experiment id, each with `during` and `after_release` directions on the same
+metrics, so the planner can compare hypotheses experiment by experiment. Where a hypothesis
+expects no change, say `flat` explicitly. Prefer these metrics when present:
+db.query_p50_ms, db.qps, svc.orders.retry_ratio, svc.gateway.p99_ms, svc.gateway.error_rate,
+db.pool_busy_ratio.
+"""
+PRODUCT_SYSTEM_PROMPT = SYSTEM_PROMPT + "\n" + TAXONOMY
 
 
 class LiveBrain:
@@ -55,13 +86,29 @@ class LiveBrain:
                 self._candidates,
                 incident_id,
                 model=self._model,
+                system_prompt=PRODUCT_SYSTEM_PROMPT,
                 usage_sink=self._usage_sink,
             )
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - triage must never end the incident
             if self._triage_fallback is None:
                 raise
             self.last_triage_source = "fallback"
-            self.last_triage_note = "fallback (OpenAI error)"
+            self.last_triage_note = f"fallback (OpenAI error: {type(exc).__name__})"
+            return self._triage_fallback.model_copy(update={"incident_id": incident_id})
+        if (
+            self._triage_fallback is not None
+            and plan_experiment(result, self._candidates).selected is None
+            and plan_experiment(self._triage_fallback, self._candidates).selected is not None
+        ):
+            # The model proposed, but nothing in its prediction matrix separates its own
+            # hypotheses, so no experiment can be planned. Keep the incident moving on the
+            # canonical hypotheses and say so; the model's proposal is kept for the report.
+            self.last_triage_source = "fallback"
+            self.last_triage_note = (
+                "fallback (OpenAI predictions did not separate "
+                + " vs ".join(h.id for h in result.hypotheses)
+                + ")"
+            )
             return self._triage_fallback.model_copy(update={"incident_id": incident_id})
         self.last_triage_source = "openai"
         self.last_triage_note = "openai"
