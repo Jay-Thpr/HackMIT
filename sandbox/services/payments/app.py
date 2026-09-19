@@ -40,7 +40,9 @@ POOLS_CFG = {
 ACQUIRE_TIMEOUT_S = float(os.environ.get("DB_ACQUIRE_TIMEOUT_MS", "1000")) / 1000.0
 CPU_WORK_S = float(os.environ.get("PAYMENTS_CPU_WORK_MS", "1")) / 1000.0
 
-stats = Stats("payments")
+stats = Stats("payments", counters=("requests", "errors", "db_queries_issued", "db_queries_completed", "db_errors",
+                                    "db_acquire_timeouts", "db_busy_s", "completed_after_client_gone"),
+              hists=("request", "db_query"))
 pools: dict[str, asyncpg.Pool] = {}
 in_use: dict[str, int] = {k: 0 for k in POOLS_CFG}
 waiting: dict[str, int] = {k: 0 for k in POOLS_CFG}

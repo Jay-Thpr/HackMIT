@@ -17,6 +17,7 @@ Capacity through the primary pool = DB_POOL_SIZE / (DB_BASE_MS + extra_ms) queri
 """
 
 import asyncio
+import ipaddress
 import logging
 import os
 import time
@@ -26,7 +27,7 @@ from typing import Any
 
 import asyncpg
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from faultline_contracts.fault import CpuStarveFault, DegradeDbFault, FaultState, StormFault, World
@@ -55,6 +56,25 @@ _lock = asyncio.Lock()
 _state: dict[str, Any] = {"world": World.none, "params": {}, "started_at": None, "storm_until": None}
 _storm_task: asyncio.Task | None = None
 _starved: dict[str, int] = {}  # container id -> original NanoCpus
+_allowed_nets: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []  # own compose network(s) + loopback
+
+
+# ---- reachability: only production's own network (and the host through its published port) ---
+async def _load_allowed_nets() -> None:
+    """Docker Desktop does not isolate bridge networks from each other, so a clone (C6) could reach
+    this port by IP. Traffic from the host arrives from the network gateway, which is inside the
+    subnet, so bench/ and the demo script are unaffected; clone containers are not."""
+    _allowed_nets[:] = [ipaddress.ip_network("127.0.0.0/8"), ipaddress.ip_network("::1/128")]
+    try:
+        async with _docker() as d:
+            me = (await d.get(f"/containers/{os.environ.get('HOSTNAME', '')}/json")).json()
+        for net in me["NetworkSettings"]["Networks"].values():
+            if net.get("IPAddress"):
+                _allowed_nets.append(ipaddress.ip_network(f"{net['IPAddress']}/{net['IPPrefixLen']}", strict=False))
+    except Exception as e:  # noqa: BLE001 - no docker socket: stay open rather than lock bench out
+        log.warning("could not read own network (%s); accepting all sources", e)
+        _allowed_nets.append(ipaddress.ip_network("0.0.0.0/0"))
+    log.info("accepting requests from %s", [str(n) for n in _allowed_nets])
 
 
 # ---- physical knobs ------------------------------------------------------------------------
@@ -209,6 +229,7 @@ async def do_reset() -> dict[str, Any]:
 # ---- API -----------------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    await _load_allowed_nets()
     for _ in range(60):  # make sure both DBs carry the configured base cost
         try:
             await set_db_extra(PRIMARY_DSN, 0)
@@ -221,6 +242,19 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.middleware("http")
+async def _own_network_only(request: Request, call_next):
+    host = request.client.host if request.client else ""
+    try:
+        ok = any(ipaddress.ip_address(host) in n for n in _allowed_nets)
+    except ValueError:
+        ok = False
+    if not ok:
+        log.warning("refused request from %s (outside the production network)", host)
+        return JSONResponse({"detail": "fault controller is not reachable from here"}, status_code=403)
+    return await call_next(request)
 
 
 async def _storm_end(duration_s: float) -> None:

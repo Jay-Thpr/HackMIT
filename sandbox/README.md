@@ -8,6 +8,7 @@ loadgen ──► Envoy :8080 ──► orders (v1 | v2 canary) ──► Envoy 
   Poisson)                                    in Orders code
 control :9901  – operator levers (Faultline's only write path)
 faultctl :9900 – hidden fault controller (benchmark/demo only)
+lab :9910      – clone manager (C6): the same stack as disposable clones `faultline-clone-<1..3>`, no faultctl
 ```
 
 ## Quick start
@@ -18,6 +19,8 @@ docker compose up -d --build           # ~1 min first time
 uv sync                                 # host tooling (validation, diagnostics)
 uv run python scripts/diag.py --hidden  # live 1 s diagnostics (--hidden adds fault state; debug only)
 uv run python scripts/validate.py all   # every scripted check (~12 min)
+uv run uvicorn services.lab.app:app --port 9910   # clone lab (C6) manager, separate terminal
+uv run python scripts/validate_lab.py all         # clone fairness, API, reproductions (~10 min)
 ```
 
 ## The capacity model
@@ -129,6 +132,22 @@ wired yet. When it is, keep these choices, because they are what keeps World A a
 * No hidden state reaches the app: the DB cost lives in `io_profile`, which the app never reads, and
   fault-controller state is only on :9900.
 
+## Clone lab (C6, `services/lab`)
+
+`uv run uvicorn services.lab.app:app --port 9910` on the host. A clone is `docker-compose.yml` +
+`clone.override.yml` under project `faultline-clone-<slot>` with `PORT_*` shifted by 1000·slot, started without
+`faultctl`, configured only from the `CloneSpec` (retry policy, workload rate, optional `patch_ref` for
+orders-v2). Lab actions move the same physical knobs the fault controller moves in production (`io_profile`
+cost via `psql`, `docker update --cpus`, `compose stop/start`), each with a TTL the manager enforces. The
+manager refuses to touch any compose project it didn't create.
+
+Validated (`scripts/validate_lab.py`): clone ready in ~9 s; no faultctl, clean `io_profile`, empty DB; production
+`:9900` refuses clone traffic (403: faultctl accepts only its own network + host, and clone networks don't
+masquerade); `db_latency 800/20 s` → self-sustaining storm that the clone's retry cap heals permanently;
+`db_capacity 40` → degraded DB that only failover heals; `cpu_limit payments 0.1` → neither heals; API
+validation, TTL revert, undo, reset (8–15 s), capacity 3, destroy idempotent, production levers untouched.
+~300 MB / ~0.2 CPU per healthy clone. Recipes and endpoint details in [INTEGRATION.md](INTEGRATION.md).
+
 ## Canary (orders-v2)
 
 `orders-v2` is under the `canary` profile and built from `ORDERS_V2_CONTEXT` (a repo root with the patched
@@ -149,5 +168,7 @@ docker-compose.yml   envoy/envoy.yaml   postgres/init.sql   Dockerfile (one imag
 services/orders      retry loop + runtime override          services/payments  pool, shielded DB work, failover
 services/loadgen     open-loop Poisson client               services/control   :9901 levers
 services/faultctl    :9900 hidden faults + reset            services/common    stats + probe (shared with scripts)
+services/lab         :9910 clone manager (C6, host process) clone.override.yml clone-only network settings
 scripts/diag.py      live diagnostics                       scripts/validate.py scripted checks
+scripts/validate_lab.py  clone lab checks (fairness, api, storm, degraded, cpu)
 ```

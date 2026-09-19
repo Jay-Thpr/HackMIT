@@ -215,7 +215,7 @@ Used only by the sandbox, `bench/` and the demo script. HTTP API on `http://loca
 
 All endpoints return `FaultState`. Port 9900 must not be reachable from Faultline's config.
 
-## C6 — Clone lab (Owner 1 serves; Owner 3 investigators and Owner 4 orchestrator call) — DRAFT, awaiting Owner 3 approval
+## C6 — Clone lab (Owner 1 serves; Owner 3 investigators and Owner 4 orchestrator call) — approved by Owner 3
 
 A **clone** is a disposable, healthy replica of the target (its own Compose project and network) where an
 investigator may run experiments that are far too aggressive for production. Three environments, never mixed:
