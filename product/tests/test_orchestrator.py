@@ -1,5 +1,5 @@
 import pytest
-from faultline_contracts import EventKind, JsonlSink, LeverError, Stage
+from faultline_contracts import EventKind, HypothesisSupport, JsonlSink, LeverError, Stage
 from faultline_product.adapters import (
     FixtureBrain,
     FixtureCanaryDeployer,
@@ -193,3 +193,48 @@ def test_no_separating_experiment_finishes_run_and_pages_human(tmp_path):
         EventKind.page_human,
     ]
     assert events[-1].kind == EventKind.report
+
+
+class FollowUpFixtureBrain(FixtureBrain):
+    def __init__(self, triage, experiment, verdicts, follow_up):
+        super().__init__(triage, experiment, verdicts[-1])
+        self._verdicts = iter(verdicts)
+        self._follow_up = follow_up
+
+    def judge(self, triage, experiment, baseline, during, after_release):
+        del triage, experiment, baseline, during, after_release
+        return next(self._verdicts).model_copy(update={"incident_id": self._incident_id})
+
+    def confirmation_experiment(self, triage, hypothesis_id, catalog, blast_radius, excluded_ids):
+        del triage, catalog, blast_radius
+        assert hypothesis_id == "H_db"
+        assert "retry_cap_0_20s" in excluded_ids
+        return self._follow_up
+
+
+def test_unconfirmed_diagnostic_probe_runs_direct_confirmation_follow_up(tmp_path):
+    orchestrator, audit, bundle = _orchestrator(tmp_path)
+    db_failover = next(item for item in bundle.experiments if item.id == "db_failover_30s")
+    first = bundle.verdict.model_copy(
+        update={
+            "diagnosis": "none_of_the_above",
+            "confirmed": False,
+            "support": [HypothesisSupport(hypothesis_id="H_db", support=1.0, confirmed=False)],
+        }
+    )
+    second = bundle.verdict.model_copy(
+        update={
+            "diagnosis": "H_db",
+            "confirmed": True,
+            "support": [HypothesisSupport(hypothesis_id="H_db", support=1.0, confirmed=True)],
+        }
+    )
+    orchestrator._brain = FollowUpFixtureBrain(
+        bundle.triage, bundle.experiment, [first, second], db_failover
+    )
+
+    result = orchestrator.run("follow-up", bundle.experiment_start)
+
+    starts = [event.experiment_id for event in audit.query("follow-up") if event.kind == EventKind.experiment_start]
+    assert starts == ["retry_cap_0_20s", "db_failover_30s"]
+    assert result.diagnosis == "H_db"

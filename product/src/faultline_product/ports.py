@@ -57,6 +57,15 @@ class Brain(Protocol):
         blast_radius: Callable[[str, dict], float],
     ) -> Experiment | None: ...
 
+    def confirmation_experiment(
+        self,
+        triage: TriageResult,
+        hypothesis_id: str,
+        catalog: list[LeverSpec],
+        blast_radius: Callable[[str, dict], float],
+        excluded_ids: set[str],
+    ) -> Experiment | None: ...
+
     def judge(
         self,
         triage: TriageResult,

@@ -4,6 +4,7 @@ from typing import Any, Literal
 from faultline_brain import (
     DEFAULT_MODEL,
     NoiseModel,
+    confirmation_experiment,
     judge,
     plan_experiment,
     run_triage,
@@ -84,6 +85,26 @@ class LiveBrain:
             if candidate.lever_id in catalog_ids
         ]
         return plan_experiment(triage, candidates).selected
+
+    def confirmation_experiment(
+        self,
+        triage: TriageResult,
+        hypothesis_id: str,
+        catalog: list[LeverSpec],
+        blast_radius: Callable[[str, dict], float],
+        excluded_ids: set[str],
+    ) -> Experiment | None:
+        catalog_ids = {spec.id for spec in catalog}
+        candidates = [
+            candidate.model_copy(
+                update={"blast_radius_pct": blast_radius(candidate.lever_id, candidate.params)}
+            )
+            for candidate in self._candidates
+            if candidate.lever_id in catalog_ids
+        ]
+        return confirmation_experiment(
+            triage, hypothesis_id, candidates, excluded_ids=excluded_ids
+        )
 
     def judge(
         self,

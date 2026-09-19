@@ -95,6 +95,16 @@ class Orchestrator:
             return RunResult(incident_id, "refused", None)
         baseline, during, after_release = self.experiment(incident_id, experiment, now)
         verdict = self.judge(incident_id, triage, experiment, baseline, during, after_release)
+        if not verdict.confirmed:
+            follow_up = self.confirmation_experiment(incident_id, triage, verdict, experiment)
+            if follow_up is not None:
+                experiment = follow_up
+                baseline, during, after_release = self.experiment(
+                    incident_id, experiment, self._clock()
+                )
+                verdict = self.judge(
+                    incident_id, triage, experiment, baseline, during, after_release
+                )
         if verdict.diagnosis == NONE_OF_THE_ABOVE or not verdict.confirmed:
             self._record(
                 incident_id,
@@ -216,6 +226,40 @@ class Orchestrator:
                 {},
             )
             return None
+        return experiment
+
+    def confirmation_experiment(
+        self,
+        incident_id: str,
+        triage: TriageResult,
+        verdict: Verdict,
+        previous: Experiment,
+    ) -> Experiment | None:
+        if not verdict.support:
+            return None
+        leader = max(verdict.support, key=lambda item: item.support).hypothesis_id
+        experiment = self._brain.confirmation_experiment(
+            triage,
+            leader,
+            self._levers.catalog(),
+            self._levers.estimate_blast_radius,
+            {previous.id},
+        )
+        if experiment is None:
+            return None
+        if experiment.blast_radius_pct > 50:
+            self._record(
+                incident_id,
+                Stage.experiment,
+                EventKind.refused,
+                Actor.orchestrator,
+                f"confirmation blast radius {experiment.blast_radius_pct:g}% exceeds 50%",
+                {"experiment_id": experiment.id, "blast_radius_pct": experiment.blast_radius_pct},
+            )
+            return None
+        self._renderer.event(
+            "plan", f"{experiment.id} selected to confirm {leader}, blast radius {experiment.blast_radius_pct:g}%"
+        )
         return experiment
 
     def experiment(

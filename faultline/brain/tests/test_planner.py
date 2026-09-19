@@ -6,7 +6,7 @@ from pathlib import Path
 from faultline_contracts.levers import Experiment
 from faultline_contracts.triage import TriageResult
 
-from faultline_brain.planner import plan_experiment, score_experiment
+from faultline_brain.planner import confirmation_experiment, plan_experiment, score_experiment
 
 FIXTURES = Path(__file__).resolve().parents[3] / "contracts" / "fixtures"
 
@@ -26,6 +26,17 @@ def test_hero_selects_zero_blast_retry_cap():
     assert plan.selected.id == "retry_cap_0_20s"
     assert plan.scores[0].experiment.id == "retry_cap_0_20s"
     assert plan.scores[0].separation >= 3
+
+
+def test_confirmation_probe_for_db_skips_diagnostic_retry_cap():
+    triage, candidates = hero_inputs()
+
+    selected = confirmation_experiment(
+        triage, "H_db", candidates, excluded_ids={"retry_cap_0_20s"}
+    )
+
+    assert selected is not None
+    assert selected.id == "db_failover_30s"
 
 
 def test_no_separation_refuses_to_pick_an_experiment():

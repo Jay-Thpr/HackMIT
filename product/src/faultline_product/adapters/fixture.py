@@ -57,6 +57,10 @@ class FixtureBrain:
         del triage, catalog, blast_radius
         return self._experiment
 
+    def confirmation_experiment(self, triage, hypothesis_id, catalog, blast_radius, excluded_ids):
+        del triage, hypothesis_id, catalog, blast_radius, excluded_ids
+        return None
+
     def judge(self, triage, experiment, baseline, during, after_release) -> Verdict:
         del triage, experiment, baseline, during, after_release
         return self._verdict.model_copy(update={"incident_id": self._incident_id})

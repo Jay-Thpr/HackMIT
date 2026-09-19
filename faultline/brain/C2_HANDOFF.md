@@ -10,6 +10,10 @@
 - Deterministic active benchmark runner.
 - Passive-only, LLM-only, nearest-centroid, and random-lever benchmark baselines.
 - Frozen-suite orchestration with JSON-ready aggregate reporting.
+- C6 clone-investigator evidence loop: reproduction similarity, recovery,
+  measured C2 prediction scoring, and guaranteed lab-action/clone cleanup.
+- Production confirmation follow-up: an unconfirmed diagnostic probe can select
+  the gentlest untried positive confirmation experiment for its leading cause.
 
 ## Interfaces C2 consumes
 
@@ -31,10 +35,9 @@
   live accuracy.
 - Capture OpenAI `usage_sink` output for a compressed-fingerprint versus
   raw-telemetry token comparison before making a Token Company claim.
-- C2 now marks H_db's retry-cap prediction diagnostic-only. H_db confirmation
-  requires the direct `db_failover` recovery prediction instead, because host
-  contention can also remain slow under reduced retries. A production loop
-  must run that follow-up probe before it can claim H_db.
+- Wire `CloneInvestigator` to the live C6 manager and clone C1/C3 adapters for
+  two concurrent hypothesis investigations; the evidence math is implemented,
+  but it has not yet been exercised against Docker clones.
 - Product integration must supply the C2 judge with a complete telemetry series,
   C4-derived experiment windows, and separate healthy/incident baselines.
 

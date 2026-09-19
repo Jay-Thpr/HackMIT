@@ -1,8 +1,20 @@
 """Faultline Brain: telemetry-ingestion boundary and anomaly detection."""
 
 from .judge import AGREEMENT_ODDS, judge, phase_fingerprints
+from .investigator import (
+    CloneInvestigator,
+    CloneProbe,
+    InvestigationEvidence,
+    LabExperiment,
+    PredictionEvidence,
+    ReproductionEvidence,
+    RecoveryEvidence,
+    SimilarityEvidence,
+    score_clone_prediction,
+    similarity,
+)
 from .noise import DEFAULT_Z, FLOOR_FRAC, NoiseModel
-from .planner import ExperimentScore, Plan, plan_experiment, score_experiment
+from .planner import ExperimentScore, Plan, confirmation_experiment, plan_experiment, score_experiment
 from .telemetry import (
     FORBIDDEN_SUBSTRINGS,
     FairnessViolation,
@@ -29,6 +41,17 @@ __all__ = [
     "judge",
     "phase_fingerprints",
     "AGREEMENT_ODDS",
+    # Clone investigation
+    "CloneInvestigator",
+    "CloneProbe",
+    "InvestigationEvidence",
+    "LabExperiment",
+    "PredictionEvidence",
+    "ReproductionEvidence",
+    "RecoveryEvidence",
+    "SimilarityEvidence",
+    "score_clone_prediction",
+    "similarity",
     # Triage
     "run_triage",
     "TriageValidationError",
@@ -39,4 +62,5 @@ __all__ = [
     "Plan",
     "score_experiment",
     "plan_experiment",
+    "confirmation_experiment",
 ]

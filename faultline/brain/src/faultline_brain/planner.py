@@ -93,3 +93,35 @@ def plan_experiment(
     )
     selected = ordered[0].experiment if ordered and ordered[0].separation > 0 else None
     return Plan(selected=selected, scores=tuple(ordered))
+
+
+def confirmation_experiment(
+    triage: TriageResult,
+    hypothesis_id: str,
+    candidates: list[Experiment],
+    *,
+    excluded_ids: set[str] | None = None,
+) -> Experiment | None:
+    """Choose the gentlest untried direct confirmation probe for a leading cause.
+
+    A first experiment may be diagnostic-only (for example, a retry cap). Once
+    it points to a hypothesis, this selects an experiment whose prediction has
+    a non-null positive confirmation. C2 deliberately keeps that distinction in
+    the triage contract rather than inferring causality from a lever name.
+    """
+    excluded_ids = excluded_ids or set()
+    candidate_by_id = {candidate.id: candidate for candidate in candidates}
+    eligible = {
+        prediction.experiment_id
+        for prediction in triage.predictions
+        if prediction.hypothesis_id == hypothesis_id
+        and prediction.confirms_if is not None
+        and prediction.experiment_id not in excluded_ids
+        and prediction.experiment_id in candidate_by_id
+    }
+    if not eligible:
+        return None
+    return min(
+        (candidate_by_id[experiment_id] for experiment_id in eligible),
+        key=lambda item: (item.blast_radius_pct, item.id),
+    )
