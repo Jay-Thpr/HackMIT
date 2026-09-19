@@ -88,7 +88,6 @@ def main(argv: list[str] | None = None) -> int:
         if args.command in {"watch", "investigate", "experiment"} and audit.query(incident_id):
             print("faultline: error: incident already exists; pick a new id")
             return 2
-        first_breach = bundle.telemetry.first_breach()
         if args.telemetry == "sandbox":
             host = args.sandbox_host
             live_telemetry = LiveTelemetrySource(
@@ -114,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 3
         else:
             telemetry = bundle.telemetry
-            clock = FixtureClock(first_breach.window_end, bundle.telemetry.last_window_end)
+            clock = FixtureClock(bundle.experiment_start, bundle.telemetry.last_window_end)
             use_real_time = getattr(args, "real_time", False)
             sleep = clock.real_sleep if use_real_time else clock.sleep
         if args.levers == "sandbox":
@@ -148,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
             clock=clock,
             sleep=sleep,
         )
-        now = utcnow() if args.telemetry == "sandbox" else first_breach.window_end
+        now = utcnow() if args.telemetry == "sandbox" else bundle.experiment_start
         if args.command == "investigate":
             fp = orchestrator.detect(incident_id, now)
             triage = orchestrator.triage(incident_id, fp)

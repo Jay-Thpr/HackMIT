@@ -185,4 +185,9 @@ def test_cli_live_brain_falls_back_without_key(tmp_path, monkeypatch, capsys):
     )
 
     assert result == 0
-    assert "[triage] source: fallback (no OPENAI_API_KEY)" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "[triage] source: fallback (no OPENAI_API_KEY)" in output
+    events = [json.loads(line) for line in (tmp_path / "audit.jsonl").read_text().splitlines()]
+    verdict = next(event for event in events if event["kind"] == "verdict")
+    assert verdict["payload"]["diagnosis"] == "H_meta"
+    assert verdict["payload"]["confirmed"] is True

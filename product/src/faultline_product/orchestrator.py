@@ -25,6 +25,8 @@ from faultline_contracts import (
 from .ports import Brain, PatchAdapter, PatchProposal
 from .renderer import TerminalRenderer
 
+BASELINE_S = 120
+
 
 class BudgetExceeded(RuntimeError):
     pass
@@ -180,7 +182,7 @@ class Orchestrator:
     def experiment(
         self, incident_id: str, experiment: Experiment, now: datetime
     ) -> tuple[list[Fingerprint], list[Fingerprint], list[Fingerprint]]:
-        baseline = self._telemetry.series(now - timedelta(seconds=60), now)
+        baseline = self._telemetry.series(now - timedelta(seconds=BASELINE_S), now)
         spec = next(spec for spec in self._levers.catalog() if spec.id == experiment.lever_id)
         action = self._apply(
             incident_id,
