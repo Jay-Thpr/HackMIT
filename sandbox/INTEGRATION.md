@@ -4,6 +4,9 @@ Start the stack: `cd sandbox && docker compose up -d --build`. It's healthy abou
 `curl -s localhost:9901/healthz` or run `uv run python scripts/diag.py`. Stop with `docker compose down`.
 There are no volumes, so every `up` starts from a fresh DB.
 
+**The production project is shared.** `docker compose down` or `up --build` on `faultline-sandbox` kills every
+smoke, live-loop and benchmark run in flight; announce it first. Clones are the place for anything disruptive.
+
 Clone lab (C6, needed by investigators and the orchestrator): `uv run uvicorn services.lab.app:app --port 9910`
 in a second terminal (host process; it drives `docker compose`). See [Clone lab](#owner-34-clone-lab-c6-on-9910).
 
@@ -123,7 +126,7 @@ check), and `/internal/*`.
 | `svc.payments.qps`, `p50_ms`/`p99_ms`, `error_rate` | Δ`requests`; `request` histogram; Δ`errors`/Δ`requests` |
 | `db.qps` | Δ`db_queries_issued` / Δt (**issued, not completed**; see below) |
 | `db.query_p50_ms`, `query_p99_ms` | payments `db_query` histogram (issue → result, **includes pool wait**) |
-| `db.pool_busy_ratio` | Δ`db_busy_s` / (Δt × gauge `pool_size`) |
+| `db.pool_busy_ratio` | Δ`db_busy_s` / (Δt × gauge `pool_size`). During `db_failover` the gauge switches to the standby pool (16), so the ratio drops to ~0.2 at unchanged qps; expected, not a bug |
 | `edge.orders.payments.*` | qps Δ`attempts`/Δt; p99 from the `attempt` histogram; error_rate Δ(`attempt_timeouts`+`attempt_errors`)/Δ`attempts` |
 | `edge.payments.db.*` | qps Δ`db_queries_issued`/Δt; p99 from `db_query`; error_rate Δ`db_errors`/Δ`db_queries_issued` |
 | `edge.gateway.orders.*` | Envoy `cluster.orders_v1.upstream_rq_*` (and `orders_v2` during a canary) |
