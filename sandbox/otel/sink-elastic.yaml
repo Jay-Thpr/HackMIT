@@ -11,3 +11,4 @@ service:
   pipelines:
     traces:  {exporters: [elasticsearch/elastic]}
     metrics: {exporters: [elasticsearch/elastic]}
+    logs:    {exporters: [elasticsearch/elastic]}

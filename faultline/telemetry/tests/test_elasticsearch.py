@@ -2,7 +2,7 @@ import json
 
 import httpx
 
-from faultline_telemetry.elasticsearch import HttpElasticsearchClient
+from faultline_telemetry.elasticsearch import HttpElasticsearchClient, document_id
 
 
 def _client(requests: list[httpx.Request], api_key: str | None = None) -> HttpElasticsearchClient:
@@ -23,7 +23,9 @@ def test_http_elasticsearch_client_uses_document_and_search_endpoints():
     client = _client(requests)
     client.index(index="faultline-fingerprints", document={"x": 1})
     assert client.search(index="faultline-fingerprints", query={"match_all": {}}, sort=[{"window_start": "asc"}]) == {"hits": {"hits": []}, "columns": [], "values": []}
-    assert [request.url.path for request in requests] == ["/faultline-fingerprints/_doc", "/faultline-fingerprints/_search"]
+    expected_id = document_id("faultline-fingerprints", {"x": 1})
+    assert [request.url.path for request in requests] == [f"/faultline-fingerprints/_doc/{expected_id}", "/faultline-fingerprints/_search"]
+    assert requests[0].method == "PUT"
 
 
 def test_api_key_adds_authorization_header():
@@ -57,3 +59,16 @@ def test_put_index_template_hits_named_template_endpoint():
     _client(requests).put_index_template("faultline-fingerprints", {"index_patterns": ["x*"]})
     assert requests[0].method == "PUT"
     assert requests[0].url.path == "/_index_template/faultline-fingerprints"
+
+
+def test_ids_preserve_origin_and_retry_identity():
+    index = "faultline-fingerprints"
+    doc = {"window_start": "start", "window_end": "end", "incident_id": "inc", "services": {}}
+    assert document_id(index, doc) == document_id(index, {**doc, "services": {"orders": {"qps": 1.5}}})
+    assert document_id(index, doc) != document_id(index, {**doc, "clone_id": "clone-1"})
+    assert document_id(index, doc) != document_id(index, {**doc, "incident_id": "inc-2"})
+    assert document_id("faultline-audit", {"event_id": "a"}) != document_id("faultline-audit", {"event_id": "b"})
+    event = {"event_id": "a", "incident_id": "inc", "environment": "production"}
+    assert document_id("faultline-audit", event) == document_id("faultline-audit", {**event, "summary": "updated"})
+    assert document_id("faultline-audit", event) != document_id("faultline-audit", {**event, "environment": "clone", "clone_id": "c1"})
+    assert document_id(index, doc) != document_id(index, {**doc, "environment": "production"})

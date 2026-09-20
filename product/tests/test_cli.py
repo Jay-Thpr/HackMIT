@@ -1,4 +1,116 @@
 from datetime import UTC, datetime, timedelta
+from unittest.mock import Mock
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def isolate_elasticsearch(monkeypatch):
+    monkeypatch.setattr("faultline_product.cli.load_repo_dotenv", lambda _: None)
+    for name in ("FAULTLINE_ELASTICSEARCH_URL", "FAULTLINE_ELASTICSEARCH_API_KEY",
+                 "FAULTLINE_OBSERVABILITY_ELASTICSEARCH_URL", "FAULTLINE_OBSERVABILITY_ELASTICSEARCH_API_KEY",
+                 "FAULTLINE_ELASTICSEARCH_MIRROR_URL", "FAULTLINE_ELASTICSEARCH_MIRROR_API_KEY",
+                 "FAULTLINE_MIRROR_OUTBOX_DIR"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.mark.parametrize("command", ["investigate", "watch", "experiment"])
+def test_fixture_never_persists_as_production(tmp_path, monkeypatch, command):
+    monkeypatch.setenv("FAULTLINE_ELASTICSEARCH_URL", "https://a.test")
+    monkeypatch.setenv("FAULTLINE_ELASTICSEARCH_API_KEY", "a-key")
+    monkeypatch.setenv("FAULTLINE_OBSERVABILITY_ELASTICSEARCH_URL", "https://b.test")
+    monkeypatch.setenv("FAULTLINE_OBSERVABILITY_ELASTICSEARCH_API_KEY", "b-key")
+    factory = Mock()
+    monkeypatch.setattr("faultline_product.cli._persistence_client", factory)
+    extra = ["--id", "retry_cap_0_20s"] if command == "experiment" else []
+    assert main(["--audit-log", str(tmp_path / "audit.jsonl"), command, "--incident", "smoke-fixture", *extra]) == 0
+    factory.assert_not_called()
+
+
+def test_ui_never_initializes_writing_client(tmp_path, monkeypatch):
+    import uvicorn
+    from faultline_product import api, cli
+
+    monkeypatch.setenv("FAULTLINE_ELASTICSEARCH_URL", "https://a.test")
+    persistence = Mock()
+    monkeypatch.setattr(cli, "_persistence_client", persistence)
+    monkeypatch.setattr(api, "build_store", Mock(return_value=None))
+    monkeypatch.setattr(uvicorn, "run", Mock())
+    assert main(["--audit-log", str(tmp_path / "audit.jsonl"), "ui"]) == 0
+    persistence.assert_not_called()
+    uvicorn.run.assert_called_once()
+
+
+def test_cli_overrides_environment_and_template_failure_is_nonfatal(monkeypatch, caplog):
+    from faultline_product import cli
+
+    primary = Mock(spec=["close", "put_index_template"])
+    factory = Mock(return_value=primary)
+    monkeypatch.setattr(cli, "client_from_env", factory)
+    monkeypatch.setattr(cli, "ensure_index_templates", Mock(side_effect=RuntimeError("secret")))
+    monkeypatch.setenv("FAULTLINE_ELASTICSEARCH_URL", "https://env.test")
+    monkeypatch.setenv("FAULTLINE_ELASTICSEARCH_API_KEY", "env-key")
+    assert cli._persistence_client("https://flag.test", "flag-key") is primary
+    env = factory.call_args.args[0]
+    assert env["FAULTLINE_ELASTICSEARCH_URL"] == "https://flag.test"
+    assert env["FAULTLINE_ELASTICSEARCH_API_KEY"] == "flag-key"
+    cli.ensure_index_templates.assert_called_once_with(primary)
+    assert "RuntimeError" in caplog.text and "secret" not in caplog.text
+
+
+def test_mirror_outbox_creation_failure_degrades_to_primary(monkeypatch, caplog):
+    from faultline_product import cli
+    from faultline_telemetry import factory as elastic_factory
+    primary, secondary = Mock(), Mock()
+    monkeypatch.setenv("FAULTLINE_OBSERVABILITY_ELASTICSEARCH_URL", "https://b.test")
+    monkeypatch.setenv("FAULTLINE_OBSERVABILITY_ELASTICSEARCH_API_KEY", "secret")
+    monkeypatch.setattr(elastic_factory, "HttpElasticsearchClient", Mock(side_effect=[primary, secondary]))
+    monkeypatch.setattr(cli, "ensure_index_templates", Mock())
+    monkeypatch.setattr(elastic_factory, "MirroredElasticsearchClient", Mock(side_effect=OSError("secret path")))
+    assert cli._persistence_client("https://a.test", "key") is primary
+    secondary.close.assert_called_once()
+    primary.close.assert_not_called()
+    assert "primary only (OSError)" in caplog.text
+    assert "secret" not in caplog.text
+
+
+def test_partial_mirror_configuration_is_visible_and_not_activated(monkeypatch, caplog):
+    from faultline_product import cli
+    from faultline_telemetry import factory as elastic_factory
+    primary = Mock()
+    factory = Mock(return_value=primary)
+    monkeypatch.setattr(elastic_factory, "HttpElasticsearchClient", factory)
+    monkeypatch.setattr(cli, "ensure_index_templates", Mock())
+    monkeypatch.setenv("FAULTLINE_OBSERVABILITY_ELASTICSEARCH_URL", "https://b.test")
+    assert cli._persistence_client("https://a.test", "key") is primary
+    assert factory.call_count == 1
+    assert "incomplete" in caplog.text
+
+
+def test_mirror_shared_client_and_shutdown(monkeypatch, tmp_path):
+    from faultline_product import cli
+    from faultline_telemetry import factory as elastic_factory
+    primary, secondary = Mock(), Mock()
+    mirrored = Mock(primary=primary)
+    monkeypatch.setenv("FAULTLINE_OBSERVABILITY_ELASTICSEARCH_URL", "https://b.test")
+    monkeypatch.setenv("FAULTLINE_OBSERVABILITY_ELASTICSEARCH_API_KEY", "b-key")
+    monkeypatch.setenv("FAULTLINE_MIRROR_OUTBOX_DIR", str(tmp_path))
+    monkeypatch.setattr(elastic_factory, "HttpElasticsearchClient", Mock(side_effect=[primary, secondary]))
+    setup = Mock()
+    monkeypatch.setattr(cli, "ensure_index_templates", setup)
+    factory = Mock(return_value=mirrored)
+    monkeypatch.setattr(elastic_factory, "MirroredElasticsearchClient", factory)
+    assert cli._persistence_client("https://a.test", "key") is mirrored
+    assert factory.call_args.args[:2] == (primary, secondary)
+    setup.assert_called_once_with(primary)
+    monkeypatch.setattr(cli, "_persistence_client", lambda *a: mirrored)
+    monkeypatch.setenv("FAULTLINE_ELASTICSEARCH_URL", "https://a.test")
+    telemetry = Mock()
+    telemetry.healthz.return_value = False
+    monkeypatch.setattr(cli, "LiveTelemetrySource", Mock(return_value=telemetry))
+    assert main(["--audit-log", str(tmp_path / "audit.jsonl"), "watch", "--telemetry", "sandbox", "--levers", "sandbox"]) == 2
+    mirrored.close.assert_called_once()
+    assert cli.LiveTelemetrySource.call_args.kwargs["writer"]._client is mirrored
 
 from faultline_contracts import (
     EventKind,

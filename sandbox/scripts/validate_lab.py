@@ -153,15 +153,19 @@ class Run:
         records = self._collector_records(f"{project}-otel-collector-1")
         services, envs, strings = set(), set(), set()
         for rec in records:
+            for group in rec.get("resourceSpans") or []:
+                services.update(v for k, v in self._attrs(group.get("resource") or {}) if k == "service.name")
             for res in self._resources(rec):
                 for k, v in self._attrs(res):
-                    if k == "service.name":
-                        services.add(v)
                     if k == "deployment.environment":
                         envs.add(v)
             strings |= self._record_strings(rec)
         check("collector emitted spans from orders and payments",
               {"orders", "payments"} <= services, f"services={sorted(services)}")
+        log_count = sum(len(scope.get("logRecords") or []) for rec in records
+                        for resource in rec.get("resourceLogs") or []
+                        for scope in resource.get("scopeLogs") or [])
+        check("collector emitted application log records", log_count > 0, f"records={log_count}")
         banned = BANNED_SUBSTRINGS
         leaked = sorted(s for s in strings if any(b in s.lower() for b in banned))
         check("emitted telemetry carries no hidden state", not leaked, f"leaked={leaked[:10]}")
@@ -232,16 +236,30 @@ class Run:
                     for kind in ("sum", "gauge", "histogram", "exponentialHistogram", "summary"):
                         for dp in (met.get(kind) or {}).get("dataPoints") or []:
                             attrs(dp)
+        def log_strings(node: Any) -> None:
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    out.add(key)
+                    log_strings(value)
+            elif isinstance(node, list):
+                for value in node:
+                    log_strings(value)
+            elif isinstance(node, str):
+                out.add(node)
+
+        log_strings(rec.get("resourceLogs") or [])
         return out
 
     # -- optional Elasticsearch cross-check -----------------------------------------------------
     def _elastic_check(self, env: str) -> None:
         for line in self._root_env():
             os.environ.setdefault(*line)
-        url, key = os.environ.get("FAULTLINE_ELASTICSEARCH_URL"), os.environ.get("FAULTLINE_ELASTICSEARCH_API_KEY")
+        managed_otlp = bool(os.environ.get("FAULTLINE_OTLP_ENDPOINT"))
+        prefix = "FAULTLINE_OBSERVABILITY_ELASTICSEARCH" if managed_otlp else "FAULTLINE_ELASTICSEARCH"
+        url, key = os.environ.get(f"{prefix}_URL"), os.environ.get(f"{prefix}_API_KEY")
         url = url.rstrip("/") if url else url
         if not (url and key):
-            print("SKIP  elastic: FAULTLINE_ELASTICSEARCH_API_KEY not set", flush=True)
+            print(f"SKIP  elastic indexing check: {prefix}_URL/API_KEY not set; tee is local evidence only", flush=True)
             return
         # Verified against the otel-mode docs: resource.attributes.* are keywords; @timestamp is
         # date_nanos. Ingest lag is on the order of seconds — poll up to 60s.

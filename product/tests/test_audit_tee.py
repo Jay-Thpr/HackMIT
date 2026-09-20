@@ -47,4 +47,18 @@ def test_secondary_failure_does_not_propagate(tmp_path, caplog):
         sink.write(event())
 
     assert "secondary audit sink failed" in caplog.text
+    assert "elasticsearch unreachable" not in caplog.text
+    assert "RuntimeError" in caplog.text
     assert [e.incident_id for e in sink.query("inc-1")] == ["inc-1"]
+
+
+def test_tee_clone_default_and_explicit_override_preserve_local_c4(tmp_path):
+    primary = JsonlSink(tmp_path / "audit.jsonl")
+    secondary = RecordingSink()
+    sink = TeeAuditSink(primary, secondary, log=logging.getLogger("test"), clone_id="default-clone")
+    first, second = event(), event()
+    sink.write(first)
+    sink.write(second, clone_id="other-clone")
+    assert secondary.events == [(first, "default-clone"), (second, "other-clone")]
+    assert len(sink.query("inc-1")) == 2
+    assert all("clone_id" not in item.model_dump() for item in sink.query("inc-1"))

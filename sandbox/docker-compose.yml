@@ -34,6 +34,8 @@ x-otel: &otel
   OTEL_TRACES_EXPORTER: otlp_proto_http
   OTEL_METRICS_EXPORTER: otlp_proto_http
   OTEL_LOGS_EXPORTER: none
+  OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED: "false"
+  FAULTLINE_OTEL_LOGS_ENABLED: ${FAULTLINE_OTEL_LOGS_ENABLED:-true}
   OTEL_PYTHON_EXCLUDED_URLS: ://[^/]+/(internal|admin|stats|healthz|rate)(/|\?|$)
   OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
 
@@ -137,6 +139,8 @@ services:
     command: [uvicorn, services.control.app:app, --host, 0.0.0.0, --port, "8000", --no-access-log]
     environment:
       <<: *tunables
+      OTEL_SDK_DISABLED: "true"
+      FAULTLINE_OTEL_LOGS_ENABLED: "false"
       ORDERS_URLS: http://orders:8000
       ORDERS_V2_URL: http://orders-v2:8000
       PAYMENTS_URL: http://payments:8000
@@ -149,6 +153,8 @@ services:
     command: [uvicorn, services.faultctl.app:app, --host, 0.0.0.0, --port, "8000", --no-access-log]
     environment:
       <<: *tunables
+      OTEL_SDK_DISABLED: "true"
+      FAULTLINE_OTEL_LOGS_ENABLED: "false"
       PRIMARY_ADMIN_DSN: postgresql://app@db-primary:5432/shop
       STANDBY_ADMIN_DSN: postgresql://app@db-standby:5432/shop
       CONTROL_URL: http://control:8000
@@ -172,6 +178,8 @@ services:
       OTEL_DEPLOYMENT_ENVIRONMENT: ${OTEL_DEPLOYMENT_ENVIRONMENT:-production}
       FAULTLINE_ELASTICSEARCH_URL: ${FAULTLINE_ELASTICSEARCH_URL:-}
       FAULTLINE_ELASTICSEARCH_API_KEY: ${FAULTLINE_ELASTICSEARCH_API_KEY:-}
+      FAULTLINE_OTLP_ENDPOINT: ${FAULTLINE_OTLP_ENDPOINT:-}
+      FAULTLINE_OTLP_API_KEY: ${FAULTLINE_OTLP_API_KEY:-}
     # Sink config picked at compose-interpolation time; FAULTLINE_OTEL_TEE=1 (clones) additionally
     # writes OTLP JSON batches to /tmp/otel/records.jsonl for the fairness leak check.
-    command: ["--config=/etc/otelcol/collector.yaml", "--config=/etc/otelcol/sink${FAULTLINE_ELASTICSEARCH_URL:+-elastic}${FAULTLINE_OTEL_TEE:+-tee}.yaml"]
+    command: ["--config=/etc/otelcol/collector.yaml", "--config=/etc/otelcol/sink${FAULTLINE_ELASTICSEARCH_URL:+-elastic}${FAULTLINE_OTLP_ENDPOINT:+-otlp}${FAULTLINE_OTEL_TEE:+-tee}.yaml"]

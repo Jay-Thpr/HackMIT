@@ -222,6 +222,9 @@ class Clone:
 
     # -- lifecycle -----------------------------------------------------------------------------
     async def start(self) -> None:
+        _assert_clone_project(self.project)
+        for record_file in self._tee_dir().glob("records*.jsonl"):
+            record_file.unlink()
         if self.spec.patch_ref:
             await self.compose("build", "orders-v2", timeout_s=600)
         await self.compose("up", "-d", "--no-build", "--wait", *CLONE_SERVICES, timeout_s=240)

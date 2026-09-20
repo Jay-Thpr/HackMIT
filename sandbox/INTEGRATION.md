@@ -105,7 +105,16 @@ curl -s localhost:9901/admin/levers
   (:8103). Each returns cumulative counters, gauges, and histograms with fixed buckets (`buckets_ms`,
   where the last count is +Inf) plus `t` (unix seconds). Take the delta between two snapshots.
   `services/common/probe.py:row()` is a reference implementation of every derived number below.
-* Container stdout from orders, payments, loadgen, envoy and control.
+* Ordinary application logs from orders (including orders-v2), payments and loadgen are exported by
+  `services/common/telemetry.py` using the already-pinned Python OTel SDK and HTTP exporter. This is an
+  explicit logger/message allowlist, not a container-stdout receiver. No root logger, uvicorn access
+  logs, control, lab manager or faultctl logs are ingested. Unknown templates, SQL, exception details,
+  arbitrary extra attributes, runtime overrides and rate-change messages are excluded. Safe, numeric
+  workload warnings and startup messages retain their actual application text and rate limiting.
+  `FAULTLINE_OTEL_LOGS_ENABLED=false` disables this path; `OTEL_SDK_DISABLED=true` disables it as well.
+  Auto logging remains off (`OTEL_LOGS_EXPORTER=none`) to avoid a second unrestricted root handler.
+  Envoy logs are not collected. C1 `log_highlights` still come from Owner 2's canonical `/stats` builder;
+  these raw log records do not replace or alter that builder.
 * Envoy stats at `envoy:9902/stats/prometheus`, reachable only inside the Compose network (scraped by
   the compose project's `otel-collector` every 5 s).
 * OTel auto-instrumentation: `payments`, `orders`, `orders-v2` and `loadgen` run under
@@ -113,20 +122,36 @@ curl -s localhost:9901/admin/levers
   `otel-collector` (`sandbox/otel/collector.yaml`). `control` and `faultctl` are **not** instrumented,
   and `OTEL_PYTHON_EXCLUDED_URLS` plus collector `filter/fairness` keep `/internal/*`, `/admin/*`,
   `/stats`, `/healthz`, `/rate` out of the telemetry; `transform/fairness` strips `db.statement` /
-  `db.query.text` (the hidden fault rides inside SQL). Spans carry `deployment.environment`
-  (`production` or `clone-<slot>`).
-* Sink: `FAULTLINE_ELASTICSEARCH_URL` unset → local `debug` exporter (collector container logs); set →
-  elasticsearch exporter bulk-indexing into `*-generic.otel-default` with `FAULTLINE_ELASTICSEARCH_API_KEY`
-  (the Agent Builder key works; it must be present in `.env` as that exact name). Run
-  `uv run python scripts/otel_es_setup.py` once per Elastic project to install the `faultline-otel`
-  index template. Kill switch:
-  `OTEL_SDK_DISABLED=true` disables instrumentation in the services. Production picks this up only
-  when the production project is next recreated — the running containers still have the old image.
-* Clone tee: the lab manager sets `FAULTLINE_OTEL_TEE=1`, so clone collectors also write OTLP JSON
-  batches to `/tmp/otel/records.jsonl` in the collector container. `validate_lab.py fairness` reads
-  those records (services, `deployment.environment`, hidden-state leak scan) and, when
-  `FAULTLINE_ELASTICSEARCH_URL` + `FAULTLINE_ELASTICSEARCH_API_KEY` are set, optionally verifies the
-  clone's traces landed in `traces-*` (SKIPped otherwise).
+  `db.query.text` (the hidden fault rides inside SQL). All signals carry both `deployment.environment`
+  (retained for PR27's `resource.attributes.deployment.environment` queries) and
+  `deployment.environment.name` (native environment convention): `production` or `clone-<slot>`.
+  `service.name` remains `orders`, `payments` or `loadgen`; orders-v2 uses `orders` plus `service.version=v2`.
+  The collector rechecks the log body allowlist and strips log/scope attributes and unapproved resource
+  attributes before every sink, including debug and tee. Raw exception details are never exported as logs.
+* Sink priority (collector contrib remains pinned at `0.160.0`):
+  * Nonempty `FAULTLINE_OTLP_ENDPOINT` → **B managed OTLP**, using `FAULTLINE_OTLP_API_KEY` and
+    `Authorization: ApiKey <encoded-key>`, for traces, metrics and logs. Use B's actual managed endpoint,
+    not its Elasticsearch/Kibana URL or a guessed `/_otlp` URL. TLS verification remains enabled. The
+    key needs the `apm` application's `event:write` privilege; a custom-index-only key is insufficient.
+  * B endpoint empty/unset, `FAULTLINE_ELASTICSEARCH_URL` nonempty → **legacy A Elasticsearch**,
+    using `FAULTLINE_ELASTICSEARCH_API_KEY` and the retained otel-mode exporter/template. A remains
+    authoritative for C1/C4 through Owner 2; the collector does not dual-write raw signals to A and B.
+  * Both endpoints empty/unset → **local debug**. An empty value is disabled, not an invalid sink path.
+  * A+B use `sink-elastic-otlp*.yaml`, intentionally equivalent to `sink-otlp*.yaml`: B wins. Explicit
+    suffix variants avoid needing a shell in the stock collector or exposing endpoint/key values in
+    process arguments. Missing/invalid B credentials do **not** silently route raw data to A; unset B's
+    endpoint explicitly to roll back. Old `sink*.yaml` and `otel_es_setup.py` remain available. Do not
+    apply the legacy raw-telemetry template to B's managed streams.
+  * SDKs still send all signals to `http://otel-collector:4318`; only collectors receive sink credentials.
+    `OTEL_SDK_DISABLED=true` disables service instrumentation on the next approved recreation.
+* Clone tee: the lab manager sets `FAULTLINE_OTEL_TEE=1`, so clone collectors also write all three
+  signals to `/tmp/otel/records.jsonl`. Every route (B, legacy A, local debug) retains this tee.
+  Each clone has its own directory; startup removes previous-slot `records*.jsonl` so stale records
+  cannot pass a fresh fairness check. `validate_lab.py fairness` scans log bodies/nested values as well
+  as traces/metrics and requires application log records. The optional indexed-trace check selects
+  `FAULTLINE_OBSERVABILITY_ELASTICSEARCH_URL/API_KEY` when B is enabled, otherwise A's variables.
+  Without query credentials it explicitly SKIPs indexing verification, never queries A for B records.
+  The tee proves local filtered output, not cloud indexing.
 * After changing OTel deps / `requirements.txt`, rebuild the shared app image or clones fail with
   `opentelemetry-instrument: not found` (announce production recreates in chat first per the
   shared-stack rule):
@@ -179,9 +204,48 @@ suppressed count:
 | orders | ERROR | `checkout failed: payments unavailable after <n> attempts` |
 | orders | INFO | `retry override set: max_retries=<n> for <t>s` / `retry override ttl expired, max_retries back to 3` |
 | payments | WARNING | `db connection pool exhausted, waited <t>ms for a connection` |
-| payments | WARNING | `slow query: SELECT process_payment(...) took <t>ms` |
-| payments | ERROR | `db connection error: …` / `db query failed: …` |
+| payments | WARNING | `slow database operation took <t>ms` |
+| payments | ERROR | `db connection error` / `db query failed` |
 | payments | INFO | `db target set to standby for <t>s` / `db target ttl expired, reverting to primary` |
+
+Only allowlisted workload templates above are exported; override/target messages remain local. Loadgen
+also emits rate-limited `checkout request failed: status <code>` and
+`checkout request timed out or connection unavailable`. Startup `generating <rps> req/s` and payments'
+`pool <primary|standby> ready (size=<n>)` provide healthy log coverage. Healthy orders may have no logs;
+there is no artificial per-request log traffic. Stack traces and arbitrary patched-service log templates
+are intentionally not collected until separately reviewed for fairness.
+
+### Local collector verification and approved cutover
+
+`uv run --frozen python -m unittest discover -s tests -v` runs isolated unit checks.
+`SANDBOX_OTEL_DOCKER_TESTS=1 uv run --frozen python -m unittest discover -s tests -v` also validates all
+8 A/B/tee combinations with `docker compose --env-file /dev/null config` and the pinned collector's
+`validate` subcommand. It launches only a temporary standalone collector and synthetic local HTTP sink;
+real orders/payments/loadgen functions run against mocks to exercise actual log emission. Malicious
+synthetic logs, a control-plane span and a prohibited metric must not survive filtering. It checks
+local tee output and downstream OTLP delivery, then removes the temporary collector. No real sandbox,
+clone, secret env file, cloud endpoint or fault controller is used by these tests.
+
+Deployment remains a separate, explicitly approved action:
+
+1. Coordinate a maintenance window with active sandbox/benchmark users. Supply B's managed endpoint
+   and ingestion key through the existing secret mechanism; keep A's variables unchanged. Never paste
+   `docker compose config` output containing live credentials into a report.
+2. Rebuild the shared app image before starting any updated clone or recreating workload services.
+   Recreate only the collector and instrumented workloads as needed, not the DB/control plane; do not
+   blindly run `compose down` or an unrestricted `up --build` during a live run.
+3. For PR32/patch compatibility, an orders-v2 checkout/image must contain the pinned OTel dependencies,
+   `opentelemetry-instrument`, and this application log module/wiring. Its command remains the same
+   instrumented wrapper, its SDK endpoint stays local, and it inherits the log kill switches. A patched
+   checkout predating instrumentation must be updated before its image is built; there is no uninstrumented
+   fallback. This change does not alter canary deployment, health/version checks or routing policy.
+4. After approval, check fresh traces, metrics and logs **indexed in B**, then verify native APM service
+   relationships and production/individual clone environment filtering. Successful OTLP HTTP responses
+   mean accepted for processing, not indexed; inspect data streams and Data Set Quality/indexing failures.
+   Run the clone fairness scenario only with permission to create a real clone. Unit/standalone results
+   are not a claim that production has been recreated or that B/APM has passed live acceptance.
+5. Rollback explicitly clears `FAULTLINE_OTLP_ENDPOINT` and recreates only the collector in an approved
+   window: A resumes if configured, otherwise local debug. Retain the tee and fairness filters throughout.
 
 **Reference magnitudes** (defaults, measured, per second):
 
