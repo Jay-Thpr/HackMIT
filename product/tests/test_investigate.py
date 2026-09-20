@@ -363,7 +363,7 @@ def _stub_agentic(monkeypatch, script):
     instances = []
 
     class StubAgentic:
-        def __init__(self, lab, observe, agent, *, budget, wait):
+        def __init__(self, lab, observe, agent, *, budget, wait, agent_for_clone=None):
             self.agent = agent
             self.budget = budget
             self.investigate_calls = 0
