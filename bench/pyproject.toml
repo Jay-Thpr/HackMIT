@@ -13,6 +13,7 @@ dependencies = [
 
 [project.scripts]
 faultline-bench-live = "faultline_bench.live:main"
+faultline-bench-report = "faultline_bench.report:main"
 
 [tool.uv.sources]
 faultline-contracts = { path = "../contracts", editable = true }

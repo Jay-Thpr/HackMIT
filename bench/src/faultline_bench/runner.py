@@ -35,6 +35,13 @@ class BenchmarkResult:
     confirmed: bool
     blast_radius_pct: float | None
     action_seconds: int
+    # Common reporting fields. Live runners may populate request impact and LLM
+    # usage; deterministic worlds deliberately leave those unknown.
+    time_to_verdict_seconds: int | None = None
+    actions_applied: int = 0
+    requests_affected: int | None = None
+    token_usage: int | None = None
+    estimated_cost_usd: float | None = None
 
 
 def run_hero_case(
@@ -55,7 +62,7 @@ def run_hero_case(
     world.advance(INCIDENT_S)
     selected = chooser(world.latest(), candidates) if chooser else plan_experiment(triage, candidates).selected
     if selected is None:
-        return BenchmarkResult(None, "none_of_the_above", False, None, 0)
+        return BenchmarkResult(None, "none_of_the_above", False, None, 0, HEALTHY_S + INCIDENT_S, 0)
 
     if selected.id not in {candidate.id for candidate in candidates}:
         raise ValueError("benchmark chooser returned an experiment outside the candidate set")
@@ -76,7 +83,7 @@ def run_passive_only_case(world: FakeWorld, trigger, diagnose: PassiveDiagnoser)
     world.advance(HEALTHY_S)
     trigger(world)
     world.advance(INCIDENT_S)
-    return BenchmarkResult(None, diagnose(world.latest()), False, None, 0)
+    return BenchmarkResult(None, diagnose(world.latest()), False, None, 0, HEALTHY_S + INCIDENT_S, 0)
 
 
 def run_llm_only_case(
@@ -98,7 +105,7 @@ def run_llm_only_case(
     incident = world.latest()
     selected = choose(incident, candidates)
     if selected is None:
-        return BenchmarkResult(None, diagnose(incident, [], []), False, None, 0)
+        return BenchmarkResult(None, diagnose(incident, [], []), False, None, 0, HEALTHY_S + INCIDENT_S, 0)
     if selected.id not in {candidate.id for candidate in candidates}:
         raise ValueError("LLM-only chooser returned an experiment outside the candidate set")
     start = world.now
@@ -110,7 +117,7 @@ def run_llm_only_case(
     series = world.series(start, world.now)
     during = [fp for fp in series if fp.window_start < release]
     after = [fp for fp in series if fp.window_start >= release]
-    return BenchmarkResult(selected.id, diagnose(incident, during, after), False, selected.blast_radius_pct, selected.hold_s)
+    return BenchmarkResult(selected.id, diagnose(incident, during, after), False, selected.blast_radius_pct, selected.hold_s, HEALTHY_S + INCIDENT_S + selected.hold_s + WATCH_S, 1)
 
 
 def _run_measured_experiment(world: FakeWorld, experiment: Experiment, triage: TriageResult) -> BenchmarkResult:
@@ -138,4 +145,6 @@ def _run_measured_experiment(world: FakeWorld, experiment: Experiment, triage: T
         confirmed=verdict.confirmed,
         blast_radius_pct=experiment.blast_radius_pct,
         action_seconds=experiment.hold_s,
+        time_to_verdict_seconds=HEALTHY_S + INCIDENT_S + experiment.hold_s + WATCH_S,
+        actions_applied=1,
     )

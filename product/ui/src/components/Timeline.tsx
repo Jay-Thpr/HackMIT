@@ -19,6 +19,6 @@ export function Timeline({ scenario }: { scenario: Scenario }) {
       <div className="timeline-markers"><span>Observe</span><span>Reproduce</span><span>Compare</span><span>Confirm</span></div>
     </div>
     <button className="speed-button" aria-label={`Playback speed ${speed} times`} onClick={() => set({ speed: speed === 1 ? 2 : speed === 2 ? 4 : 1 })}>{speed}×</button>
-    <span className="timeline-mode">SIMULATED REPLAY</span>
+    <span className="timeline-mode">{scenario.live ? 'RECORDED INCIDENT' : 'SIMULATED REPLAY'}</span>
   </div>
 }

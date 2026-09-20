@@ -84,6 +84,9 @@ def scenario_from_incident(
     baseline = _readings(healthy[-1] if healthy else None, topology)
     triage_event = next((e for e in events if e.kind == EventKind.triage and e.stage == 3), None)
     hypotheses = _hypotheses(triage_event)
+    # Retrieval is explanatory only. The UI renders these as read-only context;
+    # the judge still decides solely from the current experiment's measurements.
+    similar_incidents = ((triage_event.payload or {}).get("similar_incidents") or []) if triage_event else []
     hypothesis_ids = [h["id"] for h in hypotheses]
     entry, target, policy = "gateway", "db", "orders"
 
@@ -308,6 +311,7 @@ def scenario_from_incident(
         "topology": topology,
         "baseline": baseline,
         "hypotheses": hypotheses,
+        "similarIncidents": similar_incidents,
         "events": out,
     }
 

@@ -105,6 +105,9 @@ export interface Scenario {
   topology: Topology
   baseline: Record<string, NodeReading>
   hypotheses: { id: string; title: string; description: string; prediction: string; color: string }[]
+  // Read-only Elasticsearch retrieval context. These labels never participate
+  // in the current incident's verdict.
+  similarIncidents?: { incident_id: string; score: number; diagnosis?: string | null; confirmed?: boolean | null; matching_metrics?: string[]; recipe?: string }[]
   events: WorkspaceEvent[]
 }
 
