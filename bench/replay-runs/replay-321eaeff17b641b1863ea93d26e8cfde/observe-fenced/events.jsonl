@@ -1,0 +1,2 @@
+{"id":"a614487225d44afda64cb28b72257aa6","at_s":60.0,"kind":"tool","title":"Read available C1 telemetry history","detail":"","environment":"observer","evidence":"observed","reference":null,"diagnosis":null,"action_id":null,"ttl_s":null}
+{"id":"68c817ec28fc40158b9c17c096e0a5d9","at_s":60.25,"kind":"error","title":"Responder stopped: ValidationError","detail":"","environment":"observer","evidence":"observed","reference":null,"diagnosis":null,"action_id":null,"ttl_s":null}

@@ -1,0 +1,2 @@
+{"id":"b25806e6f1b1461e82e6fddf808c0866","at_s":60.0,"kind":"tool","title":"Read available C1 telemetry history","detail":"","environment":"observer","evidence":"observed","reference":null,"diagnosis":null,"action_id":null,"ttl_s":null}
+{"id":"3052fd12e12e4f53b6615e00f85d9ee2","at_s":60.25,"kind":"error","title":"Responder stopped: ValueError","detail":"","environment":"observer","evidence":"observed","reference":null,"diagnosis":null,"action_id":null,"ttl_s":null}

@@ -5,3 +5,4 @@ __pycache__/
 .faultline/
 .env
 .DS_Store
+/runs/comparisons/

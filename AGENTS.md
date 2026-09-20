@@ -118,3 +118,70 @@ Status honesty: FAST timing unqualified until lead measurement report; advanced 
 ## Canary runtime + observation (canary-fix)
 
 Envoy `runtime_modify` integer `FractionalPercent` units are out of **100**, not 10000 — `canary_weight` must write the explicit JSON form `{"numerator":N,"denominator":"TEN_THOUSAND"}` via `canary_runtime_value()` (shed stays integer percent). `LiveTelemetrySource.observe(duration_s, required_services=...)` collects fresh post-apply snapshot pairs at each 5 s boundary (full 120 s, required-service presence + producer-time monotonicity enforced; scrapes serialized against the poller via `_scrape_lock`). The prepared profile checks the measured split from C1 QPS integrals (estimated request counts, 3σ binomial band). Prior fast run `fast-8bad26cf028b` (281 s) remains FAILED/unmodified; fixed-version live rehearsal is pending the active exclusive comparison pilot — no Docker builds/clones while it runs. `integration/.gitignore` is restored; do not edit it.
+
+## Comparison lab (bench/comparison-lab)
+
+- `bench/src/faultline_bench/comparison.py` owns the versioned `faultline-comparison/1` recording and scoring protocol. Browser/API code only replays its stored results; it does not recompute evaluation scores.
+- From `bench/`, `uv run faultline-compare --plan` is offline by default. The default development plan has two cases across Elastic, Observe, Probe, and Clone + Probe. `--cases case-a --arms observe probe` narrows iteration; `--include-healthy --cases case-c` selects the healthy control.
+- `uv run faultline-compare --demo` writes a clearly synthetic recording under `runs/comparisons/`. The checked-in `product/ui/public/cmp-example.json` is an illustrative frozen fixture, not vendor output or accuracy evidence.
+- Real execution requires `--execute --exclusive-sandbox`. This explicitly authorizes sandbox faults/resets and TTL-bound C3/C6 actions; do not run while any watch, demo, benchmark or another owner uses the target. Targets are restricted to loopback. Runs restore the original workload and stop the suite if owned-resource cleanup fails. A local target lock excludes other comparison runners, not unrelated responders.
+- Elastic additionally requires `--allow-elastic-setup`. It creates a dedicated `faultline-comparison-windows` index and a run-scoped ES|QL tool before timing the incident. Its model calls use the stock `elastic-ai-agent` with only that read-only tool enabled. Comparison telemetry and tool/conversation artifacts remain in Elastic; no automatic cloud deletion occurs.
+- Elastic configuration uses `KIBANA_URL`, `ELASTIC_AGENT_BUILDER_API_KEY`, `FAULTLINE_ELASTICSEARCH_URL`, `FAULTLINE_ELASTICSEARCH_API_KEY` and optional `FAULTLINE_AGENT_BUILDER_INFERENCE_ID` (default `faultline-openai-investigation`). Kibana and Elasticsearch must refer to the same deployment. Keys need tool-management/inference access and appropriate create/write/read access to the dedicated comparison index; an ingestion-only key is insufficient. Direct arms require `OPENAI_API_KEY`. No credentials are loaded into the frontend or copied into recordings.
+- The comparison stops after diagnosis/reversible mitigation: no Devin, patch, canary, or Datadog execution. The clone arm uses the existing Product reproduction gate and can use its labelled seeded-recipe fallback; it does not implement clone-based planner re-ranking. Failed clone investigation never silently becomes the production-only comparison arm.
+- Missing windows are not carried forward. Customer impact is a labelled C1 rate-integral estimate, not an exact request count. Recovery uses a sustained healthy interval with baseline-compatible errors and maintained request rate, and may be mitigation-supported. Read-only recovery is not applicable. Cost and incomplete token usage remain unknown. All outcomes are development-set results, including non-ignitions and responder failures.
+- Focused checks: from `bench/`, `uv run pytest -q tests/test_comparison.py`; from `product/`, `uv run pytest -q tests/test_comparison_api.py`; from `product/ui/`, `npm run build`, `npm test -- src/comparison.test.ts`, `FAULTLINE_UI_PORT=4180 npx playwright test tests/comparison.spec.ts`.
+- The UI comparison entry is `?compare`; `/api/comparisons` and `/api/comparisons/{id}` serve bounded local recordings read-only. The API directory defaults to this checkout's `runs/comparisons`; local JSON import also works. `FAULTLINE_UI_API_URL` optionally changes the Vite API proxy; no cloud credential belongs in it.
+
+### What a confirms_if may confirm (judge/planner, post-Pilot 1)
+
+Pilot 1's storm case reached `H_db confirmed` on a retry storm. Four gates now stand between measured evidence and a confirmed cause; `faultline/brain/tests/test_confirmation_gates.py` covers each one.
+
+- **Tied support is decided by confirmation, not list order.** Support is compared within `judge.SUPPORT_TIE`, every tied hypothesis is tested, and a diagnosis stands only if exactly one of them passes. Pilot 1 tied at 0.500/0.500 and the leader was whichever hypothesis the model happened to list first; the hypothesis that had actually passed its test was never consulted.
+- **A confirmation probe must separate the survivors.** `planner.separates` is required by both `confirmation_experiment` and the judge. An experiment every hypothesis expects to respond to identically confirms none of them: relieving a saturated dependency also relieves a caller that is saturating it. Pilot 1 confirmed on `db_failover`, which its own planner had scored separation 0.
+- **A claimed recovery must survive release.** A `within_baseline` confirmation is void when that same experiment's measured after-release evidence mostly contradicts the hypothesis. Directional confirmations are exempt: the chaos suite showed the unrestricted rule also blocks the legitimate degraded-DB diagnosis, where the incident does not return inside one short watch window either.
+- A single-hypothesis matrix is exempt from the separation requirement; there is nothing to separate from.
+
+Evidence, not just tests: re-judging Pilot 1's recorded storm telemetry through `LiveBrain.judge` flips `retry_cap_0_20s` from `none_of_the_above` to `H_meta confirmed` (the correct cause, from the first zero-blast-radius probe) and `db_failover_30s` from `H_db confirmed` to `none_of_the_above`. These gates were derived from that one recorded case; passing it is not held-out evidence.
+
+### Pilot 3 result (development set, two cases, tuned — not a benchmark)
+
+`bench/pilot3-runs/cmp-a40d3af6352f492594c348cca129690a.json`. Four live runs, 300 s horizon, `gpt-4.1`, same injected conditions per case.
+
+| | case-a (retry storm) | case-b (degraded DB) |
+|---|---|---|
+| observe (read-only) | `H_db` — wrong | `H_db` — correct |
+| probe | `H_meta` — correct, 108 s | `H_db` — correct, 110 s |
+| probe failed checkouts | 5,384 vs 22,645 read-only | 23,837 vs 23,137 read-only |
+| probe recovery | recovered, 75 s | not recovered |
+| tokens | probe 3,332 vs observe 237,118 | probe 3,751 vs observe 237,314 |
+
+The read-only arm answers `H_db` in **both** worlds: from telemetry alone the storm looks like a DB problem, which is the same false reading Pilot 1's judge made. One retry-cap experiment separates them — healthy while capped, then *stays* healthy (storm) or the incident *returns* (degraded DB). Two reversible production actions per run, zero rollback failures.
+
+Honest limits: n = 2, gates tuned on these cases, no held-out run. On case-b the probe arm diagnosed correctly but held `retry_cap` as its stopgap, which does not fix a degraded dependency, so it did not recover — the comparison harness does not run the durable-fix stages (6–8) that would.
+
+### Loading a recording into the comparison UI
+
+`faultline ui` serves every `cmp-*.json` in `<repo>/runs/comparisons` (no CLI flag; `create_app(..., comparison_dir=...)` if you need another directory). Copy, never symlink — the loader rejects symlinks and anything outside that directory.
+
+```bash
+cd product && uv run faultline ui --port 8010     # then open /?compare and pick the recording
+```
+
+Runs recorded before `RecordingAudit` carried `audit_detail` show the Faultline arms as bare one-line titles beside an observer arm quoting its whole answer, which understates the side that did the work. `bench/comparison_enrich.py` restores that detail from each run's own `audit.jsonl`, matched by the `c4:` reference already on every event, filling only empty fields and appending a protocol note saying it did:
+
+```bash
+cd bench && uv run --no-sync python comparison_enrich.py \
+  --recording pilot3-runs/cmp-<id>.json --work pilot3-runs/.work --output ../runs/comparisons
+```
+
+The original recording stays untouched; the enriched copy is the one served. Live runs now carry the detail directly, so this is only needed for Pilots 1–3.
+
+### Pilot 1 / offline observer regression gate
+
+- Pilot 1 is harness-invalid for competitive claims: the user identified unequal JSON handling between direct OpenAI and Agent Builder, missing observer repair attempts, and insufficient error artifacts. Observer errors are not evidence of Elastic RCA failure. Keep Pilot 1 recordings unchanged; do not publish their error counts as diagnosis accuracy.
+- The 300-second common horizon constrained clone investigation. Pilot 2 should use an explicitly recorded common `--horizon-s 600` for every arm, after the user releases the sandbox. This is a proposed next-pilot setting, not a change to Pilot 1 or a guarantee that all clone investigations finish.
+- The user owns fixes to `comparison_agents.py`, `comparison_runtime.py`, `comparison_live.py` and `tests/test_comparison.py`; no new live execution until they signal the sandbox is free.
+- Offline entry point lives at `bench/comparison_replay.py`, outside the source directories hashed by the running pilot. From `bench/`: `uv run --no-sync python comparison_replay.py --fake-world storm --scenarios plain` is a no-network smoke; omit `--scenarios` to check JSON framing, corrective re-asks, persistent invalid replies, provider exceptions and deadline errors across both observer arms.
+- Replay captured data with `uv run --no-sync python comparison_replay.py --run-dir pilot-runs/.work/<run-id>`. It snapshots the input into a fresh output directory, invokes the real `worker_main` / `run_observer` / parser and provider adapters, replaces only provider transport and the clock, gates C1 windows by virtual availability, and blocks sockets, subprocesses, levers and clones. Original run artifacts are never overwritten. `--origin` overrides the default clock origin (first window start plus recorded baseline); `--start-s` overrides the virtual observer start, not a detection benchmark.
+- The replay suite returns nonzero when an observer contract fails, with `replay-suite.json`, per-scenario `replay-report.json`, provider request transcripts and the actual worker artifacts. A repaired implementation should turn that offline gate green. Fake replies and virtual timings are never model accuracy, recovery or cost evidence; the schema is deliberately distinct from UI benchmark recordings.
+- Focused harness checks: `uv run --no-sync pytest -q tests/test_comparison_replay.py`. These validate replay plumbing and isolation; passing them does not imply that the separate observer contract gate passed. Do not replace the user's red regression tests or fix runtime behavior in the replay adapter.
