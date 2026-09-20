@@ -31,6 +31,12 @@ describe('measured node recovery', () => {
     expect(deriveNodeRecovery(scenario, environment, 'admin-api', 100)).toBe('unknown')
     expect(deriveNodeRecovery(scenario, environment, 'missing-node', 100)).toBe('unknown')
   })
+  it.each([['H_db', false], ['none_of_the_above', false], [undefined, undefined]] as const)('does not turn healthy readings into confirmed recovery for %s / %s', (diagnosis, confirmed) => {
+    const source = scenarios[0]
+    const scenario = { ...source, events: source.events.map(event => event.kind === 'verdict' ? { ...event, diagnosis, confirmed } : event) }
+    const environment = replay(scenario, 100).environments[0]
+    expect(deriveNodeRecovery(scenario, environment, scenario.targetId, 100)).toBe('recovering')
+  })
   it('does not accept a model-authored verdict as measured confirmation', () => {
     const source = scenarios[0]
     const scenario = { ...source, events: source.events.map(event => event.kind === 'verdict' ? { ...event, actor: 'model' as const } : event) }

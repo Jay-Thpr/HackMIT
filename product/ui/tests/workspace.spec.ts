@@ -205,3 +205,80 @@ test('loads a real incident from the Product API when requested', async ({ page 
   await page.locator('select[aria-label="Example architecture"]').selectOption('commerce')
   await expect(page.getByText('Simulated data', { exact: true })).toBeVisible()
 })
+
+for (const [diagnosis, confirmed, label] of [
+  ['H_meta', true, 'Retry storm'],
+  ['H_db', true, 'Degraded DB'],
+  ['H_db', false, ''],
+  ['none_of_the_above', false, ''],
+] as const) {
+  test(`diagnosis rendering follows ${diagnosis} / confirmed=${confirmed} and rewinds`, async ({ page }) => {
+    const { scenarios } = await import('../src/scenarios')
+    const scenario = structuredClone(scenarios[0])
+    scenario.id = 'diagnosis-rendering'
+    scenario.live = true
+    scenario.complete = true
+    scenario.hypotheses = [
+      { ...scenario.hypotheses[1], id: 'H_db', title: 'Degraded DB' },
+      { ...scenario.hypotheses[0], id: 'H_meta', title: 'Retry storm' },
+    ]
+    scenario.events = scenario.events.map(event => event.kind === 'verdict' ? { ...event, diagnosis, confirmed, title: `${diagnosis}: ${confirmed ? 'confirmed' : 'not confirmed'}` } : event)
+    scenario.events.push({ id: 'initial-verdict', sequence: 60, at: 60, kind: 'verdict', actor: 'math', environmentId: 'production', title: 'Initial probe inconclusive', detail: '', diagnosis: 'none_of_the_above', confirmed: false })
+    scenario.events.sort((a, b) => a.at - b.at || a.sequence - b.sequence)
+    await page.route('**/api/**', route => route.fulfill({ json: route.request().url().endsWith('/api/incidents') ? [{ id: scenario.id }] : scenario }))
+    await page.goto(`/?incident=${scenario.id}`)
+    await expect(page.getByText('Live incident', { exact: true })).toBeVisible()
+    await page.getByRole('slider', { name: 'Simulation timeline' }).press('End')
+    await page.getByRole('button', { name: 'Inspect primary-db in Production', exact: true }).click()
+    await page.getByRole('tab', { name: 'Evidence', exact: true }).click()
+    const confirmedCards = page.locator('.hypothesis-card').filter({ hasText: 'CONFIRMED IN PRODUCTION' })
+    await expect(confirmedCards).toHaveCount(confirmed ? 1 : 0)
+    if (confirmed) await expect(confirmedCards).toContainText(label)
+    await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Why this incident?', exact: true }).click()
+    await expect(page.locator('.why-intro h2')).toHaveText(confirmed ? `Confirmed cause: ${label}.` : 'No cause confirmed.')
+    await expect(page.locator('.why-conclusion h2')).toHaveText(confirmed ? `Confirmed cause: ${label}.` : 'No cause confirmed.')
+    await expect(page.getByText('Recovery held after retries were restored.', { exact: true })).toHaveCount(0)
+    await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Replay library', exact: true }).click()
+    await expect(page.locator('.report-preview h3')).toHaveText(`${diagnosis}: ${confirmed ? 'confirmed' : 'not confirmed'}`)
+    await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Why this incident?', exact: true }).click()
+    await page.getByRole('button', { name: 'Restart simulation', exact: true }).click()
+    await expect(page.locator('.why-conclusion h2')).toHaveText('The cause is not confirmed yet.')
+    await page.getByRole('button', { name: 'Watch the agents in 3D' }).click()
+    await page.getByRole('slider', { name: 'Simulation timeline' }).press('ArrowRight')
+    await expect(page.locator('h1')).not.toContainText('confirmed')
+  })
+}
+
+for (const undoStatus of ['active', 'unknown', 'undone', 'expired'] as const) {
+  test(`action rendering preserves ${undoStatus} release and replay state`, async ({ page }) => {
+    const { scenarios } = await import('../src/scenarios')
+    const scenario = structuredClone(scenarios[0])
+    scenario.id = 'action-rendering'
+    scenario.live = true
+    scenario.complete = true
+    scenario.duration = 35
+    scenario.events = [
+      { id: 'apply', sequence: 1, at: 5, kind: 'action', actor: 'adapter', environmentId: 'production', targetId: scenario.targetId, title: 'Apply retry cap', detail: '', action: { id: 'cap', label: 'Retry cap', ttl: 20 } },
+      { id: 'undo', sequence: 2, at: 10, kind: 'undo', actor: 'adapter', environmentId: 'production', targetId: scenario.targetId, title: 'Release attempted', detail: '', undoId: 'cap', undoStatus },
+    ]
+    await page.route('**/api/**', route => route.fulfill({ json: route.request().url().endsWith('/api/incidents') ? [{ id: scenario.id }] : scenario }))
+    await page.goto(`/?incident=${scenario.id}`)
+    await expect(page.getByText('Live incident', { exact: true })).toBeVisible()
+    const slider = page.getByRole('slider', { name: 'Simulation timeline' })
+    await slider.press('Home')
+    for (let i = 0; i < 12; i++) await slider.press('ArrowRight')
+    await page.getByRole('button', { name: 'Inspect primary-db in Production', exact: true }).click()
+    const facts = page.locator('.issue-facts')
+    if (undoStatus === 'active') await expect(facts).toContainText('Release failed · 13s TTL')
+    else if (undoStatus === 'unknown') await expect(facts).toContainText('Awaiting confirmed reversion')
+    else await expect(facts).not.toContainText('Retry cap')
+    await slider.press('End')
+    if (undoStatus === 'active' || undoStatus === 'unknown') await expect(facts).toContainText('Awaiting confirmed reversion')
+    else await expect(facts).not.toContainText('Retry cap')
+    await slider.press('Home')
+    await expect(facts).not.toContainText('Retry cap')
+    for (let i = 0; i < 6; i++) await slider.press('ArrowRight')
+    await expect(facts).toContainText('19s TTL')
+    await expect(facts).not.toContainText('Release failed')
+  })
+}

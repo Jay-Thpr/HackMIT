@@ -8,7 +8,7 @@ function eventsFor(scenario: Omit<Scenario, 'events'>): WorkspaceEvent[] {
   const queue = id === 'pipeline'
   const incident = { [target]: degraded(1240, 312), [policy]: degraded(1680, 312), [entry]: degraded(1820, 80) }
   const make = (at: number, kind: WorkspaceEvent['kind'], title: string, extra: Partial<WorkspaceEvent> = {}): WorkspaceEvent => ({
-    id: `${id}-${at}-${kind}`, sequence: at, at, kind, title, actor: 'orchestrator', environmentId: 'production', detail: '', ...extra,
+    id: `${id}-${at}-${kind}`, sequence: at, at, kind, title, actor: 'orchestrator', environmentId: 'production', detail: '', ...(kind === 'undo' ? { undoStatus: 'undone' as const } : {}), ...extra,
   })
   const events: WorkspaceEvent[] = [
     make(0, 'baseline', 'Healthy reference captured', { actor: 'math', tool: 'telemetry.window', detail: 'An illustrative healthy reference. No live telemetry is connected.', result: 'Service-level metrics are available; instance inventory is not.', phase: 'Monitoring' }),
@@ -28,7 +28,7 @@ function eventsFor(scenario: Omit<Scenario, 'events'>): WorkspaceEvent[] {
     make(72, 'action', 'Confirm with a reversible production probe', { actor: 'adapter', targetId: policy, phase: 'Confirming in production', tool: 'levers.apply', args: { max_retries: 0, ttl_s: 10 }, action: { id: 'cap-production', label: 'Retries capped · 0', ttl: 10 }, readings: { [target]: baseline[target], [policy]: baseline[policy], [entry]: baseline[entry] }, prediction: 'Recovery that persists after release supports a self-sustaining overload.', detail: 'One simulated production action, with a TTL and registered undo. No real requests are affected.' }),
     make(82, 'undo', 'Production probe released', { actor: 'adapter', targetId: policy, tool: 'levers.undo', undoId: 'cap-production', phase: 'Watching recovery', detail: 'The cap is confirmed reverted. Observe the next windows before declaring a result.' }),
     make(90, 'undo', 'Clone B capacity restored', { actor: 'adapter', environmentId: 'clone-b', targetId: target, tool: 'lab.undo', undoId: 'perturb-b', readings: { [target]: baseline[target], [policy]: baseline[policy], [entry]: baseline[entry] }, detail: 'Cleanup is recorded independently of the diagnosis.' }),
-    make(96, 'verdict', 'Self-sustaining overload confirmed', { actor: 'math', targetId: target, tool: 'judge.confirm', phase: 'Confirmed', detail: 'In this scripted example, the production system stays healthy after the probe is released. The hypothesis passes its positive confirmation test.', result: 'This is a simulated outcome, not a live experiment or a benchmark result.', causeId: `${id}-82-undo` }),
+    make(96, 'verdict', 'Self-sustaining overload confirmed', { actor: 'math', diagnosis: 'A', confirmed: true, targetId: target, tool: 'judge.confirm', phase: 'Confirmed', detail: 'In this scripted example, the production system stays healthy after the probe is released. The hypothesis passes its positive confirmation test.', result: 'This is a simulated outcome, not a live experiment or a benchmark result.', causeId: `${id}-82-undo` }),
     make(105, 'archive', 'Clone A archived; evidence retained', { environmentId: 'clone-a', actor: 'adapter', tool: 'lab.destroy', detail: 'The isolated environment is removed. Its trace remains available.' }),
     make(108, 'archive', 'Clone B archived; evidence retained', { environmentId: 'clone-b', actor: 'adapter', tool: 'lab.destroy', detail: 'No clone state is merged into production.' }),
   ]
