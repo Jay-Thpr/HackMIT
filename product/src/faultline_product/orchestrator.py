@@ -136,12 +136,25 @@ class Orchestrator:
         mitigation = self.mitigate(incident_id, triage, experiment, verdict)
         patch = self.patch(incident_id, verdict, triage)
         patch, verification, canary = self.ship(incident_id, patch, verdict.diagnosis, mitigation)
-        report_ready = canary.status == CanaryStatus.passed
-        report_summary = (
-            "incident report ready"
-            if report_ready
-            else f"incident escalated: canary {canary.status.value}"
-        )
+        # A relief lever (e.g. db_failover) is still holding production up: the code patch does
+        # not cure the diagnosed cause, so the incident is mitigated, not resolved. A human must
+        # fix the dependency before the lever's TTL runs out. (PRD: human-gated remediation.)
+        relief_held = mitigation is not None and mitigation.lever_id not in CODE_SUPERSEDES
+        canary_ok = canary.status == CanaryStatus.passed
+        if canary_ok and relief_held:
+            self._record(
+                incident_id, Stage.report, EventKind.page_human, Actor.orchestrator,
+                f"{mitigation.lever_id} is holding production up for {mitigation.ttl_s}s; the diagnosed "
+                f"cause ({verdict.diagnosis}) needs a human fix before it expires",
+                {"lever_id": mitigation.lever_id, "expires_at": mitigation.expires_at.isoformat(),
+                 "diagnosis": verdict.diagnosis},
+                action_id=mitigation.action_id,
+            )
+            report_summary, report_label = "incident mitigated; human action required", "mitigated"
+        elif canary_ok:
+            report_summary, report_label = "incident report ready", "ready"
+        else:
+            report_summary, report_label = f"incident escalated: canary {canary.status.value}", "escalated"
         self._record(
             incident_id,
             Stage.report,
@@ -154,9 +167,10 @@ class Orchestrator:
                 "clone_verification": verification.status.value,
                 "canary_status": canary.status.value,
                 "canary_detail": canary.detail,
+                "mitigation_held": mitigation.lever_id if relief_held else None,
+                "mitigation_expires_at": mitigation.expires_at.isoformat() if relief_held else None,
             },
         )
-        report_label = "ready" if report_ready else "escalated"
         self._renderer.event(
             "report", f"{report_label}: faultline report --incident {incident_id}"
         )

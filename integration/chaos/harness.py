@@ -218,12 +218,16 @@ def check_invariants(o: Outcome, action_budget: int) -> list[str]:
         radius = standard_blast_radius(e.payload["lever_id"], e.payload.get("params", {}))
         if radius > 50:
             fails.append(f"blast: {e.payload['lever_id']} {radius:g}% > 50%")
-    # I5  Nothing stays applied: a completed run released everything it applied; a crashed run
+    # I5  Nothing stays applied except a recorded mitigation: a completed run released everything
+    #     it applied unless a `mitigation` event names the action (PRD stage 5 keeps one reversible
+    #     lever, e.g. db_failover holding a degraded DB up until a human fixes it); a crashed run
     #     may leave levers behind only until their TTL expires.
     if o.raised is None:
-        if o.active_at_end:
-            fails.append(f"release: levers still active after a completed run: {o.active_at_end}")
-        if missing := [e.action_id for e in applies if e.action_id not in undone]:
+        held = {e.action_id for e in o.events if e.kind == EventKind.mitigation and e.action_id}
+        held_levers = {e.payload.get("lever_id") for e in applies if e.action_id in held}
+        if stray := [l for l in o.active_at_end if l not in held_levers]:
+            fails.append(f"release: levers still active after a completed run: {stray}")
+        if missing := [e.action_id for e in applies if e.action_id not in undone and e.action_id not in held]:
             fails.append(f"release: applies without an undo event: {len(missing)}")
     if o.active_after_ttl:
         fails.append(f"ttl: levers survived their TTL: {o.active_after_ttl}")

@@ -264,3 +264,10 @@ def test_relief_mitigation_is_kept_through_the_canary(tmp_path):
     undone_ids = {e.action_id for e in events if e.kind == EventKind.action_undo}
     assert held.action_id not in undone_ids  # failover still in place when the report is written
     assert not any("released emergency mitigation" in e.summary for e in events)
+    # and the report never claims "ready" while a relief lever is what keeps production up
+    report = events[-1]
+    assert report.kind == EventKind.report and report.summary != "incident report ready"
+    if report.payload["canary_status"] == "passed":
+        assert report.summary == "incident mitigated; human action required"
+        assert report.payload["mitigation_held"] == "db_failover"
+        assert any(e.kind == EventKind.page_human and "needs a human fix" in e.summary for e in events)

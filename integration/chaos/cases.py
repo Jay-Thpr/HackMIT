@@ -414,11 +414,10 @@ RESPONDER_CASES: list[ChaosCase] = [
               patches=PatchAuthorDown()),
     ChaosCase("patch_cannot_revise", "canary regresses and the author cannot revise", degrade(), F({ESCALATED}), "H_db",
               patches=PatchAuthorCannotRevise()),
+    # retry_cap stays applied for its TTL after the refused canary: that is the recorded mitigation
+    # (`mitigation` event names the action), which I5 now accepts, and the run pages a human.
     ChaosCase("canary_build_fails", "orders-v2 image fails to build", storm(), F({ESCALATED}), "H_meta",
-              canary=CanaryBuildFails(),
-              known_gap="canary() refuses before releasing the emergency mitigation, so the run completes with "
-                        "retry_cap still applied for its full 300 s TTL and no audit event says it was kept; "
-                        "either release it or record 'mitigation kept until <expires_at>' before paging"),
+              canary=CanaryBuildFails()),
     ChaosCase("budget_exhausted", "degraded world with a budget of 2: the follow-up probe already exceeds it",
               degrade(), F({RAISED, PAGED}), None, action_budget=2),
     ChaosCase("revision_loop", "3 revisions allowed against an unfixable cause: budget must stop the loop", degrade(),
