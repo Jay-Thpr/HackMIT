@@ -4,6 +4,15 @@
   uv run python demo.py degraded              # World B: degraded DB capacity          -> H_db, failover confirms
   uv run python demo.py storm --no-devin      # use the prebuilt fallback patch (Devin slow / no credits)
   uv run python demo.py storm --baseline-s 60 # shorter healthy baseline for rehearsals
+  uv run python demo.py storm --mode diagnose # Demo A: detect -> triage -> experiment -> verdict -> mitigation
+                                              #   -> PR opened on GitHub -> report; no build/canary. Target < 5 min.
+
+Modes:
+  full      (default) the whole loop incl. clone verification of the patch and the 5 % canary
+  diagnose  stop once the mitigation holds and the durable fix is proposed. With GITHUB_TOKEN in the
+            env file the fix is opened as a real pull request (prebuilt bounded-retries patch across
+            gateway/api/cache/inventory/payments/primary-db + the sandbox Orders service) carrying the
+            measured evidence; without it the audit trail references the prebuilt branch.
 
 What it does, in order:
   1. preflight: sandbox control (:9901), fault controller (:9900), clone lab (:9910, optional),
@@ -21,6 +30,7 @@ only C1 (/stats), C3 (:9901) and C6 (:9910).
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -81,6 +91,21 @@ def reachable(url: str) -> bool:
         return False
 
 
+def pull_request_url(audit_path: Path) -> str | None:
+    """The PR the audit trail records as the durable fix, if one was opened."""
+    if not audit_path.exists():
+        return None
+    for line in reversed(audit_path.read_text().splitlines()):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        ref = (event.get("payload") or {}).get("reference") if event.get("kind") == "patch_opened" else None
+        if ref and ref.startswith("https://github.com/"):
+            return ref
+    return None
+
+
 def stream(proc: subprocess.Popen, sink) -> None:
     for line in proc.stdout:  # type: ignore[union-attr]
         line = line.rstrip("\n")
@@ -97,7 +122,10 @@ def main() -> int:
     ap.add_argument("--incident", help="incident id (default: demo-<world>-<HHMMSS>)")
     ap.add_argument("--env-file", type=Path, default=DEFAULT_ENV_FILE, help="credentials file (export KEY=value lines)")
     ap.add_argument("--baseline-s", type=int, default=130, help="healthy seconds before injection (orchestrator needs ~120)")
+    ap.add_argument("--mode", choices=("full", "diagnose"), default="full",
+                    help="full: verify + canary the patch; diagnose: stop at mitigation + proposed fix (Demo A)")
     ap.add_argument("--no-devin", action="store_true", help="prebuilt fallback patch instead of a Devin session")
+    ap.add_argument("--no-github", action="store_true", help="do not open a GitHub PR even if GITHUB_TOKEN is set")
     ap.add_argument("--no-lab", action="store_true", help="skip clone investigators and clone verification")
     ap.add_argument("--no-es", action="store_true", help="do not persist to Elasticsearch")
     ap.add_argument("--max-clones", type=int, default=1)
@@ -121,13 +149,18 @@ def main() -> int:
     env = {**os.environ, **secrets}
     lab_on = not args.no_lab and reachable(f"{LAB_URL}/healthz")
     devin_on = not args.no_devin and bool(env.get("DEVIN_API_KEY")) and bool(env.get("DEVIN_ORG_ID"))
+    github_on = not args.no_github and bool(env.get("GITHUB_TOKEN"))
     openai_on = bool(env.get("OPENAI_API_KEY"))
     es_url = None if args.no_es else env.get("FAULTLINE_ELASTICSEARCH_URL")
+    patch_via = " -> ".join(p for p, on in (("Devin", devin_on), ("GitHub PR", github_on)) if on) or "prebuilt fallback"
     say("  components: "
+        f"mode={args.mode} · "
         f"triage={'OpenAI' if openai_on else 'fixture fallback'} · "
         f"clones={'lab :9910' if lab_on else 'off'} · "
-        f"patch={'Devin' if devin_on else 'prebuilt fallback'} · "
+        f"patch={patch_via} · "
         f"elastic={'on' if es_url else 'off'}")
+    if args.mode == "diagnose" and not github_on and not args.no_github:
+        say("  (no GITHUB_TOKEN in the env file: the fix will be referenced as a branch, not opened as a PR)")
     if not args.no_lab and not lab_on:
         say("  (clone lab not running: cd sandbox && uv run uvicorn services.lab.app:app --port 9910)")
 
@@ -145,6 +178,10 @@ def main() -> int:
         cmd += ["--lab-url", LAB_URL]
     if devin_on:
         cmd += ["--devin"]
+    if github_on:
+        cmd += ["--github-pr"]
+    if args.mode == "diagnose":
+        cmd += ["--no-ship"]
     if es_url:
         cmd += ["--elasticsearch-url", es_url]
     say("starting Faultline:  faultline " + " ".join(cmd[cmd.index("watch"):]))
@@ -171,10 +208,17 @@ def main() -> int:
         proc.kill()
         say(f"Faultline still running after {args.timeout_s}s; killed")
         return 1
-    say(f"Faultline finished (exit {proc.returncode}) {time.monotonic() - t0:.0f}s after injection")
+    after_inject = time.monotonic() - t0
+    say(f"Faultline finished (exit {proc.returncode}) {after_inject:.0f}s after injection")
     report = subprocess.run(["uv", "run", "faultline", "--audit-log", str(audit_path), "report", "--incident", incident],
                             cwd=PRODUCT, env=env, capture_output=True, text=True)
     print("\n" + (report.stdout or report.stderr), flush=True)
+    pr_url = pull_request_url(audit_path)
+    if pr_url:
+        say(f"pull request: {pr_url}")
+    total = args.baseline_s + after_inject
+    say(f"timing: baseline {args.baseline_s}s + incident-to-report {after_inject:.0f}s = {total:.0f}s total"
+        + ("  (under the 5 min Demo A target)" if args.mode == "diagnose" and total < 300 else ""))
     say(f"audit: {audit_path}   cli log: {cli_log}")
 
     # 6. leave as-is unless asked

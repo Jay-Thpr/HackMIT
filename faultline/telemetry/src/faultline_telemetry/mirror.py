@@ -67,6 +67,7 @@ class MirroredElasticsearchClient:
             with self._lock, self._db:
                 if self._closed:
                     raise RuntimeError("closed")
+                self._db.execute("BEGIN IMMEDIATE")
                 count, used = self._db.execute("SELECT COUNT(*), COALESCE(SUM(bytes), 0) FROM outbox").fetchone()
                 old = self._db.execute("SELECT bytes FROM outbox WHERE id=?", (key,)).fetchone()
                 if (not old and count >= self._max_pending) or used - (old[0] if old else 0) + size > self._max_bytes:

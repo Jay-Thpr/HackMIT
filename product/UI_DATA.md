@@ -12,6 +12,7 @@ parsing `summary` strings.
 | C4 audit events | `product/state/faultline-audit.jsonl` (or `--audit-log <path>`), one JSON object per line; also ES index `faultline-audit` when `--elasticsearch-url` is set | Every panel except the chart |
 | C1 fingerprints | ES index `faultline-fingerprints` (Owner 2's `ElasticsearchFingerprintStore`), documents carry `incident_id` and, for clones, `clone_id`; or poll the sandbox `/stats` directly (`:8101` orders, `:8102` payments, `:8103` loadgen, `:8104` orders-v2) and build with `faultline_telemetry.fingerprint_from_stats` | The chart |
 | Owner 2 analytics | `faultline_telemetry.analytics.ElasticsearchTelemetryAnalytics`: `ui_data`, `similar_incidents`, `clone_production_similarity` | Similar-incidents row, clone-vs-production similarity |
+| Supporting telemetry | `GET /api/incidents/{id}/supporting-telemetry`, using the configured Observability display mirror | Bounded production trace/log counts and service names in the recorded incident window |
 
 Audit event envelope (C4, `faultline_contracts.AuditEvent`):
 

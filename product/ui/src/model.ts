@@ -93,6 +93,13 @@ export interface Scenario {
     startedAt: string
     endedAt: string
   }
+  memory?: {  // retrieval only: prior incidents surfaced at triage, never verdict input
+    incidentId: string
+    score: number
+    diagnosis: string | null
+    confirmed: boolean
+    recordedAt: number
+  }[]
   name: string
   subtitle: string
   incident: string
