@@ -47,17 +47,15 @@ def _directions_by_hypothesis(
     return out
 
 
-def score_experiment(
-    predictions: list[Prediction], experiment: Experiment, *, blast_penalty: float = 0.1
-) -> ExperimentScore:
-    """Score an experiment as direction separation minus user-impact cost.
+def divergent_metrics(
+    predictions: list[Prediction], experiment_id: str
+) -> tuple[tuple[Phase, str], ...]:
+    """Phase/metric pairs on which two hypotheses predict different directions.
 
-    A metric is separating only when it is predicted by at least two hypotheses
-    and those hypotheses assign different directions in the same phase.
+    These are the only measurements this experiment can tell hypotheses apart
+    with; everything else it moves, it moves the same way under every story.
     """
-    if blast_penalty < 0:
-        raise ValueError("blast_penalty must be non-negative")
-    per_hypothesis = _directions_by_hypothesis(predictions, experiment.id)
+    per_hypothesis = _directions_by_hypothesis(predictions, experiment_id)
     all_metrics = set().union(*(directions.keys() for directions in per_hypothesis.values())) if per_hypothesis else set()
     divergent = []
     for metric in all_metrics:
@@ -69,11 +67,36 @@ def score_experiment(
         if len(directions) > 1:
             divergent.append(metric)
     divergent.sort(key=lambda item: (item[0].value, item[1]))
+    return tuple(divergent)
+
+
+def separates(predictions: list[Prediction], experiment_id: str) -> bool:
+    """Whether this experiment can discriminate the hypotheses at all.
+
+    A single-hypothesis matrix has nothing to separate, so it is not held to
+    this requirement; with rivals present, zero divergent metrics means every
+    outcome is equally consistent with every story.
+    """
+    hypotheses = {p.hypothesis_id for p in predictions if p.experiment_id == experiment_id}
+    return len(hypotheses) < 2 or bool(divergent_metrics(predictions, experiment_id))
+
+
+def score_experiment(
+    predictions: list[Prediction], experiment: Experiment, *, blast_penalty: float = 0.1
+) -> ExperimentScore:
+    """Score an experiment as direction separation minus user-impact cost.
+
+    A metric is separating only when it is predicted by at least two hypotheses
+    and those hypotheses assign different directions in the same phase.
+    """
+    if blast_penalty < 0:
+        raise ValueError("blast_penalty must be non-negative")
+    divergent = divergent_metrics(predictions, experiment.id)
     separation = len(divergent)
     return ExperimentScore(
         experiment=experiment,
         separation=separation,
-        divergent_metrics=tuple(divergent),
+        divergent_metrics=divergent,
         score=separation - blast_penalty * experiment.blast_radius_pct,
     )
 
@@ -108,6 +131,11 @@ def confirmation_experiment(
     it points to a hypothesis, this selects an experiment whose prediction has
     a non-null positive confirmation. C2 deliberately keeps that distinction in
     the triage contract rather than inferring causality from a lever name.
+
+    The experiment must also separate the surviving hypotheses. An experiment
+    every hypothesis expects to respond identically cannot confirm one of them:
+    relieving a saturated dependency, for instance, also relieves a caller that
+    is saturating it, so its response is not evidence for either cause.
     """
     excluded_ids = excluded_ids or set()
     candidate_by_id = {candidate.id: candidate for candidate in candidates}
@@ -118,6 +146,7 @@ def confirmation_experiment(
         and prediction.confirms_if is not None
         and prediction.experiment_id not in excluded_ids
         and prediction.experiment_id in candidate_by_id
+        and separates(triage.predictions, prediction.experiment_id)
     }
     if not eligible:
         return None
