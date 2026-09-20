@@ -218,7 +218,7 @@ export function ElasticLineage() {
       </div>
       <p className="query-caption">The full system also has fixed tools for audit context and similar incidents. Semantic memory is context only; the measurement judge still makes the verdict.</p>
     </section>
-    <div className="elastic-actions"><button className="primary-button" onClick={() => set({ view: 'investigation' })}>See the investigation <ArrowRight size={14} /></button><button className="text-button" onClick={() => set({ view: 'explanation' })}>Read the decision trace <ArrowRight size={14} /></button></div>
+    <div className="elastic-actions"><button className="primary-button" onClick={() => set({ view: 'investigation' })}>See the investigation <ArrowRight size={14} /></button><button className="text-button" onClick={() => set({ view: 'investigation', explanationOpen: true })}>Read the decision trace <ArrowRight size={14} /></button></div>
     <p className="page-source-note">Design preview. This page explains the intended evidence flow; it does not query Elastic Cloud.</p>
   </div>
 }

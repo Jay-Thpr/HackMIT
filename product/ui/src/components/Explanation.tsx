@@ -1,5 +1,5 @@
-import { ArrowRight } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { ArrowRight, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import { diagnosisSummary, metricLabel, timeLabel, visibleEvents, type Scenario, type WorkspaceState, environmentOutcomeLabel } from '../model'
 import { useWorkspace } from '../store'
 import { suiteChecks } from '../suite'
@@ -37,7 +37,25 @@ function IncidentMemory({ scenario, cursor }: { scenario: Scenario; cursor: numb
   return <section className="incident-memory" aria-label="Incident memory"><div><span className="overline">INCIDENT MEMORY</span><p>Similar incidents are retrieval context only. They do not choose the diagnosis.</p></div><div className="memory-results">{records.map(item => <article key={item.incidentId}><strong>{item.incidentId}</strong><span>{Math.round(item.score * 100)}% similar</span><p>{item.confirmed && item.diagnosis ? `Recorded outcome: ${item.diagnosis}` : 'No confirmed outcome recorded.'}</p></article>)}</div></section>
 }
 
-export function Explanation({ scenario, workspace }: { scenario: Scenario; workspace: WorkspaceState }) {
+export function ExplanationDrawer({ scenario, workspace }: { scenario: Scenario; workspace: WorkspaceState }) {
+  const { explanationOpen, set } = useWorkspace()
+  const element = useRef<HTMLDialogElement>(null)
+  const close = () => set({ explanationOpen: false })
+  useEffect(() => {
+    if (explanationOpen && !element.current?.open) element.current?.showModal()
+    else if (!explanationOpen && element.current?.open) element.current.close()
+  }, [explanationOpen])
+  return <dialog ref={element} className="explanation-drawer" aria-labelledby="explanation-title" onCancel={close} onClose={close} onClick={event => {
+    if (event.target !== element.current) return
+    const bounds = element.current.getBoundingClientRect()
+    if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) close()
+  }}>
+    <header className="explanation-drawer-header"><div><span className="overline">INCIDENT RATIONALE</span><h2 id="explanation-title">Why this incident?</h2></div><button className="icon-button" aria-label="Close incident explanation" onClick={close}><X size={18} /></button></header>
+    <Explanation scenario={scenario} workspace={workspace} />
+  </dialog>
+}
+
+function Explanation({ scenario, workspace }: { scenario: Scenario; workspace: WorkspaceState }) {
   const { cursor, set, focus } = useWorkspace()
   const events = visibleEvents(scenario, cursor)
   const incident = events.some(event => event.kind === 'detect')
@@ -48,7 +66,7 @@ export function Explanation({ scenario, workspace }: { scenario: Scenario; works
   const finalVerdict = scenario.events.filter(event => event.kind === 'verdict').at(-1)
   const actions = scenario.events.filter(event => event.kind === 'action' && event.environmentId === 'production')
   const undone = new Set(scenario.events.filter(event => event.kind === 'undo' && event.environmentId === 'production').map(event => event.undoId))
-  const go = (environmentId: string) => { focus(environmentId); set({ view: 'investigation' }) }
+  const go = (environmentId: string) => { focus(environmentId); set({ view: 'investigation', explanationOpen: false }) }
   return <div className="explanation-page">
     <section className="why-intro"><div><span className="overline">WHAT WE KNOW · {timeLabel(cursor)}</span><h2>{workspace.verdict ? conclusion : incident ? 'We see the failure. We are still testing the cause.' : 'Start with a healthy reference.'}</h2><p>{workspace.verdict ?? (incident ? `${scenario.targetId} is showing high latency and errors. Those symptoms alone cannot tell us whether retries are sustaining the overload or the dependency has lost capacity.` : 'There is no incident recorded yet. These measurements show how the system normally behaves.')}</p></div><button className="secondary-button" onClick={() => go('production')}>Watch the agents in 3D <ArrowRight size={14} /></button></section>
     <section className="why-signals" aria-label="Production symptoms">{[['Dependency latency', metricLabel(reading?.latency, 'ms'), `Healthy reference: ${metricLabel(scenario.baseline[scenario.targetId]?.latency, 'ms')}`], ['Error rate', metricLabel(reading?.errorRate, '%'), 'Requests reporting an error'], ['Issued load', metricLabel(reading?.qps, 'qps'), 'Includes repeated requests']].map(([label,value,note]) => <div key={label}><span>{label}</span><strong>{value}</strong><small>{note}</small></div>)}</section>

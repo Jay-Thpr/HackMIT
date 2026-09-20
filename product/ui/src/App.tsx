@@ -8,19 +8,17 @@ import { Inspector } from './components/Inspector'
 import { MetricChart } from './components/MetricChart'
 import { Timeline } from './components/Timeline'
 import { ElasticLineage, Observability, ReplayLibrary } from './components/Views'
-import { Explanation } from './components/Explanation'
+import { ExplanationDrawer } from './components/Explanation'
 import { Dialogs } from './components/Dialogs'
 
 const TopologyScene = lazy(() => import('./components/TopologyScene'))
 const navigation: { view: View; label: string; icon: typeof Activity }[] = [
-  { view: 'explanation', label: 'Why this incident?', icon: CircleHelp },
   { view: 'observability', label: 'Observability', icon: LayoutDashboard },
   { view: 'investigation', label: 'Agent workspace', icon: Network },
   { view: 'replay', label: 'Incident replay', icon: Layers3 },
   { view: 'elastic', label: 'Evidence lineage', icon: GitBranch },
 ]
 const viewTitles: Record<View, { eyebrow: string; title: string; subtitle: string }> = {
-  explanation: { eyebrow: 'UNDERSTAND THE INCIDENT', title: 'Why this incident?', subtitle: 'The symptoms, the possible causes, and the tests that tell them apart.' },
   investigation: { eyebrow: 'THE INVESTIGATION WORKSPACE', title: 'Investigation workspace', subtitle: 'Trace the symptoms. Test in isolation. Follow the evidence.' },
   observability: { eyebrow: 'SYSTEM OBSERVABILITY', title: 'Observability', subtitle: 'Metrics, dependencies, and context at the same moment in time.' },
   replay: { eyebrow: 'THE EVIDENCE LIBRARY', title: 'Incident replay', subtitle: 'Choose a recorded demo to watch again. Playback never reruns infrastructure actions.' },
@@ -40,7 +38,7 @@ function Mark() { return <span className="brand-mark" aria-hidden="true"><i /><i
 
 export default function App() {
   const ui = useWorkspace()
-  const { scenarios, scenarioId, cursor, playing, view, environmentId, isolatedLayer, selectedNode, follow, reducedMotion, set, focus, inspect, setScenario } = ui
+  const { scenarios, scenarioId, cursor, playing, view, environmentId, isolatedLayer, selectedNode, follow, reducedMotion, explanationOpen, set, focus, inspect, setScenario } = ui
   const scenario = scenarios.find(item => item.id === scenarioId) ?? scenarios[0]
   const sampleTime = Math.floor(cursor)
   const workspace = useMemo(() => replay(scenario, sampleTime), [scenario, sampleTime])
@@ -103,7 +101,7 @@ export default function App() {
     return () => media.removeEventListener('change', change)
   }, [])
   useEffect(() => {
-    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { setExpanded(false); setShowEntities(false) } }
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { setExpanded(false); setShowEntities(false); set({ explanationOpen: false }) } }
     window.addEventListener('keydown', escape)
     return () => window.removeEventListener('keydown', escape)
   }, [])
@@ -112,12 +110,11 @@ export default function App() {
   return <div className={`app-shell ${view === 'investigation' ? 'is-spatial-workspace' : ''}`}>
     <a className="skip-link" href="#main-content">Skip to workspace</a>
     <aside className="sidebar">
-      <a className="brand" aria-label="Faultline workspace" href="#main-content" onClick={() => set({ view: 'investigation' })}><Mark /><span>faultline<span className="brand-period">.</span></span></a>
+      <a className="brand" aria-label="Faultline workspace" href="#main-content" onClick={() => set({ view: 'investigation', explanationOpen: false })}><Mark /><span>faultline<span className="brand-period">.</span></span></a>
       <span className="nav-group-label">WORKSPACE</span>
-      <nav aria-label="Main navigation">{navigation.map(item => <button key={item.view} aria-label={item.label} className={`nav-item ${view === item.view ? 'active' : ''}`} onClick={() => set({ view: item.view })} aria-current={view === item.view ? 'page' : undefined}><item.icon size={17} strokeWidth={1.65} /><span>{item.label}</span></button>)}</nav>
+      <nav aria-label="Main navigation">{navigation.map(item => <button key={item.view} aria-label={item.label} className={`nav-item ${view === item.view ? 'active' : ''}`} onClick={() => set({ view: item.view, explanationOpen: false })} aria-current={view === item.view ? 'page' : undefined}><item.icon size={17} strokeWidth={1.65} /><span>{item.label}</span></button>)}</nav>
       <div className="sidebar-rule" /><span className="nav-group-label">GUARDRAILS</span>
       <button className="nav-item" aria-label="Safety & approvals" onClick={() => set({ dialog: 'safety' })}><ShieldCheck size={17} strokeWidth={1.65} /><span>Safety & approvals</span><span className="approval-dot" /></button>
-      <div className="sidebar-case"><span className="nav-group-label">CURRENT CASE</span><button onClick={() => set({ view: 'investigation' })}><span>{scenario.incident}</span><strong>{scenario.name}</strong><small>{workspace.phase}</small></button></div>
       <div className="sidebar-bottom"><span className="preview-indicator"><i />DESIGN PREVIEW</span><p>A safe space to investigate.</p><button className="sidebar-help" onClick={() => set({ dialog: 'safety' })}><CircleHelp size={15} />About this prototype<ArrowRight size={13} /></button><div className="profile"><span className="profile-avatar">FL</span><div><strong>Local workspace</strong><small>No live connection</small></div><span className="offline-dot" /></div></div>
     </aside>
 
@@ -134,7 +131,7 @@ export default function App() {
             <div className="lifecycle-copy" aria-live="polite"><strong>{lifecycleStep.title}</strong><p>{workspace.lifecycle === 'confirming' && workspace.verdict ? 'Recovery held after the production probe was released. The recorded evidence now confirms the cause; clone cleanup is next.' : lifecycleStep.detail}</p></div>
             <ol className="lifecycle-steps">{lifecycleSteps.map((step, index) => <li key={step.id} data-state={index < lifecycleIndex ? 'complete' : index === lifecycleIndex ? 'current' : 'upcoming'} aria-current={index === lifecycleIndex ? 'step' : undefined}><span>{step.label}</span></li>)}</ol>
             <div className="lifecycle-environments">{workspace.environments.filter(env => env.id !== 'production').map(env => <span key={env.id} data-environment={env.id} data-lifecycle={env.lifecycle} data-outcome={env.outcome} data-winner={workspace.winner === env.id || undefined}>{env.label}: {env.outcome ? environmentOutcomeLabel[env.outcome] : environmentLifecycleLabel[env.lifecycle]}</span>)}{workspace.lifecycle === 'complete' && <span>Clones retained for review; evidence kept</span>}</div>
-            {workspace.lifecycle === 'complete' && <div className="lifecycle-actions"><button className="text-button" onClick={() => set({ dialog: 'report' })}>Open the incident report <ArrowRight size={13} /></button><button className="text-button" onClick={() => set({ view: 'explanation' })}>Review the explanation <ArrowRight size={13} /></button></div>}
+            {workspace.lifecycle === 'complete' && <div className="lifecycle-actions"><button className="text-button" onClick={() => set({ dialog: 'report' })}>Open the incident report <ArrowRight size={13} /></button><button className="text-button" onClick={() => set({ explanationOpen: true })}>Review the explanation <ArrowRight size={13} /></button></div>}
           </section>
           <details className="phase-disclosure"><summary>Detailed timeline <span>{phaseNumber} / {phases.length}</span></summary><nav className="investigation-path" aria-label="Investigation phases">{phases.map((phase, index) => {
             const event = scenario.events.find(item => item.phase === phase)!
@@ -142,7 +139,7 @@ export default function App() {
           })}</nav></details>
           <div className={`workspace-grid ${showInspector ? 'has-inspector' : 'without-inspector'} ${expanded ? 'is-expanded' : ''}`}>
             <section className="panel topology-panel">
-              <div className="map-heading"><div><span className="map-instruction">Select a node to inspect the investigation</span></div><div className="map-toolbar"><button className="evidence-toggle" onClick={() => set({ view: 'explanation' })}>Why this incident?</button><button className="evidence-toggle" aria-expanded={showInspector} onClick={() => { setEvidenceOpen(!showInspector); if (showInspector) set({ selectedNode: undefined, selectedSuiteCheck: undefined }) }}>{showInspector ? 'Close evidence' : 'Open evidence'}</button><button className="icon-button" aria-label="Find an entity" aria-expanded={showEntities} onClick={() => setShowEntities(!showEntities)}><ListFilter size={15} /></button><button className="icon-button" aria-label="Fit whole system" onClick={() => { focus('production'); set({ selectedNode: undefined, isolatedLayer: null }); setEvidenceOpen(false) }}><Focus size={16} /></button><button className="icon-button" aria-label={expanded ? 'Exit expanded map' : 'Expand map'} onClick={() => setExpanded(!expanded)}><Maximize2 size={15} /></button></div></div>
+              <div className="map-heading"><div><span className="map-instruction">Select a node to inspect the investigation</span></div><div className="map-toolbar"><button className="evidence-toggle" aria-expanded={explanationOpen} onClick={() => set({ explanationOpen: true })}>Why this incident?</button><button className="evidence-toggle" aria-expanded={showInspector} onClick={() => { setEvidenceOpen(!showInspector); if (showInspector) set({ selectedNode: undefined, selectedSuiteCheck: undefined }) }}>{showInspector ? 'Close evidence' : 'Open evidence'}</button><button className="icon-button" aria-label="Find an entity" aria-expanded={showEntities} onClick={() => setShowEntities(!showEntities)}><ListFilter size={15} /></button><button className="icon-button" aria-label="Fit whole system" onClick={() => { focus('production'); set({ selectedNode: undefined, isolatedLayer: null }); setEvidenceOpen(false) }}><Focus size={16} /></button><button className="icon-button" aria-label={expanded ? 'Exit expanded map' : 'Expand map'} onClick={() => setExpanded(!expanded)}><Maximize2 size={15} /></button></div></div>
               <div className="map-canvas" data-testid="topology-stage" data-isolated-layer={isolatedLayer ?? 'all'}>
                 {error ? <div className="layout-error">{error}{fallback}</div> : layout ? <Suspense fallback={<div className="scene-loading"><Network size={25} /><span>Preparing the spatial workspace…</span></div>}><TopologyScene layout={layout} workspace={workspace} scenario={scenario} fallback={fallback} /></Suspense> : <div className="scene-loading"><Network size={25} /><span>Mapping dependencies…</span></div>}
                 <div className="map-legend"><span><i className="scene-key issue" />Issue</span><span><i className="scene-key attention" />Recovering</span><span><i className="scene-key infrastructure" />Healthy</span></div>
@@ -157,7 +154,6 @@ export default function App() {
           </div>
           {showInspector && <div className="below-stage"><section className="panel pulse-chart"><div className="panel-title"><div><span className="overline">THE RESPONSE, IN CONTEXT</span><h3>{selectedNode ?? targetName} <span className="muted">/ {environment.label}</span></h3></div><button className="icon-button" aria-label="Open observability dashboard" onClick={() => set({ view: 'observability' })}><ArrowRight size={15} /></button></div><div className="chart-legend"><i className="latency-line" />Latency · ms<i className="load-line" />Issued load · qps</div><MetricChart scenario={scenario} cursor={cursor} environmentId={environment.id} nodeId={selectedNode ?? scenario.targetId} compact /></section><section className="panel decision-summary"><span className="overline"><Sparkles size={12} />LATEST EVIDENCE</span><h3>{latest?.title}</h3><p>{latest?.detail}</p><button className="text-button" onClick={() => set({ traceTab: 'trace', selectedEvent: latest?.id })}>See the decision trace <ArrowRight size={13} /></button><div className="decision-meta"><span>{latest?.environmentId}</span><span>{timeLabel(latest?.at ?? 0)}</span><span>{scenario.live ? 'Recorded audit event' : 'Scripted example'}</span></div></section></div>}
         </> : <>
-          {view === 'explanation' && <Explanation scenario={scenario} workspace={workspace} />}
           {view === 'observability' && <Observability scenario={scenario} environment={environment} />}
           {view === 'replay' && <ReplayLibrary scenario={scenario} />}
           {view === 'elastic' && <ElasticLineage />}
@@ -166,6 +162,7 @@ export default function App() {
         <footer className="page-footer"><span><Mark />Faultline <span>·</span> The model proposes. Measurement decides.</span><span>{scenario.live ? 'Real audit log · readings from Elasticsearch' : <>Interactive design prototype <ArrowDownRight size={12} /></>}</span></footer>
       </main>
     </div>
+    <ExplanationDrawer scenario={scenario} workspace={workspace} />
     <Dialogs scenario={scenario} workspace={workspace} />
   </div>
 }

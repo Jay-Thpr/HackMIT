@@ -66,7 +66,7 @@ function IncidentReport({ scenario, workspace, close }: { scenario: Scenario; wo
     {verdict?.result && <p className="report-dialog-evidence">{verdict.result}</p>}
     <div className="report-dialog-actions">
       <button className="primary-button" onClick={() => { close(); set({ view: 'replay' }) }}>Full report <ArrowRight size={15} /></button>
-      <button className="secondary-button" onClick={() => { close(); set({ view: 'explanation' }) }}>Why this incident?</button>
+      <button className="secondary-button" onClick={() => { close(); set({ view: 'investigation', explanationOpen: true }) }}>Why this incident?</button>
       <button className="secondary-button" onClick={close}>Stay in the workspace</button>
     </div>
   </div>

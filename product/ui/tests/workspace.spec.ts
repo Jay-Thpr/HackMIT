@@ -62,7 +62,7 @@ for (const architecture of ['commerce', 'pipeline']) {
     await page.getByRole('button', { name: 'Review the explanation', exact: true }).click()
     await expect(page.locator('.why-checks')).toHaveCount(2)
     await expect(page.getByText('Clone archived. Its test results are retained above.')).toHaveCount(2)
-    await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Agent workspace', exact: true }).click()
+    await page.getByRole('button', { name: 'Watch the agents in 3D' }).click()
     await seekTo(page, 47)
     await expect(environments).toHaveCount(3)
     await expect(lifecycle.locator('[data-environment="clone-a"]')).not.toHaveAttribute('data-outcome', /.+/)  // no emphasis before the verdict
@@ -147,10 +147,7 @@ test('demo playback advances from healthy to clone startup and freezes when paus
 test('pages explain their jobs and offer meaningful empty-state actions', async ({ page }) => {
   await page.goto('/')
   const navigation = page.getByRole('navigation', { name: 'Main navigation' })
-  await navigation.getByRole('button', { name: 'Clone experiments', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'No clone investigation yet' })).toBeVisible()
-  await expect(page.locator('.lab-clone-card')).toHaveCount(0)
-  await page.getByRole('button', { name: 'Draft a test', exact: true }).click()
+  await page.getByRole('button', { name: 'Draft experiment', exact: true }).click()
   await expect(page.getByRole('dialog')).toContainText('does not save the plan, create a clone, or run a test')
   await page.getByRole('textbox', { name: 'Hypothesis to test' }).fill('A dependency is slow')
   await page.getByRole('textbox', { name: 'Predicted response' }).fill('Reducing requests lowers latency')
@@ -203,11 +200,10 @@ for (const width of [1512, 900, 600, 390]) {
     await page.setViewportSize({ width, height: 982 })
     await page.goto('/')
     const navigation = page.getByRole('navigation', { name: 'Main navigation' })
-    await navigation.getByRole('button', { name: 'Why this incident?', exact: true }).click()
     const sidebar = page.locator('.sidebar')
     const sidebarWidth = await sidebar.evaluate(element => getComputedStyle(element).width)
     const contentOffset = await page.locator('.main-shell').evaluate(element => getComputedStyle(element).marginLeft)
-    for (const name of ['Agent workspace', 'Clone experiments', 'Why this incident?', 'Observability', 'Agent workspace', 'Incident replay']) {
+    for (const name of ['Agent workspace', 'Observability', 'Agent workspace', 'Incident replay', 'Evidence lineage']) {
       const button = navigation.getByRole('button', { name, exact: true })
       await button.click()
       await expect(button).toHaveAttribute('aria-current', 'page')
@@ -216,7 +212,7 @@ for (const width of [1512, 900, 600, 390]) {
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
       if (width > 760) {
         await expect(button.locator('span').first()).toBeVisible()
-        await expect(page.locator('.sidebar-case')).toBeVisible()
+        await expect(page.locator('.sidebar-case')).toHaveCount(0)
       } else {
         await expect(button.locator('span').first()).toBeHidden()
       }
@@ -474,28 +470,46 @@ test('clone test markers reveal individual recorded assertions', async ({ page }
   await expect(page.locator('.inspector')).toHaveCount(0)
 })
 
-test('explanation page separates causes, tests and evidence from the 3D workspace', async ({ page }) => {
+test('incident explanation opens beside the workspace and dismisses without losing context', async ({ page }) => {
   await page.goto('/')
   await seekTo(page, 47)
-  await page.getByRole('button', { name: 'Why this incident?', exact: true }).first().click()
-  await expect(page.getByRole('heading', { name: 'To find out which explanation survives a test.' })).toBeVisible()
-  await expect(page.locator('.why-hypothesis')).toHaveCount(2)
-  await expect(page.locator('.why-chart .uplot')).toBeVisible()
-  await page.screenshot({path:'test-results/explanation-page.png',fullPage:true})
+  const navigation = page.getByRole('navigation', { name: 'Main navigation' })
+  await expect(navigation.getByRole('button', { name: 'Why this incident?', exact: true })).toHaveCount(0)
+  const trigger = page.getByRole('button', { name: 'Why this incident?', exact: true })
+  await trigger.click()
+  const drawer = page.getByRole('dialog', { name: 'Why this incident?' })
+  await expect(drawer.getByRole('heading', { name: 'To find out which explanation survives a test.' })).toBeVisible()
+  await expect(drawer.locator('.why-hypothesis')).toHaveCount(2)
+  await expect(drawer.locator('.why-chart .uplot')).toBeVisible()
+  await page.waitForTimeout(300)
+  const bounds = await drawer.boundingBox()
+  const viewport = page.viewportSize()!
+  expect(bounds).not.toBeNull()
+  expect(Math.abs(bounds!.x + bounds!.width - viewport.width)).toBeLessThanOrEqual(1)
+  await page.screenshot({path:'test-results/explanation-drawer.png',fullPage:true})
+  await drawer.getByRole('button', { name: 'Close incident explanation' }).click()
+  await expect(drawer).not.toBeVisible()
+  await expect(page.getByTestId('topology-stage')).toBeVisible()
   await page.getByRole('button', { name: 'Restart simulation', exact: true }).click()
-  await expect(page.locator('.why-hypothesis')).toHaveCount(0)
-  await page.getByRole('button', { name: 'Watch the agents in 3D' }).click()
-  await expect(page.locator('.map-canvas canvas')).toBeVisible()
+  await trigger.click()
+  await expect(drawer.locator('.why-hypothesis')).toHaveCount(0)
+  await page.mouse.click(2, Math.floor(viewport.height / 2))
+  await expect(drawer).not.toBeVisible()
 })
 
 test('shared dark palette stays readable across pages', async ({ page }) => {
   const { default: AxeBuilder } = await import('@axe-core/playwright')
   await page.goto('/')
   await seekTo(page, 47)
-  for (const name of ['Why this incident?', 'Observability', 'Clone experiments', 'Incident replay', 'Evidence lineage']) {
+  await page.getByRole('button', { name: 'Why this incident?', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: 'Why this incident?' })).toBeVisible()
+  let result = await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa']).analyze()
+  expect.soft(result.violations.map(v => ({id:v.id, nodes:v.nodes.map(n=>n.target)}))).toEqual([])
+  await page.getByRole('button', { name: 'Close incident explanation' }).click()
+  for (const name of ['Observability', 'Incident replay', 'Evidence lineage']) {
     await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name, exact: true }).click()
     await page.screenshot({path:`test-results/palette-${name.replace(/[^a-z]/gi,'')}.png`,fullPage:true})
-    const result = await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa']).analyze()
+    result = await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa']).analyze()
     expect.soft(result.violations.map(v => ({id:v.id, nodes:v.nodes.map(n=>n.target)}))).toEqual([])
   }
 })
@@ -582,10 +596,11 @@ for (const [diagnosis, confirmed, label] of [
       return badge.right > status.left
     }))
     expect(headerOverlap).toEqual([false, false])
-    await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Why this incident?', exact: true }).click()
+    await page.getByRole('button', { name: 'Why this incident?', exact: true }).click()
     await expect(page.locator('.why-intro h2')).toHaveText(confirmed ? `Confirmed cause: ${label}.` : 'No cause confirmed.')
     await expect(page.locator('.why-conclusion h2')).toHaveText(confirmed ? `Confirmed cause: ${label}.` : 'No cause confirmed.')
     await expect(page.getByText('Recovery held after retries were restored.', { exact: true })).toHaveCount(0)
+    await page.getByRole('button', { name: 'Close incident explanation' }).click()
     await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Incident replay', exact: true }).click()
     await expect(page.locator('.report-preview h3')).toHaveText(`${diagnosis}: ${confirmed ? 'confirmed' : 'not confirmed'}`)
     const replayActions = await page.locator('.replay-actions > *').evaluateAll(actions => actions.map(action => {
@@ -594,8 +609,11 @@ for (const [diagnosis, confirmed, label] of [
     }))
     expect(new Set(replayActions.map(action => action.top)).size).toBe(1)
     expect(new Set(replayActions.map(action => action.height)).size).toBe(1)
-    await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Why this incident?', exact: true }).click()
+    await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Agent workspace', exact: true }).click()
+    await page.getByRole('button', { name: 'Why this incident?', exact: true }).click()
+    await page.getByRole('button', { name: 'Watch the agents in 3D' }).click()
     await page.getByRole('button', { name: 'Restart simulation', exact: true }).click()
+    await page.getByRole('button', { name: 'Why this incident?', exact: true }).click()
     await expect(page.locator('.why-conclusion h2')).toHaveText('The cause is not confirmed yet.')
     await page.getByRole('button', { name: 'Watch the agents in 3D' }).click()
     await page.getByRole('slider', { name: 'Simulation timeline' }).press('ArrowRight')

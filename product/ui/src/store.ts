@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { replay, type Scenario } from './model'
 import { scenarios as synthetic } from './scenarios'
 
-export type View = 'explanation' | 'investigation' | 'observability' | 'replay' | 'elastic'
+export type View = 'investigation' | 'observability' | 'replay' | 'elastic'
 
 const initialView: View = 'investigation'
 
@@ -23,6 +23,7 @@ interface UIState {
   follow: boolean
   reducedMotion: boolean
   focusRevision: number
+  explanationOpen: boolean
   dialog: 'experiment' | 'safety' | 'report' | null
   setScenario: (id: string) => void
   addScenarios: (items: Scenario[], select?: string) => void
@@ -53,8 +54,9 @@ export const useWorkspace = create<UIState>((set, get) => ({
   follow: false,
   reducedMotion: prefersReducedMotion,
   focusRevision: 0,
+  explanationOpen: false,
   dialog: null,
-  setScenario: id => set({ scenarioId: id, cursor: 0, environmentId: 'production', isolatedLayer: null, selectedNode: undefined, selectedSuiteCheck: undefined, selectedAgent: undefined, selectedEvent: undefined, playing: false, follow: false, focusRevision: get().focusRevision + 1 }),
+  setScenario: id => set({ scenarioId: id, cursor: 0, environmentId: 'production', isolatedLayer: null, selectedNode: undefined, selectedSuiteCheck: undefined, selectedAgent: undefined, selectedEvent: undefined, playing: false, follow: false, explanationOpen: false, focusRevision: get().focusRevision + 1 }),
   startDemo: id => {
     get().setScenario(id ?? get().scenarioId)
     set({ playing: true, follow: true, speed: 1, view: 'investigation' })
