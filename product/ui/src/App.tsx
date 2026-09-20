@@ -17,14 +17,14 @@ const navigation: { view: View; label: string; icon: typeof Activity }[] = [
   { view: 'observability', label: 'Observability', icon: LayoutDashboard },
   { view: 'investigation', label: 'Agent workspace', icon: Network },
   { view: 'replay', label: 'Incident replay', icon: Layers3 },
-  { view: 'elastic', label: 'Evidence lineage', icon: GitBranch },
+  { view: 'elastic', label: 'How this works', icon: GitBranch },
 ]
 const viewTitles: Record<View, { eyebrow: string; title: string; subtitle: string }> = {
   explanation: { eyebrow: 'UNDERSTAND THE INCIDENT', title: 'Why this incident?', subtitle: 'The symptoms, the possible causes, and the tests that tell them apart.' },
   investigation: { eyebrow: 'THE INVESTIGATION WORKSPACE', title: 'Investigation workspace', subtitle: 'Trace the symptoms. Test in isolation. Follow the evidence.' },
   observability: { eyebrow: 'SYSTEM OBSERVABILITY', title: 'Observability', subtitle: 'Metrics, dependencies, and context at the same moment in time.' },
   replay: { eyebrow: 'THE EVIDENCE LIBRARY', title: 'Incident replay', subtitle: 'Choose a recorded demo to watch again. Playback never reruns infrastructure actions.' },
-  elastic: { eyebrow: 'BUILT WITH ELASTIC', title: 'Evidence lineage', subtitle: 'How telemetry becomes a bounded, inspectable decision.' },
+  elastic: { eyebrow: 'FAULTLINE ARCHITECTURE', title: 'How this works', subtitle: 'From a production symptom to a measured, reversible response.' },
 }
 const lifecycleSteps: { id: IncidentLifecycle; label: string; title: string; detail: string }[] = [
   { id: 'monitoring', label: 'Normal system', title: 'Healthy reference system', detail: 'Monitored services are at baseline. Play the demo to follow an incident from its first symptoms to cleanup.' },
