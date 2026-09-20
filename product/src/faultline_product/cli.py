@@ -8,6 +8,7 @@ from pathlib import Path
 
 from faultline_brain import DEFAULT_MODEL
 from faultline_contracts import JsonlSink, LeverError, utcnow
+from faultline_contracts.clone import MAX_CLONES
 from faultline_telemetry import (
     ElasticsearchAuditSink,
     ElasticsearchFingerprintStore,
@@ -89,6 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-clones",
         type=int,
         default=1,
+        choices=range(1, MAX_CLONES + 1),
         help="investigation clones to run concurrently (2 + production caused Docker API 500s on a MacBook)",
     )
     watch.add_argument(

@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from faultline_contracts import (
     EventKind,
     JsonlSink,
@@ -170,3 +171,14 @@ def test_sandbox_cli_accepts_elasticsearch_and_clone_metadata_options():
     )
     assert args.elasticsearch_url == "http://elastic:9200"
     assert args.clone_id == "clone-h-meta"
+
+
+def test_max_clones_choices_match_lab_capacity():
+    parser = build_parser()
+    for bad in ("0", "-1", "4"):
+        with pytest.raises(SystemExit) as exc:
+            parser.parse_args(["watch", "--max-clones", bad])
+        assert exc.value.code == 2
+    for good in ("1", "2", "3"):
+        assert parser.parse_args(["watch", "--max-clones", good]).max_clones == int(good)
+    assert parser.parse_args(["watch"]).max_clones == 1

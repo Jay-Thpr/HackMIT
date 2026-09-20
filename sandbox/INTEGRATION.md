@@ -210,7 +210,8 @@ Exactly `contracts/README.md` § C6; `HttpCloneLab("http://localhost:9910")`. Me
   own network, **without `faultctl`**. It is built only from `CloneSpec`: `retry_policy` → Orders' env,
   `workload.rps` → loadgen's default rate, `patch_ref` → orders-v2 built from that checkout. `create()` returns
   `ready` after a verified healthy 5 s window: **~9 s** (≈ 11 s with `patch_ref`, more on a cold image build).
-  `reset()` takes 8–15 s from any of the three incidents. `MAX_CLONES` = 3 → 4th `create` is 409.
+  `reset()` takes 8–15 s from any of the three incidents. `LAB_MAX_CLONES` defaults to 2 (accepted range 1–3)
+  → the next `create` past the cap is 409.
 * **Endpoints** are host ports shifted by 1000 × slot, so the production adapters work unchanged:
   slot 1 → gateway `:9080`, orders `:9101`, payments `:9102`, loadgen `:9103`, orders-v2 `:9104`, control `:10901`;
   slot 2 → `:10080`, `:10101`–`:10104`, `:11901`; slot 3 → `:11080`, `:11101`–`:11104`, `:12901`. Always read them
@@ -230,9 +231,16 @@ Exactly `contracts/README.md` § C6; `HttpCloneLab("http://localhost:9910")`. Me
 
   `db_latency` and `db_capacity` **add up** while both are active (a transient slowdown on top of a batch job).
   `retry_policy` and the clone's C3 `retry_cap` share Orders' single override slot: the last write wins.
-* **Errors:** 400 bad params / ttl, 404 unknown clone or action, 409 at capacity, clone not `ready`, or
-  `orders-v2` named in a clone without `patch_ref`, 503 if Docker or the clone failed (the clone is torn down and
-  its `detail` says why; `create` then frees the slot).
+* **Errors:** 400 bad params / ttl, 404 unknown clone or action, 409 at capacity, clone not `ready`, clone
+  lifetime expired, action `ttl_s` exceeding the clone's remaining lifetime, or `orders-v2` named in a clone
+  without `patch_ref`; 503 if Docker or the clone failed.
+* **Lease:** every clone gets `LAB_CLONE_MAX_LIFETIME_S` (default 3600 s) counted from `create` — provisioning
+  time included. The deadline never renews (`reset`, workload changes, actions and reads do not extend it), an
+  expired clone rejects actions/reset/workload with 409, and the manager tears it down in the background. A slot
+  is freed only after teardown *succeeds*: if cleanup fails the clone is quarantined as `failed` (it still counts
+  against the cap) and retried every ~30 s. `/healthz` exposes `clone_max_lifetime_s` and per-clone `expires_at`,
+  `remaining_s`, `cleanup_pending`. The lease is enforced by the manager process itself — it must be running; on
+  restart the startup orphan sweep removes leftover `faultline-clone-*` projects.
 * **Fairness, verified by `validate_lab.py fairness`:** no `faultctl` container, `io_profile` cost 38/0, empty
   payments table, production hostnames don't resolve, and production's `:9900` refuses clone traffic (403; the
   fault controller only accepts its own network and the host, and clone networks don't masquerade). The manager
