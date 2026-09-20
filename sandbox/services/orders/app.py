@@ -2,7 +2,8 @@
 bounded retry policy:
 
 * retries are capped at max_retries per request (default 2 -> 3 attempts) and by an overall
-  per-request deadline;
+  per-request deadline (default 900 ms, under the 1 s checkout SLO); a retry only runs if at
+  least MIN_RETRY_TIMEOUT remains, and its timeout is clipped to the time left;
 * every retry waits exponential backoff with full jitter (random(0, base * 2**n), capped);
 * a sliding-window retry budget limits retries fleet-wide to a fraction of recent requests
   (plus a small per-second floor), so a slowdown downstream cannot multiply load on itself.
@@ -36,9 +37,10 @@ VERSION = os.environ.get("SERVICE_VERSION", "v1")
 PAYMENTS_URL = os.environ.get("PAYMENTS_URL", "http://envoy:8081/pay")
 DEFAULT_MAX_RETRIES = int(os.environ.get("ORDERS_MAX_RETRIES", "2"))
 ATTEMPT_TIMEOUT_S = float(os.environ.get("ORDERS_ATTEMPT_TIMEOUT_MS", "500")) / 1000.0
-REQUEST_DEADLINE_S = float(os.environ.get("ORDERS_REQUEST_DEADLINE_MS", "2500")) / 1000.0
+REQUEST_DEADLINE_S = float(os.environ.get("ORDERS_REQUEST_DEADLINE_MS", "900")) / 1000.0
+MIN_RETRY_TIMEOUT_S = float(os.environ.get("ORDERS_MIN_RETRY_TIMEOUT_MS", "100")) / 1000.0
 BACKOFF_BASE_S = float(os.environ.get("ORDERS_BACKOFF_BASE_MS", "50")) / 1000.0
-BACKOFF_MAX_S = float(os.environ.get("ORDERS_BACKOFF_MAX_MS", "1000")) / 1000.0
+BACKOFF_MAX_S = float(os.environ.get("ORDERS_BACKOFF_MAX_MS", "200")) / 1000.0
 RETRY_BUDGET_RATIO = float(os.environ.get("ORDERS_RETRY_BUDGET_RATIO", "0.2"))
 RETRY_BUDGET_MIN_PER_S = float(os.environ.get("ORDERS_RETRY_BUDGET_MIN_PER_S", "5"))
 RETRY_BUDGET_WINDOW_S = float(os.environ.get("ORDERS_RETRY_BUDGET_WINDOW_S", "10"))
@@ -124,11 +126,11 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
-async def _attempt(order_id: str) -> tuple[bool, str]:
+async def _attempt(order_id: str, timeout_s: float) -> tuple[bool, str]:
     t0 = time.monotonic()
     try:
         async with _session.post(PAYMENTS_URL, json={"order_id": order_id, "amount_cents": 1000},
-                                 timeout=aiohttp.ClientTimeout(total=attempt_timeout_s())) as r:
+                                 timeout=aiohttp.ClientTimeout(total=timeout_s)) as r:
             await r.read()
             ok = r.status == 200
             outcome = "ok" if ok else f"status {r.status}"
@@ -156,7 +158,10 @@ async def checkout():
             stats.inc("attempts")
             if attempt > 1:
                 stats.inc("retries")
-            ok, outcome = await _attempt(order_id)
+            # every attempt fits inside the request deadline, so a request can never take
+            # longer than the deadline no matter how many retries it makes
+            timeout_s = min(attempt_timeout_s(), deadline - time.monotonic())
+            ok, outcome = await _attempt(order_id, timeout_s)
             if ok:
                 stats.inc("ok")
                 return {"order_id": order_id, "attempts": attempt, "version": VERSION}
@@ -164,7 +169,7 @@ async def checkout():
             if outcome == "timeout":
                 stats.inc("attempt_timeouts")
                 rlog.log(logging.WARNING, "timeout", "payments call timed out after %dms (attempt %d of %d)",
-                         attempt_timeout_s() * 1000, attempt, limit)
+                         timeout_s * 1000, attempt, limit)
             else:
                 stats.inc("attempt_errors")
                 rlog.log(logging.WARNING, "error", "payments call failed: %s (attempt %d of %d)",
@@ -172,7 +177,7 @@ async def checkout():
             if attempt >= limit:
                 return _fail(attempt, "retries exhausted")
             delay = backoff_s(attempt)
-            if time.monotonic() + delay + attempt_timeout_s() > deadline:
+            if time.monotonic() + delay + MIN_RETRY_TIMEOUT_S > deadline:
                 stats.inc("retries_deadline_denied")
                 return _fail(attempt, "request deadline reached")
             if not _budget.try_acquire():
