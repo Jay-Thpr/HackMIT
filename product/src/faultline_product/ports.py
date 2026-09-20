@@ -69,6 +69,16 @@ class Brain(Protocol):
         excluded_ids: set[str],
     ) -> Experiment | None: ...
 
+    def plan_scores(
+        self,
+        triage: TriageResult,
+        catalog: list[LeverSpec],
+        blast_radius: Callable[[str, dict], float],
+    ) -> list[dict]:
+        """Optional: the planner's candidate table, one row per scored experiment with
+        ``experiment_id``, ``lever_id``, ``separation``, ``score``, ``blast_radius_pct``."""
+        ...
+
     def judge(
         self,
         triage: TriageResult,

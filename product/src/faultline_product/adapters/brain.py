@@ -9,6 +9,7 @@ from faultline_brain import (
     judge,
     plan_experiment,
     run_triage,
+    score_experiment,
 )
 from faultline_contracts import (
     Experiment,
@@ -117,23 +118,49 @@ class LiveBrain:
     def triage_source(self) -> str | None:
         return self.last_triage_note
 
+    def _scored_candidates(
+        self, catalog: list[LeverSpec], blast_radius: Callable[[str, dict], float]
+    ) -> list[Experiment]:
+        catalog_ids = {spec.id for spec in catalog}
+        return [
+            candidate.model_copy(
+                update={"blast_radius_pct": blast_radius(candidate.lever_id, candidate.params)}
+            )
+            for candidate in self._candidates
+            if candidate.lever_id in catalog_ids
+        ]
+
     def plan(
         self,
         triage: TriageResult,
         catalog: list[LeverSpec],
         blast_radius: Callable[[str, dict], float],
     ) -> Experiment | None:
-        catalog_ids = {spec.id for spec in catalog}
-        candidates = [
-            candidate.model_copy(
-                update={
-                    "blast_radius_pct": blast_radius(candidate.lever_id, candidate.params),
-                }
-            )
-            for candidate in self._candidates
-            if candidate.lever_id in catalog_ids
+        return plan_experiment(triage, self._scored_candidates(catalog, blast_radius)).selected
+
+    def plan_scores(
+        self,
+        triage: TriageResult,
+        catalog: list[LeverSpec],
+        blast_radius: Callable[[str, dict], float],
+    ) -> list[dict]:
+        scores = [
+            score_experiment(triage.predictions, candidate)
+            for candidate in self._scored_candidates(catalog, blast_radius)
         ]
-        return plan_experiment(triage, candidates).selected
+        scores.sort(
+            key=lambda item: (-item.score, -item.separation, item.experiment.blast_radius_pct, item.experiment.id)
+        )
+        return [
+            {
+                "experiment_id": item.experiment.id,
+                "lever_id": item.experiment.lever_id,
+                "separation": item.separation,
+                "score": item.score,
+                "blast_radius_pct": item.experiment.blast_radius_pct,
+            }
+            for item in scores
+        ]
 
     def confirmation_experiment(
         self,
@@ -143,16 +170,8 @@ class LiveBrain:
         blast_radius: Callable[[str, dict], float],
         excluded_ids: set[str],
     ) -> Experiment | None:
-        catalog_ids = {spec.id for spec in catalog}
-        candidates = [
-            candidate.model_copy(
-                update={"blast_radius_pct": blast_radius(candidate.lever_id, candidate.params)}
-            )
-            for candidate in self._candidates
-            if candidate.lever_id in catalog_ids
-        ]
         return confirmation_experiment(
-            triage, hypothesis_id, candidates, excluded_ids=excluded_ids
+            triage, hypothesis_id, self._scored_candidates(catalog, blast_radius), excluded_ids=excluded_ids
         )
 
     def judge(

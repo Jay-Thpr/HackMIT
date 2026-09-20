@@ -217,3 +217,21 @@ def test_cli_live_brain_falls_back_without_key(tmp_path, monkeypatch, capsys):
     verdict = next(event for event in events if event["kind"] == "verdict")
     assert verdict["payload"]["diagnosis"] == "H_meta"
     assert verdict["payload"]["confirmed"] is True
+
+
+def test_plan_scores_ranks_every_catalog_candidate():
+    bundle = load_fixture("storm")
+    adapter = FixtureLeverAdapter()
+    brain = LiveBrain(bundle.experiments)
+
+    rows = brain.plan_scores(bundle.triage, adapter.catalog(), adapter.estimate_blast_radius)
+
+    assert [row["experiment_id"] for row in rows][0] == "retry_cap_0_20s"
+    assert {row["experiment_id"] for row in rows} == {item.id for item in bundle.experiments}
+    assert [row["score"] for row in rows] == sorted((row["score"] for row in rows), reverse=True)
+    for row in rows:
+        assert set(row) == {"experiment_id", "lever_id", "separation", "score", "blast_radius_pct"}
+        assert row["blast_radius_pct"] == adapter.estimate_blast_radius(
+            row["lever_id"], next(i.params for i in bundle.experiments if i.id == row["experiment_id"])
+        )
+        assert row["score"] == row["separation"] - 0.1 * row["blast_radius_pct"]

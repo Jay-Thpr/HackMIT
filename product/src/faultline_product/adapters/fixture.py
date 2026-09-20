@@ -57,6 +57,18 @@ class FixtureBrain:
         del triage, catalog, blast_radius
         return self._experiment
 
+    def plan_scores(self, triage, catalog, blast_radius) -> list[dict]:
+        del triage, catalog, blast_radius
+        return [
+            {
+                "experiment_id": self._experiment.id,
+                "lever_id": self._experiment.lever_id,
+                "separation": 1,
+                "score": 1 - 0.1 * self._experiment.blast_radius_pct,
+                "blast_radius_pct": self._experiment.blast_radius_pct,
+            }
+        ]
+
     def confirmation_experiment(self, triage, hypothesis_id, catalog, blast_radius, excluded_ids):
         del triage, hypothesis_id, catalog, blast_radius, excluded_ids
         return None
