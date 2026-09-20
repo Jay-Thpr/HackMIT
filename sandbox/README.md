@@ -131,6 +131,19 @@ OTLP intake, authenticated with `FAULTLINE_ELASTICSEARCH_API_KEY`);
 `ln -sf ../.env sandbox/.env` to share the root file. The running production containers keep the old
 image; this activates when the project is next recreated.
 
+Clone collectors also tee OTLP JSON batches to `/tmp/otel/records.jsonl` (`FAULTLINE_OTEL_TEE=1`, set
+by the lab manager via `otel/sink-tee.yaml` / `sink-elastic-tee.yaml`); `validate_lab.py fairness`
+reads those records rather than container logs, and optionally cross-checks `traces-*` in Elasticsearch
+when `FAULTLINE_ELASTICSEARCH_URL` + `FAULTLINE_ELASTICSEARCH_API_KEY` are set (SKIPped otherwise).
+
+After changing OTel deps / `requirements.txt`, rebuild the shared app image or clones fail with
+`opentelemetry-instrument: not found` (announce production recreates in chat first per the
+shared-stack rule):
+
+```
+cd sandbox && docker compose build --quiet payments && docker compose up -d --force-recreate
+```
+
 Keep these choices in any OTel-derived telemetry too, because they are what keeps World A and World B
 ambiguous:
 

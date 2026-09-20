@@ -1,11 +1,13 @@
-# Elasticsearch native OTLP intake at <FAULTLINE_ELASTICSEARCH_URL>/_otlp (used when the URL is set;
-# otlphttp appends /v1/traces, /v1/metrics itself). confmap merges maps and replaces lists, so only
-# the exporters of each pipeline change.
+# Elasticsearch direct sink (used when the URL is set). This project has no managed OTLP intake
+# (/_otlp 404s), so the elasticsearch exporter bulk-indexes OTLP docs into the otel-mode data
+# streams traces/metrics/logs-generic.otel-default. confmap merges maps and replaces lists, so
+# only the exporters of each pipeline change.
 exporters:
-  otlp_http/elastic:
-    endpoint: "${env:FAULTLINE_ELASTICSEARCH_URL}/_otlp"
-    headers: {Authorization: "ApiKey ${env:FAULTLINE_ELASTICSEARCH_API_KEY}"}
+  elasticsearch/elastic:
+    endpoints: ["${env:FAULTLINE_ELASTICSEARCH_URL}"]
+    api_key: "${env:FAULTLINE_ELASTICSEARCH_API_KEY}"
+    mapping: {mode: otel}
 service:
   pipelines:
-    traces:  {exporters: [otlp_http/elastic]}
-    metrics: {exporters: [otlp_http/elastic]}
+    traces:  {exporters: [elasticsearch/elastic]}
+    metrics: {exporters: [elasticsearch/elastic]}

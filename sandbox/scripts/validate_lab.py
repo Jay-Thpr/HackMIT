@@ -12,10 +12,12 @@ inspection. Never touches the production fault controller. Exit code 1 if any ch
 """
 
 import argparse
+import io
 import json
-import re
+import os
 import subprocess
 import sys
+import tarfile
 import time
 from typing import Any
 
@@ -144,19 +146,151 @@ class Run:
                       "SELECT count(*) FROM payments WHERE created_at < now() - interval '5 minutes'").strip()
         check("clone DB has no production history", rows == "0", f"{rows} old rows")
         self.baseline()
-        # OTel: the clone's collector must carry workload spans and no hidden-state leaks.
-        logs = subprocess.run(["docker", "logs", f"{project}-otel-collector-1"],
-                              capture_output=True, text=True)
-        out = logs.stdout + logs.stderr
-        got = {svc for svc in ("orders", "payments") if re.search(rf"service\.name\s*:\s*Str\({svc}\)", out)}
-        check("collector saw spans from orders and payments", got == {"orders", "payments"}, f"found={sorted(got)}")
-        leaked = [w for w in ("io_profile", "fault", "/internal", "/admin", "world", "trigger",
-                              "db.statement", "db.query.text", "faultctl") if w in out]
-        check("collector output carries no hidden state", not leaked, f"leaked={leaked}")
-        envs = set(re.findall(r"deployment\.environment\S*\s*:\s*Str\((\S+)\)", out))
-        check("spans tagged deployment.environment=clone-<slot>", envs == {f"clone-{project.rsplit('-', 1)[1]}"},
-              str(envs))
+        # OTel: read the structured OTLP records the clone collector tees to /tmp/otel/records.jsonl
+        # (contrib image has no shell, so docker cp streams the file as a tar on stdout).
+        records = self._collector_records(f"{project}-otel-collector-1")
+        services, envs, strings = set(), set(), set()
+        for rec in records:
+            for res in self._resources(rec):
+                for k, v in self._attrs(res):
+                    if k == "service.name":
+                        services.add(v)
+                    if k == "deployment.environment":
+                        envs.add(v)
+            strings |= self._record_strings(rec)
+        check("collector emitted spans from orders and payments",
+              {"orders", "payments"} <= services, f"services={sorted(services)}")
+        banned = ("io_profile", "fault", "/internal", "/admin", "world", "trigger",
+                  "db.statement", "db.query.text", "faultctl")
+        leaked = sorted(s for s in strings if any(b in s.lower() for b in banned))
+        check("emitted telemetry carries no hidden state", not leaked, f"leaked={leaked[:10]}")
+        check("telemetry tagged deployment.environment=clone-<slot>",
+              envs == {f"clone-{project.rsplit('-', 1)[1]}"}, str(envs))
+        self._elastic_check(f"clone-{project.rsplit('-', 1)[1]}")
         self.destroy()
+
+    # -- OTel record inspection (clone collector file tee) ------------------------------------
+    @staticmethod
+    def _collector_records(container: str, path: str = "/tmp/otel/records.jsonl",
+                           timeout_s: float = 15) -> list[Any]:
+        deadline = time.monotonic() + timeout_s
+        while True:
+            cp = subprocess.run(["docker", "cp", f"{container}:{path}", "-"], capture_output=True)
+            lines: list[Any] = []
+            if cp.returncode == 0:
+                with tarfile.open(fileobj=io.BytesIO(cp.stdout)) as tf:
+                    for m in tf.getmembers():
+                        f = tf.extractfile(m)
+                        if f:
+                            lines = [json.loads(l) for l in f.read().decode().splitlines() if l.strip()]
+            if lines or time.monotonic() > deadline:
+                return lines
+            time.sleep(2)
+
+    @staticmethod
+    def _attrs(node: dict[str, Any]):
+        for a in node.get("attributes") or []:
+            yield a.get("key"), (a.get("value") or {}).get("stringValue")
+
+    @staticmethod
+    def _resources(rec: dict[str, Any]):
+        for group in ("resourceSpans", "resourceMetrics", "resourceLogs"):
+            for rs in rec.get(group) or []:
+                yield rs.get("resource") or {}
+
+    @staticmethod
+    def _record_strings(rec: dict[str, Any]) -> set[str]:
+        """Every attribute key, string attribute value, span name and metric name in the record."""
+        out: set[str] = set()
+
+        def attrs(node: dict[str, Any] | None) -> None:
+            for a in (node or {}).get("attributes") or []:
+                if a.get("key"):
+                    out.add(a["key"])
+                v = (a.get("value") or {}).get("stringValue")
+                if v:
+                    out.add(v)
+
+        for rs in rec.get("resourceSpans") or []:
+            attrs(rs.get("resource"))
+            for ss in rs.get("scopeSpans") or []:
+                attrs(ss.get("scope"))
+                for sp in ss.get("spans") or []:
+                    if sp.get("name"):
+                        out.add(sp["name"])
+                    attrs(sp)
+                    for ev in sp.get("events") or []:
+                        attrs(ev)
+        for rm in rec.get("resourceMetrics") or []:
+            attrs(rm.get("resource"))
+            for sm in rm.get("scopeMetrics") or []:
+                attrs(sm.get("scope"))
+                for met in sm.get("metrics") or []:
+                    if met.get("name"):
+                        out.add(met["name"])
+                    for kind in ("sum", "gauge", "histogram", "exponentialHistogram", "summary"):
+                        for dp in (met.get(kind) or {}).get("dataPoints") or []:
+                            attrs(dp)
+        return out
+
+    # -- optional Elasticsearch cross-check -----------------------------------------------------
+    def _elastic_check(self, env: str) -> None:
+        for line in self._root_env():
+            os.environ.setdefault(*line)
+        url, key = os.environ.get("FAULTLINE_ELASTICSEARCH_URL"), os.environ.get("FAULTLINE_ELASTICSEARCH_API_KEY")
+        if not (url and key):
+            print("SKIP  elastic: FAULTLINE_ELASTICSEARCH_API_KEY not set", flush=True)
+            return
+        body = {"size": 0,
+                "query": {"bool": {"filter": [
+                    {"term": {"resource.attributes.deployment.environment": env}},
+                    {"range": {"@timestamp": {"gte": self.clone.created_at.isoformat()}}}]}},
+                "aggs": {"svc": {"terms": {"field": "resource.attributes.service.name"}}}}
+        deadline = time.monotonic() + 30
+        detail = ""
+        while True:
+            try:
+                r = httpx.post(f"{url}/traces-*/_search", json=body,
+                               headers={"Authorization": f"ApiKey {key}"}, timeout=15)
+                r.raise_for_status()
+                data = r.json()
+                total = data["hits"]["total"]
+                total = total["value"] if isinstance(total, dict) else total
+                svcs = {b["key"] for b in data.get("aggregations", {}).get("svc", {}).get("buckets", [])}
+                if total > 0 and {"orders", "payments"} <= svcs:
+                    return check("elastic received clone traces (orders+payments)", True, f"total={total} svcs={sorted(svcs)}")
+                detail = f"total={total} svcs={sorted(svcs)}"
+            except httpx.HTTPStatusError as e:
+                # ES 9.x field mapping is a guess; retry once with a query_string and report real fields.
+                if e.response.status_code == 400 and "fields" not in detail:
+                    body = {"size": 1, "query": {"query_string": {"query": f'"{env}"'}}}
+                    try:
+                        r = httpx.post(f"{url}/traces-*/_search", json=body,
+                                       headers={"Authorization": f"ApiKey {key}"}, timeout=15)
+                        doc = (r.json().get("hits", {}).get("hits") or [{}])[0].get("_source", {})
+                        detail = f"typed query 400; query_string fields={sorted(doc)[:20]}"
+                    except httpx.HTTPError as e2:
+                        detail = f"typed query 400; fallback failed: {e2}"
+                else:
+                    detail = f"HTTP {e.response.status_code}: {e.response.text[:120]}"
+            except httpx.HTTPError as e:
+                detail = str(e)[:120]
+            if time.monotonic() > deadline:
+                return check("elastic received clone traces (orders+payments)", False, detail)
+            time.sleep(3)
+
+    @staticmethod
+    def _root_env() -> list[tuple[str, str]]:
+        path = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
+        out = []
+        try:
+            for line in open(path):
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    out.append(tuple(line.split("=", 1)))
+        except OSError:
+            pass
+        return out
 
     def scenario_storm(self, delay_ms: int = 800, duration_s: int = 20, persist_s: int = 45, cap_s: int = 20,
                        after_s: int = 40) -> None:

@@ -165,8 +165,13 @@ services:
     restart: unless-stopped
     volumes:
       - ./otel:/etc/otelcol:ro
+      # Writable dir for the clone tee (file/leakcheck exporter runs as uid 10001; docker cp can't
+      # read tmpfs, so this is a bind mount — the lab manager points it at a per-clone dir).
+      - ${FAULTLINE_OTEL_TEE_DIR:-./.otel-records}:/tmp/otel
     environment:
       OTEL_DEPLOYMENT_ENVIRONMENT: ${OTEL_DEPLOYMENT_ENVIRONMENT:-production}
       FAULTLINE_ELASTICSEARCH_URL: ${FAULTLINE_ELASTICSEARCH_URL:-}
       FAULTLINE_ELASTICSEARCH_API_KEY: ${FAULTLINE_ELASTICSEARCH_API_KEY:-}
-    command: ["--config=/etc/otelcol/collector.yaml", "--config=/etc/otelcol/sink${FAULTLINE_ELASTICSEARCH_URL:+-elastic}.yaml"]
+    # Sink config picked at compose-interpolation time; FAULTLINE_OTEL_TEE=1 (clones) additionally
+    # writes OTLP JSON batches to /tmp/otel/records.jsonl for the fairness leak check.
+    command: ["--config=/etc/otelcol/collector.yaml", "--config=/etc/otelcol/sink${FAULTLINE_ELASTICSEARCH_URL:+-elastic}${FAULTLINE_OTEL_TEE:+-tee}.yaml"]

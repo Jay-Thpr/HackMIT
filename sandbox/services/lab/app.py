@@ -107,10 +107,20 @@ class Clone:
             "PORT_PAYMENTS": str(self.ports["payments"]), "PORT_LOADGEN": str(self.ports["loadgen"]),
             "PORT_ORDERS_V2": str(self.ports["orders-v2"]), "PORT_CONTROL": str(self.ports["control"]),
             "OTEL_DEPLOYMENT_ENVIRONMENT": f"clone-{self.slot}",
+            # Clone collectors tee structured records to a file so the fairness check reads emitted
+            # records, not process logs; production stays Elastic-only.
+            "FAULTLINE_OTEL_TEE": "1",
+            "FAULTLINE_OTEL_TEE_DIR": str(self._tee_dir()),
         }
         if self.spec.patch_ref:
             e["ORDERS_V2_CONTEXT"] = str(Path(self.spec.patch_ref).expanduser().resolve())
         return e
+
+    def _tee_dir(self) -> Path:
+        d = SANDBOX_DIR / ".otel-records" / self.project
+        d.mkdir(parents=True, exist_ok=True)
+        d.chmod(0o777)  # the collector writes as uid 10001
+        return d
 
     async def compose(self, *args: str, timeout_s: float = 300) -> str:
         _assert_clone_project(self.project)

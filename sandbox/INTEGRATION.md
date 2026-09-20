@@ -119,6 +119,17 @@ curl -s localhost:9901/admin/levers
   OTLP http to `<url>/_otlp` (Elasticsearch 9.x native OTLP intake) with `FAULTLINE_ELASTICSEARCH_API_KEY`. Kill switch:
   `OTEL_SDK_DISABLED=true` disables instrumentation in the services. Production picks this up only
   when the production project is next recreated — the running containers still have the old image.
+* Clone tee: the lab manager sets `FAULTLINE_OTEL_TEE=1`, so clone collectors also write OTLP JSON
+  batches to `/tmp/otel/records.jsonl` in the collector container. `validate_lab.py fairness` reads
+  those records (services, `deployment.environment`, hidden-state leak scan) and, when
+  `FAULTLINE_ELASTICSEARCH_URL` + `FAULTLINE_ELASTICSEARCH_API_KEY` are set, optionally verifies the
+  clone's traces landed in `traces-*` (SKIPped otherwise).
+* After changing OTel deps / `requirements.txt`, rebuild the shared app image or clones fail with
+  `opentelemetry-instrument: not found` (announce production recreates in chat first per the
+  shared-stack rule):
+  ```
+  cd sandbox && docker compose build --quiet payments && docker compose up -d --force-recreate
+  ```
 
 **Must NOT ingest:** anything from `faultctl` (its logs name the faults), the `io_profile` table, Envoy
 `*.fault.*` stats (shed is implemented with Envoy's fault filter, and the word trips the fairness
