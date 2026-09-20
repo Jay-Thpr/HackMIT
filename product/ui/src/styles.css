@@ -1369,6 +1369,11 @@ main { padding: 22px 22px 0; }
 .app-shell .workspace-dialog :is(p,small,.dialog-subtitle,.dialog-notice,.safety-tier p) { color:#c2c9ba; }
 .app-shell .workspace-dialog :is(input,select,textarea,.proposal-preview,.safety-tier,.dialog-notice,.ghost-shards span) { background:#30382e; color:#eeefe9; border-color:#59634f; }
 .app-shell .workspace-dialog .secondary-button { background:transparent; color:#d4dbcd; }
+.app-shell .workspace-dialog.report-sheet { inset:0 0 0 auto; margin:0; width:min(470px,calc(100vw - 32px)); max-width:none; height:100dvh; max-height:none; border-width:0 0 0 1px; border-radius:0; padding:28px 30px; animation:report-sheet-enter .24s ease-out; }
+.app-shell .workspace-dialog.report-sheet::backdrop { background:rgba(20,24,20,.38); backdrop-filter:blur(2px); }
+@keyframes report-sheet-enter { from { opacity:0; transform:translateX(32px); } to { opacity:1; transform:translateX(0); } }
+@media(prefers-reduced-motion:reduce) { .app-shell .workspace-dialog.report-sheet { animation:none; } }
+@media(max-width:600px) { .app-shell .workspace-dialog.report-sheet { width:calc(100vw - 16px); padding:22px 20px; } }
 .app-shell .inspector-body { padding:24px; }
 .app-shell .inspector-body :is(p,dd) { font-size:13px; line-height:1.75; max-width:65ch; }
 .app-shell .inspector-body h3 { font-size:17px; line-height:1.4; margin:10px 0; }

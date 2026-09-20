@@ -15,7 +15,7 @@ export function Dialogs({ scenario, workspace }: { scenario: Scenario; workspace
     else element.current?.close()
   }, [dialog, scenario.id, hypothesesAvailable])
   const close = () => set({ dialog: null })
-  return <dialog ref={element} className="workspace-dialog" onCancel={close} onClose={close} aria-labelledby="dialog-title" onClick={event => { if (event.target === element.current) { const bounds = element.current!.getBoundingClientRect(); if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) close() } }}>
+  return <dialog ref={element} className={`workspace-dialog ${dialog === 'report' ? 'report-sheet' : ''}`} onCancel={close} onClose={close} aria-labelledby="dialog-title" onClick={event => { if (event.target === element.current) { const bounds = element.current!.getBoundingClientRect(); if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) close() } }}>
     <div className="dialog-header"><span className="overline">{dialog === 'experiment' ? 'LOCAL DRAFT' : dialog === 'report' ? 'INCIDENT REPORT' : 'SAFETY & APPROVALS'}</span><button className="icon-button" aria-label="Close dialog" onClick={close}><X size={18} /></button></div>
     {dialog === 'experiment' ? <form key={scenario.id} onChange={() => setSaved(false)} onSubmit={event => { event.preventDefault(); setSaved(true) }}>
       <h2 id="dialog-title">Draft an experiment</h2><p className="dialog-subtitle">Describe a possible cause and the response that would test it. Validation checks required fields and the time limit, not whether the experiment is safe or correct.</p>
