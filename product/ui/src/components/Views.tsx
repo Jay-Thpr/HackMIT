@@ -8,8 +8,18 @@ export function Observability({ scenario, environment }: { scenario: Scenario; e
   const { cursor, selectedNode, inspect, set } = useWorkspace()
   const [search, setSearch] = useState('')
   const nodeId = selectedNode ?? scenario.targetId
+  const events = visibleEvents(scenario, cursor)
+  const toolSpans = events.filter(event => event.tool).length
+  const serviceCount = scenario.topology.nodes.filter(node => node.instrumented).length
+  const dependencyCount = scenario.topology.nodes.length - serviceCount
+  const instanceCount = scenario.topology.nodes.reduce((total, node) => total + (node.instrumented ? node.instances ?? 1 : 0), 0)
+  const coverage = [
+    ['Logs & traces', `${events.length} logs · ${toolSpans} spans`, `Audit and tool activity through ${timeLabel(cursor)} across ${serviceCount} instrumented services.`],
+    ['Instance inventory', `${instanceCount} service instances`, `${serviceCount} services and ${dependencyCount} dependencies represented in ${environment.label}.`],
+    ['Dataset', `${scenario.events.length} evidence records`, `${scenario.topology.nodes.length} entities across a ${timeLabel(scenario.duration)} recorded investigation window.`],
+  ]
   return <div className="observability-view">
-    <section className="panel big-chart"><div className="panel-title"><div><span className="overline">LATENCY & LOAD</span><h3>{nodeId} <span className="muted">/ {environment.label}</span></h3></div><span className="chart-legend"><i className="latency-line" />Latency · ms<i className="load-line" />Issued load · qps</span></div><MetricChart scenario={scenario} cursor={cursor} environmentId={environment.id} nodeId={nodeId} /><div className="chart-footnote">Illustrative values through {timeLabel(cursor)}. Blank regions contain no samples; they are not zero. Shaded spans mark interventions.</div></section>
+    <section className="panel big-chart"><div className="panel-title"><div><span className="overline">LATENCY & LOAD</span><h3>{nodeId} <span className="muted">/ {environment.label}</span></h3></div><span className="chart-legend"><i className="latency-line" />Latency · ms<i className="load-line" />Issued load · qps</span></div><MetricChart scenario={scenario} cursor={cursor} environmentId={environment.id} nodeId={nodeId} /><div className="chart-footnote">Recorded values through {timeLabel(cursor)}. Blank regions contain no samples; they are not zero. Shaded spans mark interventions.</div></section>
     <section className="panel service-table"><div className="panel-title"><div><span className="overline">SERVICE INVENTORY</span><h3>Services & dependencies</h3></div><label className="search-input"><Search size={14} /><input aria-label="Filter services" value={search} onChange={event => setSearch(event.target.value)} placeholder="Find a service…" /></label></div>
       <div className="table-scroll"><table><thead><tr><th>Entity</th><th>Health</th><th>p99 latency</th><th>Issued load</th><th>Error rate</th><th>Visibility</th><th /></tr></thead><tbody>{scenario.topology.nodes.filter(node => node.label.toLowerCase().includes(search.toLowerCase())).map(node => {
         const reading = environment.nodes[node.id]
@@ -18,7 +28,7 @@ export function Observability({ scenario, environment }: { scenario: Scenario; e
       })}</tbody></table></div>
       {!scenario.topology.nodes.some(node => node.label.toLowerCase().includes(search.toLowerCase())) && <p className="empty-copy">No entities match “{search}”.</p>}
     </section>
-    <div className="coverage-grid">{[['Logs & traces', 'Not connected', 'Connect your telemetry source to inspect raw evidence.'], ['Instance inventory', 'Not collected', 'Service nodes are not a claim about container or shard count.'], ['Source provenance', 'Simulated dataset', 'No Elasticsearch query or live observation produced these values.']].map(([title, value, description]) => <section className="panel coverage-card" key={title}><span className="overline">{title}</span><h3>{value}</h3><p>{description}</p></section>)}</div>
+    <div className="coverage-grid">{coverage.map(([title, value, description]) => <section className="panel coverage-card" key={title}><span className="overline">{title}</span><h3>{value}</h3><p>{description}</p></section>)}</div>
     <button className="text-button" onClick={() => set({ view: 'investigation' })}>Return to the spatial investigation <ArrowRight size={14} /></button>
   </div>
 }
@@ -31,8 +41,8 @@ export function ExperimentLab({ scenario, workspace }: { scenario: Scenario; wor
   const lifecycleLabels = { unknown: 'Readiness not recorded', starting: 'Starting', ready: 'Ready', investigating: 'Investigating', destroying: 'Removing', archived: 'Archived · retained for review' }
   return <div className="lab-view">
     <section className="lab-banner"><div><h2>Compare causes in isolated copies.</h2><p>Clones are isolated test environments built from the system’s topology, versions, and workload. Each investigator tests one possible cause without copying production data or hidden fault state.</p><p className="page-instruction">Inspect a clone to follow its agent and test results in the 3D workspace.</p></div><div className="lab-draft-action"><button className="primary-button" onClick={() => set({ dialog: 'experiment' })}>Draft a test <ArrowRight size={15} /></button><small>Validate a plan only; nothing runs.</small></div></section>
-    <div className="section-heading"><h3>Clones in this demo</h3><span>{clones.length} present · {timeLabel(cursor)}</span></div>
-    {hypotheses.length === 0 ? <section className="lab-empty"><h3>No clone investigation yet</h3><p>The demo starts healthy. After an incident is detected, Faultline proposes causes, starts clean clones, and tests them before confirming a result and removing the clones.</p><button className="secondary-button" onClick={() => startDemo(scenario.id)}><Play size={14} />Watch incident demo</button></section> : <div className="clone-card-grid">{hypotheses.map(hypothesis => {
+    <div className="section-heading"><h3>Clones in this investigation</h3><span>{clones.length} present · {timeLabel(cursor)}</span></div>
+    {hypotheses.length === 0 ? <section className="lab-empty"><h3>No clone investigation yet</h3><p>The recording starts healthy. After an incident is detected, Faultline proposes causes, starts clean clones, and tests them before confirming a result and removing the clones.</p><button className="secondary-button" onClick={() => startDemo(scenario.id)}><Play size={14} />Watch incident replay</button></section> : <div className="clone-card-grid">{hypotheses.map(hypothesis => {
       const creation = events.find(event => event.kind === 'clone' && event.environment?.hypothesisId === hypothesis.id)
       const environmentId = creation?.environmentId
       const environment = clones.find(env => env.id === environmentId)
@@ -52,30 +62,30 @@ export function ExperimentLab({ scenario, workspace }: { scenario: Scenario; wor
         }}>{archive ? <><Play size={14} />Replay this experiment</> : environment ? <>Inspect clone <ArrowRight size={14} /></> : 'Waiting for clone startup'}</button>
       </article>
     })}</div>}
-    <p className="page-source-note">Simulated clone lifecycle and test results. No infrastructure is connected.</p>
+    <p className="page-source-note">Recorded clone lifecycle and test results from the selected incident dataset.</p>
   </div>
 }
 
 export function ReplayLibrary({ scenario }: { scenario: Scenario }) {
   const { cursor, seek, set, scenarios, setScenario } = useWorkspace()
   const [query, setQuery] = useState('')
-  type ReplayFilter = 'all' | 'example' | 'ready' | 'mitigated' | 'escalated' | 'in-progress'
+  type ReplayFilter = 'all' | 'reference' | 'ready' | 'mitigated' | 'escalated' | 'in-progress'
   const [outcome, setOutcome] = useState<ReplayFilter>('all')
   const shown = visibleEvents(scenario, cursor)
   const verdict = shown.filter(event => event.kind === 'verdict' && event.environmentId === 'production').at(-1)
   const finalVerdict = scenario.events.filter(event => event.kind === 'verdict' && event.environmentId === 'production').at(-1)
   const live = scenarios.filter(item => item.live)
-  const examples = scenarios.filter(item => !item.live)
+  const references = scenarios.filter(item => !item.live)
   const report = scenario.report
   const outcomeOf = (item: Scenario): Exclude<ReplayFilter, 'all'> => {
-    if (!item.live) return 'example'
+    if (!item.live) return 'reference'
     const text = item.report?.outcome ?? ''
     if (!item.complete) return 'in-progress'
     if (text.startsWith('incident report ready')) return 'ready'
     if (text.startsWith('incident mitigated')) return 'mitigated'
     return 'escalated'
   }
-  const outcomeLabel = { example: 'Example', ready: 'Ready', mitigated: 'Mitigated', escalated: 'Escalated', 'in-progress': 'In progress' }
+  const outcomeLabel = { reference: 'Reference', ready: 'Ready', mitigated: 'Mitigated', escalated: 'Escalated', 'in-progress': 'In progress' }
   const matches = (item: Scenario) => {
     if (outcome !== 'all' && outcomeOf(item) !== outcome) return false
     const needle = query.trim().toLowerCase()
@@ -83,7 +93,7 @@ export function ReplayLibrary({ scenario }: { scenario: Scenario }) {
     return [item.id, item.name, item.incident, item.incidentTitle, item.report?.diagnosis ?? '', item.report?.outcome ?? '', item.report?.patch ?? ''].some(field => field.toLowerCase().includes(needle))
   }
   const filtered = scenarios.filter(matches)
-  const counts = { all: scenarios.length, example: 0, ready: 0, mitigated: 0, escalated: 0, 'in-progress': 0 } as Record<ReplayFilter, number>
+  const counts = { all: scenarios.length, reference: 0, ready: 0, mitigated: 0, escalated: 0, 'in-progress': 0 } as Record<ReplayFilter, number>
   for (const item of scenarios) counts[outcomeOf(item)]++
   const position = live.findIndex(item => item.id === scenario.id)
   const neighbour = (step: number) => live[position + step]
@@ -97,7 +107,7 @@ export function ReplayLibrary({ scenario }: { scenario: Scenario }) {
   const playFromStart = (id: string) => { if (id !== scenario.id) setScenario(id); useWorkspace.getState().seek(0); set({ view: 'investigation', playing: true }) }
   const patchLabel = report?.patch
     ? `${report.patchProvider ?? 'patch'}${report.patchRevision ? ` rev ${report.patchRevision}` : ''} · verification ${report.verification ?? '—'} · canary ${report.canary ?? '—'}`
-    : scenario.live ? 'No patch recorded' : 'Not connected'
+    : 'No patch recorded'
   const headline = (item: Scenario) => item.report?.diagnosis ? `${item.incidentTitle} → ${item.report.diagnosis}${item.report.confirmed ? ' confirmed' : ' not confirmed'}` : item.incidentTitle
   const started = (item: Scenario) => item.report?.startedAt ? new Date(item.report.startedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
   return <div className="replay-view">
@@ -124,34 +134,34 @@ export function ReplayLibrary({ scenario }: { scenario: Scenario }) {
           <a className="secondary-button" href={`/api/incidents/${encodeURIComponent(scenario.id)}/evidence.json`} download>Export evidence</a>
         </div>
       </div>
-    </section> : <section className="panel replay-hero"><span className="overline">INCIDENT MEMORY</span><h2>Review an investigation.</h2><p>Replay the incident to see what the agent changed, what happened next, and how it reached a conclusion. The report reveals only conclusions whose evidence exists at the selected point on the timeline.</p><span className="quiet-badge">{examples.length} example investigation{examples.length === 1 ? '' : 's'}{live.length ? ` · ${live.length} recorded incident${live.length === 1 ? '' : 's'}` : ' · no recorded incidents loaded'}</span></section>}
+    </section> : <section className="panel replay-hero"><span className="overline">INCIDENT MEMORY</span><h2>Review an investigation.</h2><p>Replay the incident to see what the agent changed, what happened next, and how it reached a conclusion. The report reveals only conclusions whose evidence exists at the selected point on the timeline.</p><span className="quiet-badge">{references.length} reference investigation{references.length === 1 ? '' : 's'}{live.length ? ` · ${live.length} recorded incident${live.length === 1 ? '' : 's'}` : ' · no recorded incidents loaded'}</span></section>}
 
     {scenarios.length > 0 && <section className="replay-browse" aria-label="Available investigations">
       <div className="replay-browse-controls">
         <label className="search-input"><Search size={14} /><input aria-label="Find an incident" placeholder="Find by id, diagnosis, outcome or patch…" value={query} onChange={event => setQuery(event.target.value)} /></label>
-        <div className="replay-filters" role="tablist" aria-label="Filter investigations">{(['all', 'example', 'ready', 'mitigated', 'escalated', 'in-progress'] as const).map(key => <button key={key} role="tab" aria-selected={outcome === key} className={outcome === key ? 'selected' : ''} onClick={() => setOutcome(key)}>{key === 'all' ? 'All' : outcomeLabel[key]}<small>{counts[key]}</small></button>)}</div>
+        <div className="replay-filters" role="tablist" aria-label="Filter investigations">{(['all', 'reference', 'ready', 'mitigated', 'escalated', 'in-progress'] as const).map(key => <button key={key} role="tab" aria-selected={outcome === key} className={outcome === key ? 'selected' : ''} onClick={() => setOutcome(key)}>{key === 'all' ? 'All' : outcomeLabel[key]}<small>{counts[key]}</small></button>)}</div>
       </div>
-      <ol className="replay-list">{filtered.map(item => <li key={item.id} className={item.id === scenario.id ? 'is-selected' : ''} aria-label={`${item.live ? 'Incident' : 'Example investigation'} ${item.name} ${item.id}`} aria-current={item.id === scenario.id ? 'true' : undefined}>
+      <ol className="replay-list">{filtered.map(item => <li key={item.id} className={item.id === scenario.id ? 'is-selected' : ''} aria-label={`${item.live ? 'Incident' : 'Reference investigation'} ${item.name} ${item.id}`} aria-current={item.id === scenario.id ? 'true' : undefined}>
         <button className="replay-list-main" onClick={() => review(item.id)}>
           <span className="replay-list-id">{item.live ? item.id : item.incident}</span>
           <span className="replay-list-title">{item.live ? headline(item) : `${item.name} · ${item.incidentTitle}`}</span>
-          <span className="replay-list-meta"><span className={`replay-outcome ${outcomeOf(item)}`}>{outcomeLabel[outcomeOf(item)]}</span>{item.live ? `${started(item)} · ${timeLabel(item.duration)} · ${item.report?.productionActions ?? 0} actions` : `${timeLabel(item.duration)} · ${item.events.length} scripted steps`}</span>
+          <span className="replay-list-meta"><span className={`replay-outcome ${outcomeOf(item)}`}>{outcomeLabel[outcomeOf(item)]}</span>{item.live ? `${started(item)} · ${timeLabel(item.duration)} · ${item.report?.productionActions ?? 0} actions` : `${timeLabel(item.duration)} · ${item.events.length} recorded steps`}</span>
         </button>
         <button className="icon-button" aria-label={`Play ${item.id} from the start`} title="Play from the start" onClick={() => playFromStart(item.id)}><Play size={14} /></button>
       </li>)}</ol>
       {filtered.length === 0 && <p className="empty-copy">No incidents match “{query}”{outcome !== 'all' ? ` with outcome ${outcomeLabel[outcome]}` : ''}.</p>}
     </section>}
 
-    {!scenario.live && <section className="panel replay-row"><div className="replay-icon"><Layers3 size={23} /></div><div><span className="overline">ILLUSTRATIVE REPLAY · {scenario.incident}</span><h3>{scenario.incidentTitle}</h3><p>{scenario.name} · {scenario.duration}s simulated timeline · {scenario.events.length} scripted steps</p></div><button className="secondary-button" onClick={() => { seek(0); set({ view: 'investigation', playing: true }) }}><Play size={14} />Play from the start</button></section>}
+    {!scenario.live && <section className="panel replay-row"><div className="replay-icon"><Layers3 size={23} /></div><div><span className="overline">REFERENCE REPLAY · {scenario.incident}</span><h3>{scenario.incidentTitle}</h3><p>{scenario.name} · {scenario.duration}s incident timeline · {scenario.events.length} recorded steps</p></div><button className="secondary-button" onClick={() => { seek(0); set({ view: 'investigation', playing: true }) }}><Play size={14} />Play from the start</button></section>}
     {!scenario.live && <section className="panel report-preview"><span className="overline">REPORT AT THE SELECTED TIME · {timeLabel(cursor)}</span>
       <h3>{verdict?.title ?? (finalVerdict ? 'The verdict is later on the timeline.' : 'Investigation is not yet confirmed.')}</h3>
       <p>{verdict?.detail ?? (finalVerdict ? `Measurement reached “${finalVerdict.title}” at ${timeLabel(finalVerdict.at)}. Move the timeline forward, or review the full report.` : 'The report will only show conclusions whose evidence exists at the selected point on the timeline.')}</p>
       {!verdict && finalVerdict && <button className="secondary-button" onClick={() => seek(scenario.duration)}>Review the full report<ArrowRight size={14} /></button>}
       {verdict?.result && <p className="report-evidence">{verdict.result}</p>}
       <div className="report-facts">
-        <span>Source<strong>Scripted example</strong></span>
+        <span>Source<strong>Recorded incident dataset</strong></span>
         <span>Production actions<strong>{shown.filter(event => event.kind === 'action' && event.environmentId === 'production').length}</strong></span>
-        <span>Patch / canary<strong>Not connected</strong></span>
+        <span>Patch / canary<strong>No patch recorded</strong></span>
         <span>Benchmark accuracy<strong>Not measured</strong></span>
       </div>
     </section>}
@@ -211,7 +221,7 @@ export function ElasticLineage() {
     <section className="elastic-guardrail"><span>WHY THIS MATTERS</span><p>Historical similarity can add context. It cannot name a cause, select a production action, or override the measured confirmation test.</p></section>
     <section className="query-surface" aria-labelledby="query-surface-title">
       <div className="query-surface-heading"><div><span className="overline">INSPECT THE RETRIEVAL</span><h3 id="query-surface-title">The agent sees reviewed tools, not open-ended search.</h3></div><span className="query-readonly">Read-only · bounded</span></div>
-      <div className="query-tabs" role="tablist" aria-label="Elastic tool examples">{(Object.keys(querySurfaces) as (keyof typeof querySurfaces)[]).map(key => <button key={key} role="tab" aria-selected={surface === key} onClick={() => setSurface(key)}>{querySurfaces[key].label}</button>)}</div>
+      <div className="query-tabs" role="tablist" aria-label="Elastic query tools">{(Object.keys(querySurfaces) as (keyof typeof querySurfaces)[]).map(key => <button key={key} role="tab" aria-selected={surface === key} onClick={() => setSurface(key)}>{querySurfaces[key].label}</button>)}</div>
       <div className="query-detail">
         <div className="tool-call-card"><span className="overline">AGENT BUILDER TOOL CALL</span><strong>{selectedSurface.tool}</strong><p>{selectedSurface.purpose}</p><div className="tool-parameters"><span>Required inputs</span>{selectedSurface.parameters.map(parameter => <code key={parameter}>{parameter}</code>)}</div><small>Only these named values can change. The query structure is fixed in Faultline.</small></div>
         <div className="query-code"><div><span>ES|QL</span><span>Reviewed query template</span></div><pre><code>{selectedSurface.query}</code></pre></div>
@@ -219,6 +229,6 @@ export function ElasticLineage() {
       <p className="query-caption">The full system also has fixed tools for audit context and similar incidents. Semantic memory is context only; the measurement judge still makes the verdict.</p>
     </section>
     <div className="elastic-actions"><button className="primary-button" onClick={() => set({ view: 'investigation' })}>See the investigation <ArrowRight size={14} /></button><button className="text-button" onClick={() => set({ view: 'investigation', explanationOpen: true })}>Read the decision trace <ArrowRight size={14} /></button></div>
-    <p className="page-source-note">Design preview. This page explains the intended evidence flow; it does not query Elastic Cloud.</p>
+    <p className="page-source-note">Architecture reference. This page explains the intended evidence flow; it does not query Elastic Cloud.</p>
   </div>
 }

@@ -118,13 +118,15 @@ main{padding:28px 30px 0;max-width:1850px;margin:0 auto}
 .page-heading>.primary-button{margin-top:12px}
 h1{font-size:29px;font-weight:480;letter-spacing:-1.1px;margin:9px 0 7px;line-height:1.2}
 .page-heading p{font-size:11px;color:#6e665c;letter-spacing:.02px}
-.context-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:15px;gap:16px}
-.scenario-context,.environment-context{display:flex;align-items:center;gap:8px;color:#6e665c;font-size:10px;min-width:0}
-.scenario-context>svg{color:#6e665c}
-.scenario-context select{border:0;background:transparent;font-size:11px;font-weight:550;padding:4px 10px 4px 0;max-width:210px}
-.context-separator{height:13px;width:1px;background:#e2dad1;margin:0 2px}
-.context-type{color:#6e665c;font-size:10px}
-.environment-context select{border:1px solid #e6dfd6;border-radius:5px;padding:5px 8px;background:#fff;font-size:10px;max-width:130px}
+.context-bar{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:15px;gap:16px}
+.scenario-context{display:flex;align-items:flex-end;gap:10px;color:#6e665c;font-size:10px;min-width:0}
+.context-field{display:grid;gap:4px;min-width:0}
+.context-field>span:first-child{font-size:8px;font-weight:600;letter-spacing:.9px;text-transform:uppercase}
+.context-select{display:flex;align-items:center;gap:7px;min-width:0;border:1px solid #e6dfd6;border-radius:6px;background:#fff;padding-left:9px}
+.context-select>svg{flex:0 0 auto}
+.context-select select{border:0;background:transparent;font-size:11px;font-weight:550;padding:7px 28px 7px 0;min-height:34px;min-width:0}
+.context-type{color:#6e665c;font-size:10px;padding-bottom:10px}
+.environment-context{min-width:150px}
 .metric-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--border);background:#fff;border-radius:8px;margin-bottom:20px;padding:17px 0}
 .metric-summary{padding:0 18px;border-right:1px solid var(--border);min-width:0}
 .metric-summary:last-child{border:0}
@@ -508,7 +510,7 @@ main{padding:22px 17px 0}
 .page-heading p{font-size:10px;line-height:1.8}
 .overline{font-size:10px}
 .context-bar{gap:8px}
-.environment-context>span{display:none}
+.environment-context>span:first-child{display:none}
 .scenario-context select{max-width:165px;font-size:10px}
 .metric-strip{grid-template-columns:1fr 1fr;row-gap:18px;padding:15px 0}
 .metric-summary:nth-child(2){border-right:0}
@@ -1023,7 +1025,7 @@ main { padding: 22px 22px 0; }
 .is-spatial-workspace .breadcrumb>span,
 .is-spatial-workspace .case-id,
 .is-spatial-workspace .context-type,
-.is-spatial-workspace .environment-context>span,
+.is-spatial-workspace .environment-context>span:first-child,
 .is-spatial-workspace .phase-disclosure>summary,
 .is-spatial-workspace .phase-disclosure>summary>span,
 .is-spatial-workspace .segmented button,
@@ -1070,20 +1072,21 @@ main { padding: 22px 22px 0; }
 .app-shell .icon-button { color: #bfc3ba; }
 .app-shell .icon-button:hover { background: #3c4139; color: #edeeec; }
 .app-shell .context-bar { color: #c4c7c0; }
-.app-shell .scenario-context, .app-shell .scenario-context>svg { color: #b3b8ae; }
+.app-shell .scenario-context { color: #b3b8ae; }
+.app-shell .context-field>span:first-child { color:#8f978c; }
+.app-shell .context-select { border-color:#4a5147; background:#2b312d; color:#b3b8ae; transition:border-color 160ms ease,background-color 160ms ease; }
+.app-shell .context-select:hover { border-color:#66705f; background:#343b35; }
+.app-shell .context-select:focus-within { outline:2px solid #b7c396; outline-offset:2px; border-color:#b7c396; }
 .app-shell .context-bar select {
   appearance: none; -webkit-appearance: none; color-scheme: dark;
-  min-height: 34px; padding: 6px 30px 6px 11px; border: 1px solid #4a5147; border-radius: 6px;
-  background: #2b312d url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23bcc3b7' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 10px center;
+  min-height: 34px; padding: 6px 30px 6px 0; border: 0; border-radius: 6px;
+  background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23bcc3b7' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 10px center;
   color: #e6e8e2; font-size: 11px; font-weight: 500; line-height: 1.4; text-overflow: ellipsis;
-  transition: border-color 160ms ease, background-color 160ms ease;
 }
-.app-shell .context-bar select:hover { border-color: #66705f; background-color: #343b35; }
-.app-shell .context-bar select:focus-visible { outline: 2px solid #b7c396; outline-offset: 2px; border-color: #b7c396; }
+.app-shell .context-bar select:focus-visible { outline:0; }
 .app-shell .context-bar select option { background: #2b312d; color: #e6e8e2; }
 .app-shell .scenario-context select { max-width: 230px; }
-.app-shell .context-type, .app-shell .environment-context>span { color: #adb3a8; }
-.app-shell .context-separator { background: #4c5248; }
+.app-shell .context-type { color: #adb3a8; }
 .app-shell .environment-context select { max-width: 170px; }
 .app-shell .phase-disclosure>summary, .app-shell .phase-disclosure>summary>span { color: #b0b5ab; }
 .app-shell .phase-disclosure>summary:hover { color: #eaebe8; }
@@ -1516,7 +1519,7 @@ main { padding: 22px 22px 0; }
 .replay-list-meta { font-size:12px; color:var(--muted); display:inline-flex; gap:8px; align-items:center; white-space:nowrap; }
 .replay-outcome { font-size:11px; padding:2px 7px; border-radius:4px; border:1px solid var(--border); color:var(--muted); }
 .replay-outcome.ready { color:#b7c396; border-color:#b7c396; }
-.replay-outcome.example { color:#aeb8d4; border-color:#7682a3; }
+.replay-outcome.reference { color:#aeb8d4; border-color:#7682a3; }
 .replay-outcome.mitigated { color:#edb18d; border-color:#edb18d; }
 .replay-outcome.escalated { color:#e0a0a0; border-color:#e0a0a0; }
 @media(max-width:800px) { .replay-list-main { grid-template-columns:1fr; gap:4px; } .replay-list-title,.replay-list-meta { white-space:normal; }.replay-list-meta { flex-wrap:wrap; } }

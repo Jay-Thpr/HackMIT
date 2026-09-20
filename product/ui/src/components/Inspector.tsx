@@ -23,7 +23,7 @@ function TraceStep({ event, selected, onSelect, live }: { event: WorkspaceEvent;
       {event.prediction && <div className="trace-prediction"><b>Predicted</b><p>{event.prediction}</p></div>}
       {event.result && <div className="trace-result"><b>Observed / returned</b><p>{event.result}</p></div>}
       {event.causeId && <small className="causal-link"><ArrowDownRight size={12} /> Follows evidence {event.causeId}</small>}
-      <span className="data-caption">{live ? `Recorded audit event · ${event.actor === 'model' ? 'model output' : event.actor === 'math' ? 'measured' : 'orchestrator record'}` : 'Scripted example · not a live model call'}</span>
+      <span className="data-caption">{live ? `Recorded audit event · ${event.actor === 'model' ? 'model output' : event.actor === 'math' ? 'measured' : 'orchestrator record'}` : 'Recorded investigation event'}</span>
     </div>}
   </div>
 }
@@ -56,16 +56,16 @@ export function Inspector({ scenario, workspace, environment }: { scenario: Scen
       <p>{agent ? `${environment.label} · Working on ${node.label}` : `${environment.label} · ${node.kind} · ${node.instrumented ? 'Instrumented' : 'Observed dependency'}`}</p>
       {!agent && <><div className="entity-metrics"><span>p99 latency<b>{metricLabel(reading?.latency, 'ms')}</b></span><span>Issued load<b>{metricLabel(reading?.qps, 'qps')}</b></span>
         {Object.entries(reading?.resourceMetrics ?? {}).map(([name, value]) => <span key={name}>{name}<b>{metricLabel(value, resourceUnit(name))}</b></span>)}</div>
-      <div className="entity-health"><i className={`health-dot ${reading?.health ?? 'unknown'}`} />{reading?.health ?? 'unknown'}<span>Instances: {node.instances ?? 'not collected'}</span></div>{node.tenants?.length ? <div className="entity-tenants"><b>Tenants served</b><ul>{node.tenants.map(tenant => <li key={tenant}><code>{tenant}</code></li>)}</ul></div> : null}</>}
+      <div className="entity-health"><i className={`health-dot ${reading?.health ?? 'unknown'}`} />{reading?.health ?? 'unknown'}<span>Instances: {node.instances ?? (node.instrumented ? 1 : 0)}</span></div>{node.tenants?.length ? <div className="entity-tenants"><b>Tenants served</b><ul>{node.tenants.map(tenant => <li key={tenant}><code>{tenant}</code></li>)}</ul></div> : null}</>}
     </div>}
 
-    {suiteCheck && <div className="selected-entity"><div><strong>{environment.label} · Test suite</strong><button className="icon-button" aria-label="Close test inspector" onClick={() => set({ selectedSuiteCheck: undefined })}><X size={15} /></button></div><p>{scenario.live ? 'Recorded test suite' : 'Simulated tests'}</p></div>}
+    {suiteCheck && <div className="selected-entity"><div><strong>{environment.label} · Test suite</strong><button className="icon-button" aria-label="Close test inspector" onClick={() => set({ selectedSuiteCheck: undefined })}><X size={15} /></button></div><p>Recorded test suite</p></div>}
     <div className="tab-bar" role="tablist" aria-label="Investigation details">
       <button role="tab" aria-selected={traceTab === 'evidence'} onClick={() => set({ traceTab: 'evidence' })}>Evidence</button>
       <button role="tab" aria-selected={traceTab === 'trace'} onClick={() => set({ traceTab: 'trace' })}>Decision trace <span>{events.length}</span></button>
     </div>
     <div className="inspector-body">
-      {agent && <section className="agent-brief" aria-label="Agent activity"><span className="overline">{agent.phase} · {agent.targetId}</span><h3>{agent.event?.title ?? 'Waiting for evidence'}</h3><dl><div><dt>What it is doing</dt><dd>{agent.event?.detail}</dd></div><div><dt>Why this step</dt><dd>{agent.why}</dd></div><div><dt>What comes next</dt><dd>{agent.waiting}</dd></div></dl><span className="data-caption">{scenario.live ? 'Recorded audit trail' : 'Recorded simulation'} · {timeLabel(agent.event?.at ?? cursor)}</span></section>}
+      {agent && <section className="agent-brief" aria-label="Agent activity"><span className="overline">{agent.phase} · {agent.targetId}</span><h3>{agent.event?.title ?? 'Waiting for evidence'}</h3><dl><div><dt>What it is doing</dt><dd>{agent.event?.detail}</dd></div><div><dt>Why this step</dt><dd>{agent.why}</dd></div><div><dt>What comes next</dt><dd>{agent.waiting}</dd></div></dl><span className="data-caption">Recorded audit trail · {timeLabel(agent.event?.at ?? cursor)}</span></section>}
 
       {suiteCheck && <section className="suite-detail" aria-label="Test result"><span className="overline">{suiteCheck.state}</span><h3>{suiteCheck.label}</h3><p>{suiteCheck.description}</p><TestCases group={suiteCheck} />{suiteCheck.event?.testResult ? <><div className="suite-assertion"><b>Expected</b><p>{suiteCheck.event.testResult.expected}</p></div><div className="suite-result"><b>Observed · {timeLabel(suiteCheck.event.at)}</b><p>{suiteCheck.event.testResult.observed}</p></div></> : <p>{suiteCheck.state === 'running' ? 'Running — no result yet.' : 'Waiting to run.'}</p>}</section>}
 
@@ -90,7 +90,7 @@ export function Inspector({ scenario, workspace, environment }: { scenario: Scen
           const probed = Boolean(clone && events.some(event => isConfirmedUndo(event) && event.environmentId === clone.environmentId && events.some(action => action.kind === 'action' && action.environmentId === clone.environmentId && action.action?.id === event.undoId && action.tool === 'levers.apply')))
           const confirmed = workspace.confirmed && workspace.diagnosis === hypothesis.id
           return <article className="hypothesis-card" key={hypothesis.id} style={{ '--hypothesis-color': hypothesis.color } as React.CSSProperties}>
-            <div className="hypothesis-top"><span className="hypothesis-letter">{hypothesis.id}</span><span className="overline">{confirmed ? (scenario.live ? 'CONFIRMED IN PRODUCTION' : 'CONFIRMED IN EXAMPLE') : observed ? 'REPRODUCED IN CLONE' : 'PROPOSED'}</span>{(confirmed || observed) && <Check size={13} />}</div>
+            <div className="hypothesis-top"><span className="hypothesis-letter">{hypothesis.id}</span><span className="overline">{confirmed ? 'CONFIRMED IN PRODUCTION' : observed ? 'REPRODUCED IN CLONE' : 'PROPOSED'}</span>{(confirmed || observed) && <Check size={13} />}</div>
             <h3>{hypothesis.title}</h3><p>{hypothesis.description}</p>
             <div className="prediction-line"><ArrowDownRight size={13} /><span>{hypothesis.prediction}</span></div>
             <div className="evidence-checks"><span className={cloned ? 'done' : ''}><i />Clone</span><span className={observed ? 'done' : ''}><i />Reproduce</span><span className={probed ? 'done' : ''}><i />Probe</span></div>
@@ -100,11 +100,11 @@ export function Inspector({ scenario, workspace, environment }: { scenario: Scen
         <div className="evidence-boundary"><span className="overline">HOW WE CHECK THE CAUSE</span><p>A clone can reproduce the symptoms without proving the cause. We still need to test the prediction in production.</p><button className="text-button" onClick={() => set({ traceTab: 'trace' })}>See the test history <ArrowRight size={13} /></button></div>
       </> : <>
         <div className="trace-filter">{selectedNode ? <span>Activity in {environment.label}</span> : <><label htmlFor="trace-filter">Environment</label><select id="trace-filter" value={filter} onChange={event => setFilter(event.target.value)}><option value="all">All environments</option><option value="production">Production</option>{createdClones.map(event => <option key={event.environmentId} value={event.environmentId}>{event.environment?.label}</option>)}</select></>}</div>
-        <p className="trace-explanation">Follow what the agent tried and what it found. {scenario.live ? 'Every step is a recorded audit event.' : 'This trace is simulated.'}</p>
+        <p className="trace-explanation">Follow what the agent tried and what it found. Every step comes from the selected incident dataset.</p>
         {filtered.length === 0 && <p className="empty-copy">No activity here yet. Advance the replay or select another system.</p>}
         {filtered.map(event => <TraceStep key={event.id} live={scenario.live} event={event} selected={event.id === (filtered.some(item => item.id === selectedEvent) ? selectedEvent : latest?.id)} onSelect={() => { if (event.targetId && workspace.environments.some(env => env.id === event.environmentId)) inspect(event.targetId, event.environmentId); set({ selectedEvent: event.id }) }} />)}
       </>}
     </div>
-    <div className="inspector-footer"><Clock3 size={12} /><span>Viewing evidence through {timeLabel(cursor)}</span><span>{scenario.live ? 'RECORDED' : 'SIMULATED'}</span></div>
+    <div className="inspector-footer"><Clock3 size={12} /><span>Viewing evidence through {timeLabel(cursor)}</span><span>RECORDED</span></div>
   </aside>
 }

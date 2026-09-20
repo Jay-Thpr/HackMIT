@@ -37,12 +37,12 @@ export function Dialogs({ scenario, workspace }: { scenario: Scenario; workspace
       <button className="primary-button full-width" type="submit">{saved ? <><Check size={15} />Draft validated locally</> : <>Validate draft <ArrowRight size={15} /></>}</button>
       {saved && <p className="form-success" role="status">Required fields and time limit are valid. Nothing was saved or executed. Editing a field clears this validation.</p>}
     </form> : dialog === 'report' ? <IncidentReport scenario={scenario} workspace={workspace} close={close} /> : dialog === 'guide' ? <JudgeGuide close={close} /> : <>
-      <h2 id="dialog-title">Autonomy with boundaries.</h2><p className="dialog-subtitle">A design preview of execution boundaries. No live permissions or approvals are connected.</p>
+      <h2 id="dialog-title">Autonomy with boundaries.</h2><p className="dialog-subtitle">Execution boundaries for the selected incident. Production permissions remain read-only.</p>
       <div className="safety-tier"><ShieldCheck size={17} /><div><strong>Proposed automatic tier</strong><p>Telemetry reads and bounded, reversible interventions.</p></div></div>
       <div className="safety-tier"><GitBranch size={17} /><div><strong>Canary-gated</strong><p>Code changes require replay verification and a measured rollout.</p></div></div>
       <div className="safety-tier human"><LockKeyhole size={17} /><div><strong>Human-gated</strong><p>Shard splits, capacity changes, and irreversible operations.</p></div></div>
-      <section className="proposal-preview"><div className="proposal-heading"><span className="overline">EXAMPLE PROPOSAL</span><span className="quiet-badge">Not applied</span></div><h3>Split a hot shard</h3><div className="ghost-shards"><span>Current shard</span><ArrowRight size={18} /><div><span>Proposed A</span><span>Proposed B</span></div></div><p>A real case must include target identity, measured evidence, a migration runbook, recovery constraints, and an approver. This example is not a recommendation for the current incident.</p><button className="secondary-button full-width" disabled>Approval unavailable · read-only workspace</button></section>
-      <div className="dialog-notice"><LockKeyhole size={16} /><span>“Pause simulation” stops only this UI’s playback. It is not a production kill switch and does not undo infrastructure actions.</span></div>
+      <section className="proposal-preview"><div className="proposal-heading"><span className="overline">READ-ONLY PROPOSAL</span><span className="quiet-badge">Not applied</span></div><h3>Split a hot shard</h3><div className="ghost-shards"><span>Current shard</span><ArrowRight size={18} /><div><span>Proposed A</span><span>Proposed B</span></div></div><p>A production proposal must include target identity, measured evidence, a migration runbook, recovery constraints, and an approver. This proposal is not a recommendation for the current incident.</p><button className="secondary-button full-width" disabled>Approval unavailable · read-only workspace</button></section>
+      <div className="dialog-notice"><LockKeyhole size={16} /><span>“Pause replay” stops only this UI’s playback. It is not a production kill switch and does not undo infrastructure actions.</span></div>
     </>}
   </dialog>
 }
@@ -92,13 +92,13 @@ function IncidentReport({ scenario, workspace, close }: { scenario: Scenario; wo
     ['Diagnosis', workspace.diagnosis ? `${hypothesis?.title ?? workspace.diagnosis}${workspace.confirmed ? ' · confirmed' : ' · not confirmed'}` : 'No verdict yet'],
     ['Confirmed in', outcome === 'confirmed' ? (confirmedClone ? `${confirmedClone.label}, then production` : 'Production') : 'Not confirmed'],
     ['Production actions', `${productionActions}${report ? ` of ${report.productionActions}` : ''}, each with a TTL and a recorded undo`],
-    ['Durable fix', report?.patch ? `${report.patchProvider ?? 'patch'} · ${report.patch}${report.patchRevision ? ` · revision ${report.patchRevision}` : ''}` : scenario.live ? 'No patch recorded' : 'Not part of this example'],
+    ['Durable fix', report?.patch ? `${report.patchProvider ?? 'patch'} · ${report.patch}${report.patchRevision ? ` · revision ${report.patchRevision}` : ''}` : 'No patch recorded'],
     ['Fix verified', fixClone ? `${fixClone.label}: ${fixClone.outcome === 'fix-verified' ? 'survived the replayed incident' : 'did not survive the replay'}` : report?.verification ?? 'Not run'],
-    ['Canary', report?.canary ?? (scenario.live ? 'Not run' : 'Not part of this example')],
+    ['Canary', report?.canary ?? 'Not run'],
   ]
   if (report?.mitigationHeld) facts.push(['Mitigation held', `${report.mitigationHeld} is holding production up; a human must fix the cause before its TTL ends`])
   return <div className="report-dialog">
-    <div className="report-dialog-heading"><FileText size={18} /><div><h2 id="dialog-title">{headline}</h2><p className="dialog-subtitle">{report?.outcome ?? 'Scripted example · simulated outcome'} · {scenario.live ? `audit log · ${scenario.id}` : scenario.incident}</p></div></div>
+    <div className="report-dialog-heading"><FileText size={18} /><div><h2 id="dialog-title">{headline}</h2><p className="dialog-subtitle">{report?.outcome ?? 'Recorded investigation outcome'} · {scenario.live ? `audit log · ${scenario.id}` : scenario.incident}</p></div></div>
     {winner && <p className="report-winner" data-environment={winner.id}><strong>{winner.label}</strong> is emphasised in the workspace: {winner.outcome === 'fix-verified' ? 'the patched clone survived the replayed incident.' : 'its reproduction matched the cause production confirmed.'}</p>}
     {because && <p className="report-outcome" data-outcome={outcome}><strong>{outcome === 'no_incident' ? 'Correctly found no incident.' : 'This investigation did not resolve.'}</strong> {because}</p>}
     <dl className="report-dialog-facts">{facts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>

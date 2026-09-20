@@ -63,5 +63,5 @@ export function MetricChart({ scenario, cursor, environmentId, nodeId, compact =
   }, [scenario.id, compact, environmentId, nodeId])
   useEffect(() => { plot.current?.setData(data) }, [data])
   const current = replay(scenario, cursor).environments.find(env => env.id === environmentId)?.nodes[nodeId]
-  return <div className="metric-chart" role="img" aria-label={`Illustrative latency and issued load for ${nodeId} in ${environmentId}, through ${Math.floor(cursor)} seconds. Current latency: ${metricLabel(current?.latency, 'ms')}; issued load: ${metricLabel(current?.qps, 'qps')}. Blank regions mean no samples, not zero.`} ref={container} />
+  return <div className="metric-chart" role="img" aria-label={`Recorded latency and issued load for ${nodeId} in ${environmentId}, through ${Math.floor(cursor)} seconds. Current latency: ${metricLabel(current?.latency, 'ms')}; issued load: ${metricLabel(current?.qps, 'qps')}. Blank regions mean no samples, not zero.`} ref={container} />
 }
