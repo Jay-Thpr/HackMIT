@@ -64,3 +64,11 @@ Sandbox control endpoints for real levers (Owner 1 serves, Owner 4 calls) are de
 - Every lever action must be reversible and carry a TTL. Action budget: 5 per incident, then page a human.
 - LLM calls use the OpenAI API (sponsor requirement). Log notable Codex usage for the Devpost write-up.
 - Only measured numbers go on slides; say "handles performance and availability incidents", never "handles everything".
+
+## Product UI prototype
+
+`product/ui/` is a standalone React/TypeScript + React Three Fiber design prototype with explicitly simulated data. It does not connect to the sandbox or execute infrastructure actions. The agreed design is in PRD.md under "Product UI: spatial investigation workspace".
+
+- From `product/ui/`: `npm ci`, then `npm run dev -- --port 4173 --strictPort` (tested with Node 24).
+- Verification: `npm run build` (includes TypeScript), `npm test` (model/layout), and `npm run test:browser` (Playwright, currently configured for installed Google Chrome; starts or reuses the local server on port 4173).
+- Keep frontend changes inside `product/ui/`; runtime Product adapters are being developed independently. Never expose backend credentials in frontend environment variables. Generated build, browser reports, and screenshots are ignored.
