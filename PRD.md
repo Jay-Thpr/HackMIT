@@ -13,6 +13,15 @@ Faultline is an autonomous experimental debugger for distributed systems. It plu
 3. **Aimed chaos, then one production test.** Every fault Faultline injects is a bet two theories disagree on. The clones pick the gentlest production probe that separates them; it runs for seconds, with a TTL, and measurement against noise decides. If nothing passes its own confirmation test, Faultline says *none of the above* and pages a human.
 4. **Patch, attack the patch, ship.** Reversible mitigation stays in place; Devin writes the durable fix; in a fresh clone Faultline replays the reproduced incident and an investigator runs *educated chaos* against the patch, trying to break it. Only a fix that survives goes to a self-verified 5 % canary. Irreversible remediations (split a hot shard, resize a tier) are never done autonomously: Faultline writes the case and a human signs.
 
+**Progress update (2026-09-20 ~04:00; v6.2, direction change for the Brain's reasoning layer, no new subsystem):**
+
+- **Investigators are agentic and live.** Stage 4a no longer runs a fixed recipe table. `faultline_brain.investigator_agent.InvestigatorAgent` (OpenAI strict structured output) owns one hypothesis, reads the C6 catalog, the production fingerprint, the healthy baseline and its own attempt history, and proposes `{action, params, ttl_s, observe_after_s, predicted directions, rationale, stop}`; `AgenticCloneInvestigator` executes apply → observe → similarity → undo → reset under a budget (default 3), then recovery and the production-probe prediction check on the attempt that reproduced. Every hypothesis triage produces is investigated (no "no recipe" skip). Qualifying live run `live-storm-035001` (`integration/runs/audit-live-storm-035001.jsonl`): H_meta and H_db both reproduced and recovered in clones, H_meta survives (7/8 predicted directions), H_db falsified (1/5), production verdict `H_meta confirmed`, no clone left behind. Attempts are in the stage-4 audit payload (`attempts`) for the investigator panels. **DoD item 11 done.**
+- **Evidence calibration fixed.** `similarity()` builds the noise reference from the full healthy series, applies absolute σ floors per metric family (`_ms` 10, `qps` 5, `retry_ratio` 0.25, other rates/ratios 0.05), compares only 8 key metrics, and both similarity and prediction pass at ≥ 75 % of measured metrics. Before this every live investigation reported `survives=false` (single-window σ ≈ 0 on near-zero rates).
+- **Reproduction recipes persist.** Each reproduction appends `{incident_id, hypothesis_id, recipe, attempts, ts}` to `product/state/recipes.jsonl` (replay-suite input, D3).
+- **Seed fallback, labelled.** If the LLM exhausts its budget without reproducing, one retry runs the documented `SeedInvestigator` recipe (INTEGRATION.md reproduction recipes) in a fresh clone; its attempts are kept and marked. In `live-storm-035001` H_meta needed it (LLM tried `retry_policy`×2, `db_capacity`; seed `db_latency 800/20` hit 8/8); in earlier runs the LLM reproduced H_meta unaided (`db_latency` 2000–5000 ms). Say "seeded recipe" on stage if it shows.
+- **Brain reasoning layer → OpenAI behind Elastic Agent Builder (decided).** See "LLM vs. measurement": the Brain's LLM roles (triage, investigator proposals, report explanation) are to run as an OpenAI model behind Elastic Cloud's Agent Builder, reasoning over the context Faultline already stores in Elasticsearch through closed read-only tools. Direct OpenAI calls stay as the fallback path. Measurement still decides.
+- **Open blockers found live:** (1) stage 6b `patch_ref` clones fail with `opentelemetry-instrument: not found` — the fallback branch `faultline/fallback-retry-cap` predates the OTel `requirements.txt`; rebase it (or have the lab overlay only `app.py` onto the production image). (2) Verification hit a lab 503 while investigation clones still held slots; destroy investigator clones before 6b or run with `--max-clones 1`. (3) Patch-attack investigator (B3) not built; blocked on (1).
+
 What changed in v6.1 (2026-09-19 15:45; refinements, no new subsystem):
 
 - **Incident replay suite.** Every resolved incident leaves a durable artifact: the C6 recipe that reproduced it in a clone. Future patches must survive the whole suite before they may canary. Faultline's incident history becomes a regression suite for the class of failure it just handled.
@@ -168,6 +177,8 @@ observe → choose experiment → predict outcome → execute in clone → measu
 
 Experiments are chosen because hypotheses predict different outcomes for them, not as random chaos testing.
 
+*Status:* built and live (`InvestigatorAgent` + `AgenticCloneInvestigator`, `faultline/brain/src/faultline_brain/investigator_agent.py`; product wiring in `LabInvestigation`). Budget 3 attempts per hypothesis, clone reset between attempts, deterministic seed fallback labelled in the attempt history.
+
 **Evidence rules** (what counts; judged by math, not the LLM):
 
 1. **Reproduces:** the hypothesized cause, injected into a clean clone, produces a fingerprint within noise of production.
@@ -265,6 +276,15 @@ The LLM proposes and explains; measurement decides. This keeps diagnoses checkab
 | Predictions for the production probe | Measured in clones (LLM fallback if no clone ran) |
 | Mitigation choice, Devin request, report | LLM + Devin |
 
+**Where the LLM runs (v6.2 decision): OpenAI behind Elastic Cloud Agent Builder.** Every LLM job above is a *reasoning-over-context* job, and the context already lives in Elasticsearch: `faultline-fingerprints` (C1, production and per-clone), `faultline-audit` (C4: experiments, verdicts, actions), reproduction recipes, similar past incidents, and the raw OTel traces. So the Brain's model should sit behind Elastic Agent Builder as an OpenAI `chat_completion` inference endpoint (`faultline-openai-investigation` already exists, see `faultline_brain.elastic_investigation`), reasoning over that context through **closed, parameterized, read-only tools** (`faultline.incident_timeline`, `faultline.clone_vs_production`, `faultline.similar_incidents`, `faultline.incident_context`) rather than over a JSON blob we hand-assemble per call. Rules that do not change:
+
+- The agent proposes and explains; C2 strict schemas still validate the output and the noise-model judge still decides. An Agent Builder response that is not a valid `TriageDraft` / `LabProposal` is rejected exactly like a direct OpenAI response.
+- No generic index-search tool, ever: the tool list is the fairness boundary (no C5/controller documents, no world labels, no trigger timing). `assert_agent_boundary()` enforces it.
+- Direct `OpenAI()` calls (`triage.py`, `investigator_agent.py`) remain the fallback when Agent Builder or Elastic Cloud is unavailable; same prompts, same schemas.
+- Rollout order: (1) report explanation (already read-only), (2) triage with `similar_incidents` in the context, (3) investigator proposals with `clone_vs_production` in the loop. Each step is behind a flag; the live loop must keep passing on the direct path first.
+
+Sponsor story: Elastic is the memory and the retrieval surface, OpenAI is the reasoning, Faultline's math is the verdict.
+
 **Prediction schema (per hypothesis × experiment):**
 
 ```json
@@ -330,12 +350,12 @@ Docker Compose runs the target system and an OpenTelemetry Collector. **Elastic 
 | --- | --- |
 | Telemetry adapter | `/stats` deltas → per-window C1 fingerprint (p50/p99, QPS, errors, retry ratio, DB query time), persisted to `faultline-fingerprints`; ES Query DSL + ES\|QL for history, similarity and the timeline |
 | Detector | SLO threshold alert |
-| Triage | OpenAI call: fingerprint → hypotheses + predictions (schema above) |
+| Triage | OpenAI call: fingerprint → hypotheses + predictions (schema above); target: OpenAI behind Elastic Agent Builder reasoning over stored incident context (v6.2), direct call as fallback |
 | Planner + judge | Noise model, lever ranking, support update, confirmation check |
 | Action adapter | Envoy admin/config, config endpoints, compose commands; each with undo |
 | Code adapter | Devin API session, poll, pull branch, build v2, canary |
 | Clone adapter | C6 client: create/reset/destroy clones, run lab actions, replay workload |
-| Investigators | One agent per hypothesis running the investigator loop in its clone |
+| Investigators | One agent per hypothesis running the investigator loop in its clone (**built, live**: `InvestigatorAgent` proposes C6 actions with predictions; `AgenticCloneInvestigator` measures; same Agent Builder target as triage) |
 | Orchestrator | State machine for the 8 stages; launches clone investigations; routes Devin patches through clone verification; audit log in Elasticsearch |
 | CLI | `faultline watch`, `investigate`, `experiment`, `report` |
 | UI | Latency/load chart, hypotheses + evidence panels, planner candidate table, audit log, live investigator/clone panels |
@@ -482,7 +502,7 @@ Build the core loop to 100% before any layer; the plan assumes 4 people and a Su
 | --- | --- | --- |
 | 1 Sandbox + storm | Services, Envoy, load generator, fault controller, storm gate | **The lab:** clone runtime (isolated Compose replicas), create/reset/destroy lifecycle, workload/incident replay, reproducible fault states, C6 lab actions (retry/timeout, load, DB latency/capacity, CPU, batch pause, restart/kill), patched-version slot in clones |
 | 2 Telemetry + Elastic | OTel, Collector, Elasticsearch, fingerprint queries, audit log store | ✅ Clone id on all telemetry, ✅ per-clone fingerprints, ✅ clone vs. production fingerprint comparison, ✅ experiment-history storage and queries; open: OTel → Elastic Cloud, reproduction-similarity metric, similar-incident search surfaced at triage |
-| 3 Brain | OpenAI triage and predictions, noise model, planner, judge, benchmark runner | **The scientist:** investigator agents (one per hypothesis), clone experiment selection, reproduction and falsification scoring, stopping rules, measured predictions for the production probe, clone arm in the benchmark; *v6.1:* reproduction recipes, patch-attack investigator |
+| 3 Brain | OpenAI triage and predictions, noise model, planner, judge, benchmark runner | **The scientist:** ✅ investigator agents (one per hypothesis), ✅ clone experiment selection, ✅ reproduction and falsification scoring, ✅ stopping rules (budget + `stop`), ✅ measured predictions for the production probe, clone arm in the benchmark; *v6.1:* ✅ reproduction recipes (`recipes.jsonl`), patch-attack investigator (open); *v6.2:* move the LLM roles behind Elastic Agent Builder (OpenAI inference endpoint + read-only context tools) |
 | 4 Product | Orchestrator, action and code adapters, Devin + canary, CLI, UI, demo | Launch clone investigations, C6 clone adapter, live investigator panels, send diagnosis + reproduction to Devin, route the patch through clone verification before the production canary; *v6.1:* replay-suite store, planner candidate table in the UI, counterexample back to Devin |
 
 **Principle:** Owner 1 exposes capabilities (C6); Owner 3 decides when and why to use them.
@@ -541,7 +561,7 @@ The project is done when a judge watching the demo can see all thirteen of these
 8. The same experiment gives the opposite answer on the degraded-DB world.
 9. A Devin patch ships through a canary that Faultline verifies itself.
 10. A benchmark table shows experiments beating passive-only and LLM-only on ambiguous incidents.
-11. Two investigators each reproduce their hypothesis in a clean clone and measure its response to the retry cap before production is touched.
+11. Two investigators each reproduce their hypothesis in a clean clone and measure its response to the retry cap before production is touched. ✅ *(`live-storm-035001`: both reproduced and recovered; H_meta 7/8 directions, H_db 1/5.)*
 12. The Devin patch survives the incident replay suite and an investigator's attempt to break it in a clone before its canary.
 13. Kibana shows the raw OTel traces of the incident the demo just diagnosed, tagged production vs. clone, next to the C1/C4 indices Faultline wrote.
 

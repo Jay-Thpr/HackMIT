@@ -323,3 +323,122 @@ def test_reset_failure_during_cleanup_keeps_the_evidence():
     assert by_id["H_meta"].prediction_total is None and "not measured" in by_id["H_meta"].detail
     assert by_id["H_meta"].survives  # reproduction + recovery stand; the probe is simply unmeasured
     assert sum(e.startswith("destroy") for e in lab.events) == 2
+
+
+def _agent_attempt(action="db_latency", reproduced=False):
+    from faultline_brain import (
+        AttemptRecord,
+        LabParams,
+        LabProposal,
+        MetricDirection,
+        SimilarityEvidence,
+    )
+
+    proposal = LabProposal(
+        action=action,
+        params=LabParams(
+            extra_ms=800, capacity_qps=None, service=None, cpus=None,
+            max_retries=None, timeout_ms=None,
+        ),
+        ttl_s=20,
+        observe_after_s=10,
+        predicted=[MetricDirection(metric="db.qps", direction="up")],
+        rationale="seeded guess",
+        stop=False,
+        stop_reason="",
+    )
+    return AttemptRecord(proposal, SimilarityEvidence(10, 4, 1.5, reproduced), 1, 0, reproduced)
+
+
+def _agent_result(attempts, evidence=None, clone_id="c-1"):
+    from faultline_brain import AgentInvestigationEvidence
+
+    return AgentInvestigationEvidence(list(attempts), evidence, None, None, clone_id)
+
+
+def _stub_agentic(monkeypatch, script):
+    """Replace AgenticCloneInvestigator: records each construction and replays `script`."""
+    import faultline_product.adapters.investigate as investigate_module
+
+    instances = []
+
+    class StubAgentic:
+        def __init__(self, lab, observe, agent, *, budget, wait):
+            self.agent = agent
+            self.budget = budget
+            self.investigate_calls = 0
+            instances.append(self)
+
+        def investigate(self, hypothesis, spec, production_incident, healthy, **kwargs):
+            self.investigate_calls += 1
+            return script.pop(0)
+
+    monkeypatch.setattr(investigate_module, "AgenticCloneInvestigator", StubAgentic)
+    return instances
+
+
+def _agent_investigation(agent):
+    clock = FixtureClock(T0)
+    return LabInvestigation(
+        FakeLab(),
+        telemetry_factory=lambda clone, incident_id: ScriptedCloneTelemetry([], []),
+        levers_factory=lambda clone: RecordingLevers(),
+        sleep=clock.sleep,
+        clock=clock,
+        max_clones=1,  # sequential: the stubbed investigator's script stays deterministic
+        agent=agent,
+        recipe_sink=lambda record: None,
+    )
+
+
+def test_agent_miss_falls_back_to_seeded_investigator(monkeypatch):
+    from faultline_brain import SeedInvestigator
+
+    bundle = load_fixture("storm")
+    series = _series()
+    healthy, incident = series[0], series[12]
+    script = [
+        _agent_result([_agent_attempt(), _agent_attempt()]),  # H_meta agent misses twice
+        _agent_result([_agent_attempt()]),                    # H_meta seeded fallback
+        _agent_result([_agent_attempt()]),                    # H_db agent misses
+        _agent_result([_agent_attempt()]),                    # H_db seeded fallback
+    ]
+    instances = _stub_agentic(monkeypatch, script)
+
+    class NonSeedAgent:
+        pass
+
+    results = _agent_investigation(NonSeedAgent()).investigate(
+        "inc-6", bundle.triage, incident, [healthy], bundle.experiment
+    )
+
+    # each hypothesis: agent result + one seeded retry in a fresh investigator
+    assert [len(r.attempts) for r in results] == [3, 2]
+    assert all(not r.reproduced for r in results)
+    assert "did not reproduce" in results[0].detail
+    assert len(instances) == 4
+    assert isinstance(instances[0].agent, NonSeedAgent)
+    assert isinstance(instances[1].agent, SeedInvestigator)
+    assert instances[1].budget == 1
+    assert isinstance(instances[3].agent, SeedInvestigator)
+    assert all(i.investigate_calls == 1 for i in instances)
+
+
+def test_seed_investigator_gets_no_fallback(monkeypatch):
+    from faultline_brain import SeedInvestigator
+
+    bundle = load_fixture("storm")
+    series = _series()
+    healthy, incident = series[0], series[12]
+    script = [_agent_result([_agent_attempt()]), _agent_result([_agent_attempt()])]
+    instances = _stub_agentic(monkeypatch, script)
+
+    results = _agent_investigation(SeedInvestigator()).investigate(
+        "inc-7", bundle.triage, incident, [healthy], bundle.experiment
+    )
+
+    # a seed agent is already the baseline: one investigator per hypothesis, no retry
+    assert len(instances) == 2
+    assert all(i.investigate_calls == 1 for i in instances)
+    assert [len(r.attempts) for r in results] == [1, 1]
+    assert all(not r.reproduced for r in results)
