@@ -93,6 +93,9 @@ export interface WorkspaceEvent {
 export interface Scenario {
   id: string
   live?: boolean  // built from a real audit log by the Product API, not a scripted example
+  // 'api' when the Product API served this incident and can serve its evidence bundle too.
+  // Anything else exports by serialising the events the page is already displaying.
+  source?: 'api' | 'local'
   complete?: boolean  // live only: the run has written its report (false while it is still happening)
   now?: number  // live only: wall-clock position on the replay axis when the API built this
   report?: {  // live only: what the audit log recorded for stages 5-8
@@ -287,6 +290,13 @@ export function replay(scenario: Scenario, time: number): WorkspaceState {
     winner = verified.at(-1)?.id ?? environments.find(env => env.outcome === 'confirmed')?.id
   }
   return { environments, actions, phase, lifecycle, cleanup, winner, verdict, diagnosis, confirmed, observer }
+}
+
+/** A read-only responder's layer: it reads the same telemetry as production and concludes,
+ *  but builds nothing and applies nothing. `replay` sets this outcome when the layer spawns
+ *  and only ever narrows it to 'abstained', so it is stable for the whole replay. */
+export function isObserverEnvironment(environment: Pick<Environment, 'outcome'>): boolean {
+  return environment.outcome === 'observer' || environment.outcome === 'abstained'
 }
 
 export const environmentLifecycleLabel: Record<EnvironmentLifecycle, string> = { unknown: 'Readiness not recorded', starting: 'Starting', ready: 'Ready', investigating: 'Investigating', destroying: 'Removing', archived: 'Archived' }
