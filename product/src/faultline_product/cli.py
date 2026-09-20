@@ -1,6 +1,7 @@
 import argparse
 import json
 import logging
+import math
 import os
 import shlex
 import time
@@ -164,12 +165,34 @@ def build_parser() -> argparse.ArgumentParser:
         "--extra-audit-log", type=Path, action="append", default=[],
         help="additional C4 JSONL files to expose (e.g. integration/runs/audit-*.jsonl)",
     )
+    ui.add_argument(
+        "--fingerprints-log", type=Path,
+        help="read C1 windows from this local JSONL store instead of Elasticsearch",
+    )
 
     replay = commands.add_parser("replay", help="run the stored incident replay suite in one fresh clone")
     replay.add_argument("incident", help="incident id; stored recipes are replayed regardless of diagnosis")
     replay.add_argument("--lab-url", required=True, help="C6 clone manager URL")
     replay.add_argument("--patch-context", type=Path, required=True, help="patched checkout to build as orders-v2")
     replay.add_argument("--diagnosis", default="H_meta", help="current incident diagnosis, for its default recipe")
+
+    prepared = commands.add_parser(
+        "prepared-watch",
+        help="watch an isolated C6 demo-* target clone with a prepared patch, required live "
+        "clone verification, and the measured 5%% canary",
+    )
+    prepared.add_argument("--incident", required=True)
+    prepared.add_argument("--lab-url", required=True, help="dedicated C6 clone manager URL")
+    prepared.add_argument("--target-clone-id", required=True,
+                          help="demo-* clone built from the prepared snapshot")
+    prepared.add_argument("--patch-context", type=Path, required=True,
+                          help="prepared patch snapshot from prepare_demo_patch.py")
+    prepared.add_argument("--ready-file", type=Path, required=True,
+                          help="written once a healthy baseline is confirmed")
+    prepared.add_argument("--baseline-s", type=float, default=130,
+                          help="healthy baseline to collect before readiness (minimum 120)")
+    prepared.add_argument("--detect-timeout", type=float, default=300)
+    prepared.add_argument("--openai-model", default=DEFAULT_MODEL)
     return parser
 
 
@@ -190,10 +213,11 @@ def main(argv: list[str] | None = None) -> int:
                              clone_id=getattr(args, "clone_id", None))
     pager_webhook = args.pager_webhook or os.environ.get("FAULTLINE_PAGER_WEBHOOK")
     pager_command = args.pager_command or os.environ.get("FAULTLINE_PAGER_COMMAND")
-    if pager_webhook:
-        audit = PagingAuditSink(audit, WebhookPager(pager_webhook), log=log)
-    elif pager_command:
-        audit = PagingAuditSink(audit, CommandPager(shlex.split(pager_command)), log=log)
+    if args.command != "prepared-watch":
+        if pager_webhook:
+            audit = PagingAuditSink(audit, WebhookPager(pager_webhook), log=log)
+        elif pager_command:
+            audit = PagingAuditSink(audit, CommandPager(shlex.split(pager_command)), log=log)
     live_telemetry = None
     writer = None
     try:
@@ -206,15 +230,30 @@ def main(argv: list[str] | None = None) -> int:
             from .api import UI_DIST, build_store, create_app
 
             paths = [args.audit_log, *args.extra_audit_log]
-            store = build_store()
+            if getattr(args, "fingerprints_log", None):
+                from faultline_telemetry import JsonlFingerprintStore
+
+                store = JsonlFingerprintStore(args.fingerprints_log)
+            else:
+                store = build_store()
             print(f"[ui] audit logs: {', '.join(str(p) for p in paths)}")
-            print(f"[ui] elasticsearch readings: {'on' if store else 'off (set FAULTLINE_ELASTICSEARCH_URL)'}")
+            print(f"[ui] fingerprint readings: {'local ' + str(args.fingerprints_log) if getattr(args, 'fingerprints_log', None) else ('elasticsearch' if store else 'off')}")
             print(f"[ui] built UI: {'served from ' + str(UI_DIST) if UI_DIST.exists() else 'not built (cd product/ui && npm run build) — API only'}")
             print(f"[ui] http://{args.host}:{args.port}/  ·  http://{args.host}:{args.port}/api/incidents")
             uvicorn.run(create_app(paths, store), host=args.host, port=args.port, log_level="warning")
             return 0
         if args.command == "replay":
             return _run_replay(args)
+        if args.command == "prepared-watch":
+            if not math.isfinite(args.baseline_s) or args.baseline_s < 120:
+                print("faultline: error: --baseline-s must be finite and at least 120")
+                return 2
+            if not math.isfinite(args.detect_timeout) or args.detect_timeout <= 0:
+                print("faultline: error: --detect-timeout must be finite and positive")
+                return 2
+            from .prepared import run_prepared_watch
+
+            return run_prepared_watch(args, audit)
 
         if (args.telemetry == "sandbox") != (args.levers == "sandbox"):
             print("faultline: error: sandbox telemetry and levers must be selected together")

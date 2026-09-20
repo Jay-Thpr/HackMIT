@@ -73,3 +73,23 @@ Sandbox control endpoints for real levers (Owner 1 serves, Owner 4 calls) are de
 - From `product/ui/`: `npm ci`, then `npm run dev -- --port 4173 --strictPort` (tested with Node 24).
 - Verification: `npm run build` (includes TypeScript), `npm test` (model/layout), and `npm run test:browser` (Playwright, currently configured for installed Google Chrome; starts or reuses the local server on port 4173).
 - Keep frontend changes inside `product/ui/`; runtime Product adapters are being developed independently. Never expose backend credentials in frontend environment variables. Generated build, browser reports, and screenshots are ignored.
+
+## FAST prepared demo (worktree: distributed-demos)
+
+Prepared patch snapshot (run from `sandbox/`):
+`uv run python scripts/prepare_demo_patch.py --output <worktree>/.faultline/prepared-fast-<tag>` — writes `prepared-patch.json` (`faultline-prepared-patch/1`, `prepared:sha256:<digest>`, replay profile `retry-storm-v1`). Rejects symlinks; never mutates the source checkout.
+
+Isolated dedicated lab (do NOT reuse the shared :9910 manager or `faultline-sandbox` project): run detached from `sandbox/` with
+`LAB_PROJECT_PREFIX=faultline-demo-fast-<tag>- LAB_PORT_OFFSET=20000 LAB_MAX_CLONES=2 SANDBOX_APP_IMAGE=faultline-demo-base:local OTEL_SDK_DISABLED=true uv run uvicorn services.lab.app:app --host 127.0.0.1 --port 19910` — strip `FAULTLINE_ELASTICSEARCH_*`/`ELASTICSEARCH_*` env first. Base image: `docker build -f sandbox/Dockerfile -t faultline-demo-base:local <worktree>`; prebuild the patched image with `docker build -f <snapshot>/sandbox/Dockerfile -t <prefix>orders-v2:prepared <snapshot>`.
+
+Harness (lead-owned): `uv run python integration/fast_demo.py --patch-context <snapshot> --lab-url http://127.0.0.1:19910 --env-file <path>` (drives `faultline prepared-watch` internally). Local UI evidence: `faultline ui --fingerprints-log <path>` selects `JsonlFingerprintStore` instead of Elasticsearch — explicit, never mixed.
+
+## Advanced distributed stack (offline, NOT launched — Docker 7.7GiB is a hard blocker)
+
+`cd sandbox && uv run --group advanced python -m advanced.cli plan|up|status|build` — `up`/`build` are dry-run unless `--execute`; private kubeconfig `.faultline/advanced/kubeconfig`, context `kind-faultline-advanced`, kind binary `.faultline/bin/kind` (v0.27.0, checksum-verified). Clone lab manager `sandbox/advanced/lab.py` binds 127.0.0.1:19920, requires the main cluster + `docker info` MemTotal ≥ 12GiB preflight, namespaces `faultline-advanced-clone-<8hex>` only, tokens in `.faultline/advanced/credentials/<clone_id>.token` (0600, never in C6 payloads). Control service `advanced/control.py` (Bearer `CONTROL_TOKEN`, HMAC compare) serves the C3 catalog + clone-only `/lab/actions`.
+
+Status honesty: FAST timing unqualified until lead measurement report; advanced foundation/control/UI verified offline only — advanced reset is a declared 503 (measurement gate pending), `patch_ref` unsupported, Product advanced adapter/agent/case-driver unfinished, C1 `ResourceStats` requires consuming-owner approval before merge.
+
+## Canary runtime + observation (canary-fix)
+
+Envoy `runtime_modify` integer `FractionalPercent` units are out of **100**, not 10000 — `canary_weight` must write the explicit JSON form `{"numerator":N,"denominator":"TEN_THOUSAND"}` via `canary_runtime_value()` (shed stays integer percent). `LiveTelemetrySource.observe(duration_s, required_services=...)` collects fresh post-apply snapshot pairs at each 5 s boundary (full 120 s, required-service presence + producer-time monotonicity enforced; scrapes serialized against the poller via `_scrape_lock`). The prepared profile checks the measured split from C1 QPS integrals (estimated request counts, 3σ binomial band). Prior fast run `fast-8bad26cf028b` (281 s) remains FAILED/unmodified; fixed-version live rehearsal is pending the active exclusive comparison pilot — no Docker builds/clones while it runs. `integration/.gitignore` is restored; do not edit it.

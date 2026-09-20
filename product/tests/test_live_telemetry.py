@@ -405,3 +405,216 @@ def test_sandbox_profile_refuses_fixture_brain(tmp_path, capsys):
 
     assert result == 2
     assert "sandbox mode requires --brain live" in capsys.readouterr().out
+
+
+class _FakeClock:
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+
+class _FakeStop:
+    def __init__(self, clock, interrupt_after=None):
+        self.clock = clock
+        self.interrupt_after = interrupt_after
+        self.waits = 0
+
+    def wait(self, seconds):
+        self.waits += 1
+        self.clock.now += seconds
+        return self.interrupt_after is not None and self.waits > self.interrupt_after
+
+    def is_set(self):
+        return False
+
+    def set(self):
+        pass
+
+    def clear(self):
+        pass
+
+
+def _canary_snapshot(t: float, v1: float = 76, v2: float = 4):
+    multiplier = int(t / 5)
+    snap = _snapshot(t)
+    orders = snap["orders"]
+    for key in ("requests", "attempts", "ok"):
+        orders["counters"][key] = v1 * 5 * multiplier
+    orders["counters"]["retries"] = 0
+    orders["hists"] = {
+        "request": _hist([0, v1 * 5 * multiplier, 0, 0]),
+        "attempt": _hist([0, v1 * 5 * multiplier, 0, 0]),
+    }
+    v2stats = {
+        "t": t,
+        "buckets_ms": BUCKETS,
+        "counters": {**orders["counters"]},
+        "gauges": {"version": "v2"},
+        "hists": {},
+    }
+    for key in ("requests", "attempts", "ok"):
+        v2stats["counters"][key] = v2 * 5 * multiplier
+    v2stats["counters"]["retries"] = 0
+    v2stats["hists"] = {
+        "request": _hist([0, v2 * 5 * multiplier, 0, 0]),
+        "attempt": _hist([0, v2 * 5 * multiplier, 0, 0]),
+    }
+    snap["orders_v2"] = v2stats
+    return snap
+
+
+def _observing_source(snapshots, monkeypatch, writer=None):
+    from faultline_product.adapters import live_telemetry
+
+    clock = _FakeClock()
+    monkeypatch.setattr(live_telemetry.time, "monotonic", clock.monotonic)
+    source = LiveTelemetrySource(
+        orders_url="http://orders",
+        payments_url="http://payments",
+        loadgen_url="http://loadgen",
+        orders_v2_url="http://orders_v2",
+        http=lambda url, timeout: {},
+        writer=writer,
+        clone_id="clone-9",
+    )
+    source._stop = _FakeStop(clock)
+    staged = iter(snapshots)
+    monkeypatch.setattr(source, "snapshot", lambda: next(staged))
+    return source
+
+
+def test_observe_collects_fresh_phase_anchored_windows(monkeypatch):
+    writer = RecordingWriter()
+    staged = [_canary_snapshot(5.01 + 5 * i) for i in range(25)]
+    source = _observing_source(staged, monkeypatch, writer=writer)
+    source._snapshots.append(
+        (datetime.fromtimestamp(5.0, timezone.utc), _canary_snapshot(5.0, v1=80, v2=0))
+    )
+
+    windows = source.observe(120, required_services=("orders_v2",))
+
+    assert len(windows) == 24
+    for fp in windows:
+        assert (fp.window_end - fp.window_start).total_seconds() == 5
+        assert fp.services["orders_v2"].qps == pytest.approx(4)
+        assert fp.services["orders"].qps == pytest.approx(76)
+        assert fp.services["orders_v2"].p99_ms is not None
+        assert fp.services["orders_v2"].error_rate == 0
+        assert fp.services["gateway"].qps == pytest.approx(80)
+    assert [(item[1], item[2]) for item in writer.writes] == [(None, "clone-9")] * 24
+
+
+def _raw_v2(t: float, requests: int, ok: int, hist_count: int):
+    return {
+        "t": t,
+        "buckets_ms": BUCKETS,
+        "counters": {
+            "requests": requests,
+            "attempts": requests,
+            "ok": ok,
+            "errors": 0,
+            "attempt_errors": 0,
+            "retries": 0,
+            "attempt_timeouts": 0,
+        },
+        "gauges": {"version": "v2"},
+        "hists": {
+            "request": _hist([0, hist_count, 0, 0]),
+            "attempt": _hist([0, hist_count, 0, 0]),
+        },
+    }
+
+
+def test_floor_window_over_midphase_offsets_is_incomplete():
+    source = LiveTelemetrySource(
+        orders_url="http://orders", payments_url="http://payments",
+        loadgen_url="http://loadgen", orders_v2_url="http://orders_v2",
+        http=lambda url, timeout: {},
+    )
+    at_zero = _canary_snapshot(0, v1=0, v2=0)
+    at_first = _canary_snapshot(5.01, v1=76, v2=0)
+    at_first["orders_v2"] = _raw_v2(5.01, requests=5, ok=0, hist_count=0)
+    at_second = _canary_snapshot(10.02, v1=76, v2=0)
+    at_second["orders_v2"] = _raw_v2(10.02, requests=25, ok=25, hist_count=25)
+    for t, snap in ((0, at_zero), (5.01, at_first), (10.02, at_second)):
+        source._snapshots.append((datetime.fromtimestamp(t, timezone.utc), snap))
+
+    start = datetime.fromtimestamp(5.009, timezone.utc)
+    end = datetime.fromtimestamp(10.009, timezone.utc)
+    fp = source.window(start, end)
+    v2 = fp.services["orders_v2"]
+    assert v2.qps == pytest.approx(5 / 5.01)
+    assert v2.p99_ms is None
+    assert v2.error_rate is None
+
+
+def test_observe_requires_present_and_advancing_required_services(monkeypatch):
+    staged = [_canary_snapshot(5.01), _canary_snapshot(10.01)]
+    del staged[1]["orders_v2"]
+    source = _observing_source(staged, monkeypatch)
+    with pytest.raises(TelemetryUnavailable, match="required service absent"):
+        source.observe(5, required_services=("orders_v2",))
+
+    static = _canary_snapshot(15.01)
+    static["orders_v2"]["t"] = 10.01
+    source = _observing_source([_canary_snapshot(5.01), _canary_snapshot(10.01), static],
+                               monkeypatch)
+    with pytest.raises(TelemetryUnavailable, match="did not advance"):
+        source.observe(10, required_services=("orders_v2",))
+
+    missing_start = [_canary_snapshot(5.01)]
+    del missing_start[0]["orders_v2"]
+    source = _observing_source(missing_start, monkeypatch)
+    with pytest.raises(TelemetryUnavailable, match="absent at observation start"):
+        source.observe(5, required_services=("orders_v2",))
+
+
+def test_observe_zero_traffic_does_not_synthesize_healthy(monkeypatch):
+    staged = [_canary_snapshot(5.01 + 5 * i, v1=0, v2=0) for i in range(3)]
+    source = _observing_source(staged, monkeypatch)
+    windows = source.observe(10, required_services=("orders_v2",))
+    assert len(windows) == 2
+    assert windows[0].services["orders_v2"].qps == 0
+    assert windows[0].services["orders_v2"].p99_ms is None
+
+
+def test_observe_interrupted_stop_raises(monkeypatch):
+    source = _observing_source([_canary_snapshot(5.01), _canary_snapshot(10.01)], monkeypatch)
+    source._stop.interrupt_after = 0
+    with pytest.raises(TelemetryUnavailable, match="interrupted"):
+        source.observe(10, required_services=("orders_v2",))
+
+
+def test_observe_rejects_bad_duration(monkeypatch):
+    source = _observing_source([_canary_snapshot(5.01)], monkeypatch)
+    for bad in (0, -5, 7, 5.0, True):
+        with pytest.raises(ValueError):
+            source.observe(bad)
+
+
+def test_snapshot_calls_are_serialized(monkeypatch):
+    import threading
+
+    source = LiveTelemetrySource(
+        orders_url="http://orders", payments_url="http://payments",
+        loadgen_url="http://loadgen", http=_scripted_http([_snapshot(0)]),
+    )
+    entered = threading.Event()
+    proceed = threading.Event()
+    original = source._snapshot
+
+    def guarded():
+        entered.set()
+        assert proceed.wait(2)
+        return original()
+
+    monkeypatch.setattr(source, "_snapshot", guarded)
+    with source._scrape_lock:
+        worker = threading.Thread(target=source.snapshot, daemon=True)
+        worker.start()
+        assert entered.wait(1) is False
+    proceed.set()
+    worker.join(2)
+    assert not worker.is_alive()

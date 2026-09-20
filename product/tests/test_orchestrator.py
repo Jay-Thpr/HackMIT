@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 import pytest
 from faultline_contracts import ActionStatus, Actor, AuditEvent, EventKind, HypothesisSupport, JsonlSink, LeverError, Stage
 from faultline_product.adapters import (
@@ -549,3 +551,145 @@ def test_similar_incident_search_failure_never_blocks_triage(tmp_path):
     triage = next(e for e in audit.query("lonely") if e.stage == Stage.triage and e.kind == EventKind.triage)
     assert triage.payload["similar_incidents"] == []
     assert "[triage] similar-incident search unavailable (ConnectionError)" in output
+
+
+class ObservingTelemetry:
+    def __init__(self, source, impl):
+        self.source = source
+        self.impl = impl
+        self.calls = []
+
+    def observe(self, duration_s, *, required_services=()):
+        self.calls.append((duration_s, required_services))
+        return self.impl(duration_s, required_services=required_services)
+
+    def __getattr__(self, name):
+        return getattr(self.source, name)
+
+
+def test_canary_capture_failure_releases_lever_and_pages(tmp_path):
+    from faultline_product.adapters import TelemetryUnavailable
+
+    bundle = load_fixture("storm")
+
+    def fail(duration_s, *, required_services=()):
+        raise TelemetryUnavailable("orders_v2 stats unreachable")
+
+    telemetry = ObservingTelemetry(bundle.telemetry, fail)
+    orchestrator, audit, _ = _orchestrator(tmp_path, telemetry=telemetry)
+    result = orchestrator.run("capture-fail", bundle.experiment_start)
+
+    events = audit.query("capture-fail")
+    assert any(
+        event.kind == EventKind.action_undo and event.stage == Stage.canary for event in events
+    )
+    assert any(
+        event.kind == EventKind.page_human and event.stage == Stage.canary for event in events
+    )
+    assert result.canary.status.value == "regressed"
+    assert "telemetry collection failed" in result.canary.detail
+    assert telemetry.calls and telemetry.calls[0][0] == 120
+
+
+def _canary_windows(bundle, share, count=24):
+    template = bundle.telemetry.series(
+        bundle.experiment_start, bundle.telemetry.last_window_end
+    )[0]
+    start = template.window_start
+    windows = []
+    for index in range(count):
+        orders = template.services["orders"].model_copy(update={"error_rate": 0.0})
+        v2 = orders.model_copy(
+            update={"qps": orders.qps * share / (1 - share), "error_rate": 0.0}
+        )
+        services = {
+            name: stats.model_copy(update={"error_rate": 0.0})
+            for name, stats in template.services.items()
+        }
+        services["orders_v2"] = v2
+        slos = [slo.model_copy(update={"breached": False}) for slo in template.slos]
+        windows.append(
+            template.model_copy(
+                update={
+                    "window_start": start + timedelta(seconds=5 * index),
+                    "window_end": start + timedelta(seconds=5 * (index + 1)),
+                    "services": services,
+                    "slos": slos,
+                }
+            )
+        )
+    return windows
+
+
+def _verified_orchestrator(tmp_path, telemetry):
+    from faultline_product.ports import PatchVerification, VerificationStatus
+
+    class PassingVerifier:
+        def verify(self, incident_id, patch, diagnosis, context):
+            return PatchVerification(VerificationStatus.passed, "fixture verification")
+
+    bundle = load_fixture("storm")
+    clock = FixtureClock(bundle.experiment_start, bundle.telemetry.last_window_end)
+    brain = FixtureBrain(bundle.triage, bundle.experiment, bundle.verdict)
+    audit = JsonlSink(tmp_path / "audit.jsonl")
+    orchestrator = Orchestrator(
+        FixtureLeverAdapter(clock=clock),
+        audit,
+        FixtureDevinAdapter(),
+        FixtureCanaryDeployer(),
+        TerminalRenderer(lambda line: None),
+        telemetry,
+        brain,
+        clock,
+        clock.sleep,
+        5,
+        verifier=PassingVerifier(),
+        require_verification=True,
+    )
+    return orchestrator, audit, bundle
+
+
+def test_canary_wrong_split_is_refused_with_split_evidence(tmp_path):
+    bundle = load_fixture("storm")
+    windows = _canary_windows(bundle, 0.5)
+    telemetry = ObservingTelemetry(
+        bundle.telemetry, lambda duration_s, *, required_services=(): windows
+    )
+    orchestrator, audit, bundle = _verified_orchestrator(tmp_path, telemetry)
+
+    result = orchestrator.run("wrong-split", bundle.experiment_start)
+
+    assert result.canary.status.value == "regressed"
+    assert "traffic split" in result.canary.detail
+    assert set(telemetry.calls) == {(120, ())} and telemetry.calls
+    assert result.canary.evidence["canary_split_status"] == "mismatched"
+    assert result.canary.evidence["canary_expected_share"] == 0.05
+    events = audit.query("wrong-split")
+    assert any(
+        event.kind == EventKind.action_undo and event.stage == Stage.canary for event in events
+    )
+    assert any(
+        event.kind == EventKind.page_human and event.stage == Stage.canary for event in events
+    )
+
+
+def test_canary_compatible_split_passes_full_observation(tmp_path):
+    bundle = load_fixture("storm")
+    windows = _canary_windows(bundle, 0.05)
+    telemetry = ObservingTelemetry(
+        bundle.telemetry, lambda duration_s, *, required_services=(): windows
+    )
+    orchestrator, audit, bundle = _verified_orchestrator(tmp_path, telemetry)
+
+    result = orchestrator.run("right-split", bundle.experiment_start)
+
+    assert result.canary.status.value == "passed"
+    assert result.canary.evidence["canary_split_status"] == "compatible"
+    assert set(telemetry.calls) == {(120, ())} and telemetry.calls
+    canary_updates = [
+        event
+        for event in audit.query("right-split")
+        if event.kind == EventKind.canary_update and event.stage == Stage.canary
+    ]
+    assert canary_updates
+    assert canary_updates[-1].payload["evidence"]["canary_split_status"] == "compatible"

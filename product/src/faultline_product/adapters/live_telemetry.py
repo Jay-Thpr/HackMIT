@@ -97,10 +97,15 @@ class LiveTelemetrySource:
         self._persisted_windows: set[tuple[datetime, datetime]] = set()
         self._snapshots: deque[tuple[datetime, Snapshot]] = deque()
         self._lock = threading.Lock()
+        self._scrape_lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
     def snapshot(self) -> Snapshot:
+        with self._scrape_lock:
+            return self._snapshot()
+
+    def _snapshot(self) -> Snapshot:
         snapshot: Snapshot = {}
         try:
             for service, url in self._required_urls.items():
@@ -119,6 +124,32 @@ class LiveTelemetrySource:
             while self._snapshots and self._snapshots[0][0] < cutoff:
                 self._snapshots.popleft()
         return snapshot
+
+    def observe(self, duration_s: int, *, required_services: tuple[str, ...] = ()) -> list[Fingerprint]:
+        if isinstance(duration_s, bool) or not isinstance(duration_s, int) or duration_s <= 0 or duration_s % WINDOW_S:
+            raise ValueError("observation duration must be a positive multiple of WINDOW_S")
+        previous = self.snapshot()
+        if any(name not in previous for name in required_services):
+            raise TelemetryUnavailable("required service absent at observation start")
+        origin = _utc(previous["orders"]["t"])
+        deadline = time.monotonic()
+        windows = []
+        for index in range(duration_s // WINDOW_S):
+            deadline += WINDOW_S
+            if self._stop.wait(max(0.0, deadline - time.monotonic())):
+                raise TelemetryUnavailable("observation interrupted")
+            current = self.snapshot()
+            if any(name not in current for name in required_services):
+                raise TelemetryUnavailable("required service absent during observation")
+            for name in required_services:
+                if float(current[name]["t"]) <= float(previous[name]["t"]):
+                    raise TelemetryUnavailable(f"service {name} producer time did not advance")
+            start = origin + timedelta(seconds=index * WINDOW_S)
+            fp = fingerprint_from_snapshots(previous, current, start, start + timedelta(seconds=WINDOW_S))
+            self._persist(fp)
+            windows.append(fp)
+            previous = current
+        return windows
 
     def start(self, period_s: float = WINDOW_S) -> None:
         if period_s <= 0:

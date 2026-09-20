@@ -15,6 +15,7 @@ This service knows nothing about the hidden fault controller.
 """
 
 import asyncio
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -70,7 +71,11 @@ _lock = asyncio.Lock()
 http = httpx.AsyncClient(timeout=3.0)
 
 
-async def envoy_runtime(key: str, value: int) -> None:
+def canary_runtime_value(weight: float) -> str:
+    return json.dumps({"numerator": round(10000 * weight), "denominator": "TEN_THOUSAND"}, separators=(",", ":"))
+
+
+async def envoy_runtime(key: str, value: int | str) -> None:
     r = await http.post(f"{ENVOY_ADMIN}/runtime_modify", params={key: str(value)})
     r.raise_for_status()
 
@@ -93,7 +98,7 @@ async def push(lever_id: str, params: dict[str, Any], ttl_s: float) -> None:
     elif lever_id == "shed":
         await envoy_runtime(SHED_KEY, round(100 * params["fraction"]))
     elif lever_id == "canary_weight":
-        await envoy_runtime(CANARY_KEY, round(10000 * params["v2_weight"]))
+        await envoy_runtime(CANARY_KEY, canary_runtime_value(params["v2_weight"]))
 
 
 async def revert(lever_id: str) -> None:
@@ -115,7 +120,7 @@ async def revert(lever_id: str) -> None:
     elif lever_id == "shed":
         await envoy_runtime(SHED_KEY, 0)
     elif lever_id == "canary_weight":
-        await envoy_runtime(CANARY_KEY, 0)
+        await envoy_runtime(CANARY_KEY, canary_runtime_value(0))
 
 
 async def _reconcile_loop() -> None:
@@ -135,7 +140,7 @@ async def _reconcile_loop() -> None:
                             lv.active, lv.expires_at = True, t  # retry next tick
                 shed, canary = levers["shed"], levers["canary_weight"]
                 await envoy_runtime(SHED_KEY, round(100 * shed.params["fraction"]) if shed.active else 0)
-                await envoy_runtime(CANARY_KEY, round(10000 * canary.params["v2_weight"]) if canary.active else 0)
+                await envoy_runtime(CANARY_KEY, canary_runtime_value(canary.params["v2_weight"]) if canary.active else canary_runtime_value(0))
         except Exception as e:  # noqa: BLE001 - never let the dead-man switch die
             log.warning("reconcile error: %s", e)
         await asyncio.sleep(1.0)

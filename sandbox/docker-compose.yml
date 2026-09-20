@@ -42,7 +42,7 @@ x-otel: &otel
 # One image for all Python services. Only `payments` carries the build section: five services building
 # the same tag in parallel race on `docker tag` ("already exists"). The others reuse the built image.
 x-app: &app
-  image: faultline-sandbox-app:latest
+  image: ${SANDBOX_APP_IMAGE:-faultline-sandbox-app:latest}
   pull_policy: never
   restart: unless-stopped
 

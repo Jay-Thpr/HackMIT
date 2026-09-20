@@ -169,6 +169,158 @@
       "title": "LogHighlight",
       "type": "object"
     },
+    "ResourceStats": {
+      "additionalProperties": false,
+      "properties": {
+        "accepted_total": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Accepted Total"
+        },
+        "cache_hit_ratio": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cache Hit Ratio"
+        },
+        "completed_total": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Completed Total"
+        },
+        "completion_p99_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Completion P99 Ms"
+        },
+        "cpu_throttled_ratio": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cpu Throttled Ratio"
+        },
+        "desired_replicas": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Desired Replicas"
+        },
+        "lag_messages": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lag Messages"
+        },
+        "oldest_pending_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Oldest Pending Ms"
+        },
+        "outstanding": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Outstanding"
+        },
+        "ready_replicas": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ready Replicas"
+        },
+        "replication_lag_bytes": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Replication Lag Bytes"
+        }
+      },
+      "title": "ResourceStats",
+      "type": "object"
+    },
     "ServiceStats": {
       "additionalProperties": false,
       "properties": {
@@ -323,6 +475,13 @@
       },
       "title": "Log Highlights",
       "type": "array"
+    },
+    "resources": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ResourceStats"
+      },
+      "title": "Resources",
+      "type": "object"
     },
     "schema_version": {
       "default": "1",

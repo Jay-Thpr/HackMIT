@@ -17,6 +17,12 @@ from .fixture import (
     FixtureLeverAdapter,
     FixtureTelemetrySource,
 )
+from .prepared import (
+    ConcurrentPreparedVerifier,
+    PreparedCanaryDeployer,
+    PreparedPatchAdapter,
+    patch_digest,
+)
 from .live_telemetry import (
     LiveTelemetrySource,
     TelemetryUnavailable,
@@ -51,6 +57,10 @@ __all__ = [
     "PagingAuditSink",
     "WebhookPager",
     "TelemetryUnavailable",
+    "ConcurrentPreparedVerifier",
+    "PreparedCanaryDeployer",
+    "PreparedPatchAdapter",
+    "patch_digest",
     "build_live_brain",
     "fingerprint_from_snapshots",
 ]

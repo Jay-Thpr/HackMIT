@@ -124,7 +124,7 @@ class RecordingLevers:
         )
 
 
-def _verifier(lab, telemetry, levers, context=Path("/tmp/patched")):
+def _verifier(lab, telemetry, levers, context=Path("/tmp/patched"), require_complete_evidence=False):
     clock = FixtureClock(T0)
     return LabPatchVerifier(
         lab,
@@ -136,6 +136,7 @@ def _verifier(lab, telemetry, levers, context=Path("/tmp/patched")):
         settle_s=10,
         healthy_windows=2,
         recipe_store=None,  # never read the live-run recipes.jsonl on the developer's machine
+        require_complete_evidence=require_complete_evidence,
     )
 
 
@@ -238,7 +239,7 @@ class StubVerifier:
         return self.result
 
 
-def _run(tmp_path, verifier):
+def _run(tmp_path, verifier, require_verification=False):
     bundle = load_fixture("storm")
     clock = FixtureClock(bundle.experiment_start, bundle.telemetry.last_window_end)
     audit = JsonlSink(tmp_path / "audit.jsonl")
@@ -253,6 +254,7 @@ def _run(tmp_path, verifier):
         clock,
         clock.sleep,
         verifier=verifier,
+        require_verification=require_verification,
     )
     return orchestrator.run("verify-run", bundle.experiment_start), audit.query("verify-run")
 
@@ -398,3 +400,43 @@ def test_no_verifier_is_skipped_not_blocking(tmp_path):
     result, events = _run(tmp_path, None)
     assert result.verification.status == VerificationStatus.skipped
     assert result.canary.status == CanaryStatus.passed
+
+
+def test_require_verification_refuses_canary_without_verifier(tmp_path):
+    result, events = _run(tmp_path, None, require_verification=True)
+    assert result.verification.status == VerificationStatus.failed
+    assert "required live verification" in result.verification.detail
+    assert result.canary.status == CanaryStatus.refused
+    assert not any(e.kind == EventKind.action_apply and e.stage == Stage.canary for e in events)
+
+
+def test_require_verification_refuses_canary_on_skipped_replay(tmp_path):
+    verifier = StubVerifier(PatchVerification(VerificationStatus.skipped, "clone lab unavailable"))
+    result, events = _run(tmp_path, verifier, require_verification=True)
+    assert result.verification.status == VerificationStatus.failed
+    assert result.canary.status == CanaryStatus.refused
+    assert not any(e.kind == EventKind.action_apply and e.stage == Stage.canary for e in events)
+
+
+def test_require_verification_rejects_incomplete_canary_windows(tmp_path):
+    verifier = StubVerifier(PatchVerification(VerificationStatus.passed, "recovered", clone_id="verify-1"))
+    result, events = _run(tmp_path, verifier, require_verification=True)
+    assert result.canary.status == CanaryStatus.regressed
+    assert any(e.kind == EventKind.action_apply and e.stage == Stage.canary for e in events)
+
+
+def test_require_complete_evidence_fails_on_incomplete_replay_windows():
+    bundle = load_fixture("storm")
+    telemetry = FakeCloneTelemetry(bundle, heals=True)
+    verifier = _verifier(FakeLab(), telemetry, RecordingLevers(), require_complete_evidence=True)
+    result = verifier.verify("inc", _patch(), "H_meta")
+    assert result.status == VerificationStatus.failed
+    assert result.evidence is not None
+
+
+def test_complete_evidence_flag_off_keeps_existing_pass():
+    bundle = load_fixture("storm")
+    telemetry = FakeCloneTelemetry(bundle, heals=True)
+    verifier = _verifier(FakeLab(), telemetry, RecordingLevers())
+    result = verifier.verify("inc", _patch(), "H_meta")
+    assert result.status == VerificationStatus.passed
