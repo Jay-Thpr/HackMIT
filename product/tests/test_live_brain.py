@@ -198,6 +198,8 @@ def test_build_live_brain_without_key_uses_fallback():
 
 def test_cli_live_brain_falls_back_without_key(tmp_path, monkeypatch, capsys):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    # Do not let a developer's repository .env turn this no-key test into a live-key test.
+    monkeypatch.chdir(tmp_path)
     result = main(
         [
             "--audit-log",

@@ -7,6 +7,7 @@ Production is never touched; the clone is destroyed on the way out, pass or fail
 """
 
 import time
+import json
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +18,7 @@ import httpx
 from faultline_contracts import WINDOW_S, Fingerprint, LeverError, utcnow
 from faultline_contracts.clone import CloneInfo, CloneLab, CloneSpec, CloneStatus, LabError
 
+from ..paths import PRODUCT_ROOT
 from ..ports import PatchProposal, PatchVerification, PatchVerifier, VerificationStatus
 from .live_telemetry import FingerprintWriter, LiveTelemetrySource, TelemetryUnavailable
 from .sandbox import SandboxLeverAdapter
@@ -28,6 +30,55 @@ DEFAULT_RECIPES: dict[str, Recipe] = {
     "H_meta": {"action": "db_latency", "params": {"extra_ms": 800}, "ttl_s": 20},
     "H_db": {"action": "db_capacity", "params": {"capacity_qps": 40}, "ttl_s": 20},
 }
+RECIPES_LOG = PRODUCT_ROOT / "state" / "recipes.jsonl"
+
+
+def stored_recipes(path: Path = RECIPES_LOG) -> list[Recipe]:
+    """Read valid measured recipes without making a corrupt local log block a patch.
+
+    Each line is investigator-owned evidence.  Only the lab action shape is accepted here;
+    labels and other incident metadata deliberately do not affect replay.
+    """
+    if not path.is_file():
+        return []
+    recipes: list[Recipe] = []
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return recipes
+    for line in lines:
+        try:
+            candidate = json.loads(line).get("recipe")
+        except (AttributeError, json.JSONDecodeError):
+            continue
+        if (
+            isinstance(candidate, dict)
+            and isinstance(candidate.get("action"), str)
+            and isinstance(candidate.get("params"), dict)
+            and isinstance(candidate.get("ttl_s"), (int, float))
+            and candidate["ttl_s"] > 0
+        ):
+            recipes.append(candidate)
+    return recipes
+
+
+def _unique_recipes(recipes: list[Recipe]) -> list[Recipe]:
+    unique: list[Recipe] = []
+    seen: set[str] = set()
+    for recipe in recipes:
+        key = json.dumps(recipe, sort_keys=True, separators=(",", ":"))
+        if key not in seen:
+            unique.append(recipe)
+            seen.add(key)
+    return unique
+
+
+def _suite_evidence(results: list[PatchVerification]) -> dict:
+    """Keep established one-recipe evidence fields while adding suite provenance."""
+    evidence = {"suite": [item.evidence for item in results]}
+    if len(results) == 1 and results[0].evidence:
+        evidence.update(results[0].evidence)
+    return evidence
 
 
 class FixturePatchVerifier:
@@ -58,6 +109,7 @@ class LabPatchVerifier(PatchVerifier):
         lab: CloneLab,
         context: Path | None = None,
         recipes: dict[str, Recipe] | None = None,
+        recipe_store: Path | None = RECIPES_LOG,
         stress: list[Recipe] | None = None,
         settle_s: float = 30,
         healthy_windows: int = 4,
@@ -71,6 +123,7 @@ class LabPatchVerifier(PatchVerifier):
         self._context = context
         self._writer = writer  # Owner 2's ES store: clone windows land tagged with clone_id
         self._recipes = recipes or DEFAULT_RECIPES
+        self._recipe_store = recipe_store
         self._stress = stress or []
         self._settle_s = settle_s
         self._healthy_windows = healthy_windows
@@ -86,8 +139,8 @@ class LabPatchVerifier(PatchVerifier):
         diagnosis: str,
         context: Path | None = None,
     ) -> PatchVerification:
-        recipe = self._recipes.get(diagnosis)
-        if recipe is None:
+        current_recipe = self._recipes.get(diagnosis)
+        if current_recipe is None:
             return PatchVerification(
                 VerificationStatus.skipped, f"no reproduction recipe for {diagnosis}"
             )
@@ -108,11 +161,37 @@ class LabPatchVerifier(PatchVerifier):
                 clone_id=clone.clone_id,
             )
         try:
-            return self._run(clone, recipe, incident_id)
+            suite = _unique_recipes(
+                [current_recipe]
+                + (stored_recipes(self._recipe_store) if self._recipe_store is not None else [])
+            )
+            results: list[PatchVerification] = []
+            for index, recipe in enumerate(suite):
+                if index:
+                    # A recipe may leave a self-sustaining fault behind. Reset blocks until
+                    # healthy, so every replay has a meaningful baseline on this one clone.
+                    self._lab.reset(clone.clone_id)
+                result = self._run(clone, recipe, incident_id)
+                results.append(result)
+                if result.status != VerificationStatus.passed:
+                    return PatchVerification(
+                        result.status,
+                        f"replay suite failed at {index + 1}/{len(suite)}: {result.detail}",
+                        clone_id=clone.clone_id,
+                        recipe=recipe,
+                        evidence=_suite_evidence(results),
+                    )
+            return PatchVerification(
+                VerificationStatus.passed,
+                f"patch survived {len(suite)} replay recipe{'s' if len(suite) != 1 else ''}",
+                clone_id=clone.clone_id,
+                recipe=current_recipe,
+                evidence=_suite_evidence(results),
+            )
         except (LabError, LeverError, TelemetryUnavailable, httpx.HTTPError) as exc:
             return PatchVerification(
                 VerificationStatus.skipped, f"clone verification aborted: {exc}",
-                clone_id=clone.clone_id, recipe=recipe,
+                clone_id=clone.clone_id, recipe=current_recipe,
             )
         finally:
             try:
@@ -211,4 +290,4 @@ def _mean(values) -> float | None:
     return round(sum(values) / len(values), 1) if values else None
 
 
-__all__ = ["DEFAULT_RECIPES", "FixturePatchVerifier", "LabPatchVerifier"]
+__all__ = ["DEFAULT_RECIPES", "FixturePatchVerifier", "LabPatchVerifier", "stored_recipes"]

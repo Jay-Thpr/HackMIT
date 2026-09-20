@@ -6,7 +6,7 @@ from .canary import (
     SandboxCanaryDeployer,
 )
 from .checkout import FixturePatchCheckout, GitPatchCheckout
-from .clone import DEFAULT_RECIPES, FixturePatchVerifier, LabPatchVerifier
+from .clone import DEFAULT_RECIPES, FixturePatchVerifier, LabPatchVerifier, stored_recipes
 from .devin import DevinAdapter, FixtureDevinAdapter
 from .investigate import FixtureInvestigation, LabInvestigation
 from .fixture import (
@@ -31,6 +31,7 @@ __all__ = [
     "GitPatchCheckout",
     "LabInvestigation",
     "LabPatchVerifier",
+    "stored_recipes",
     "CanaryPreparationError",
     "FixtureBrain",
     "FixtureCanaryDeployer",

@@ -77,6 +77,9 @@ class FakeLab:
     def destroy(self, clone_id):
         self.destroyed.append(clone_id)
 
+    def reset(self, clone_id):
+        return None
+
 
 class FakeCloneTelemetry:
     """Serves fixture fingerprints, breached or healthy depending on the phase requested."""
@@ -168,6 +171,26 @@ def test_verifier_fails_when_incident_persists_after_trigger_ends():
     assert "still breached" in result.detail
     assert lab.actions[0][1] == "db_capacity"
     assert lab.destroyed  # clone torn down on failure too
+
+
+def test_verifier_runs_current_and_stored_recipes_in_one_clone(tmp_path):
+    recipe_log = tmp_path / "recipes.jsonl"
+    recipe_log.write_text(
+        '{"recipe": {"action": "db_latency", "params": {"extra_ms": 800}, "ttl_s": 20}}\n'
+        '{"recipe": {"action": "cpu_limit", "params": {"cpus": 0.5}, "ttl_s": 15}}\n'
+    )
+    bundle = load_fixture("storm")
+    lab, levers = FakeLab(), RecordingLevers()
+    verifier = _verifier(lab, FakeCloneTelemetry(bundle, heals=True), levers)
+    verifier._recipe_store = recipe_log
+
+    result = verifier.verify("inc-suite", _patch(), "H_meta")
+
+    assert result.status == VerificationStatus.passed
+    assert len(lab.created) == 1
+    assert [action[1] for action in lab.actions] == ["db_latency", "cpu_limit"]
+    assert len(result.evidence["suite"]) == 2
+    assert lab.destroyed == [result.clone_id]
 
 
 def test_default_clone_telemetry_carries_writer_incident_and_clone_id():

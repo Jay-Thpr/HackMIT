@@ -1,4 +1,5 @@
 import argparse
+import json
 import logging
 import os
 import time
@@ -145,6 +146,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     report = commands.add_parser("report", help="render an incident from the C4 audit log")
     report.add_argument("--incident", required=True)
+
+    replay = commands.add_parser("replay", help="run the stored incident replay suite in one fresh clone")
+    replay.add_argument("incident", help="incident id; stored recipes are replayed regardless of diagnosis")
+    replay.add_argument("--lab-url", required=True, help="C6 clone manager URL")
+    replay.add_argument("--patch-context", type=Path, required=True, help="patched checkout to build as orders-v2")
+    replay.add_argument("--diagnosis", default="H_meta", help="current incident diagnosis, for its default recipe")
     return parser
 
 
@@ -172,6 +179,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "report":
             print(render_report(audit, args.incident))
             return 0
+        if args.command == "replay":
+            return _run_replay(args)
 
         if (args.telemetry == "sandbox") != (args.levers == "sandbox"):
             print("faultline: error: sandbox telemetry and levers must be selected together")
@@ -377,6 +386,27 @@ def _patch_verifier(args, writer=None):
     from faultline_contracts.clone import HttpCloneLab
 
     return LabPatchVerifier(HttpCloneLab(lab_url), writer=writer)
+
+
+def _run_replay(args) -> int:
+    """Manual, clone-only entry point for attaching the regression check to a patch PR."""
+    from faultline_contracts.clone import HttpCloneLab
+
+    verifier = LabPatchVerifier(HttpCloneLab(args.lab_url), context=args.patch_context)
+    result = verifier.verify(
+        args.incident,
+        PatchProposal("replay", f"local:{args.patch_context}", "manual replay-suite run"),
+        args.diagnosis,
+        args.patch_context,
+    )
+    print(json.dumps({
+        "incident_id": args.incident,
+        "status": result.status.value,
+        "detail": result.detail,
+        "clone_id": result.clone_id,
+        "evidence": result.evidence,
+    }, default=str))
+    return 0 if result.status.value == "passed" else 1
 
 
 def _canary_deployer(args):

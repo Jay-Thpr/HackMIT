@@ -70,6 +70,66 @@ false-positive confirmation rule, build reproducible benchmark arms, and keep
 the benchmark/controller boundary separate from runtime Faultline. The commit
 history and tests above are the audit trail for that claim.
 
+## Elastic
+
+Faultline writes its C1 fingerprint windows and C4 audit events into Elasticsearch,
+tagged by incident and environment/clone identity. Kibana can therefore show the
+raw incident evidence beside the decision trace, while structured searches power
+timelines, clone-versus-production comparison, and similar-incident retrieval.
+The companion **Faultline Investigation** Agent Builder agent is intentionally
+read-only: it may explain those bounded results, but cannot call levers, inspect
+fault-controller data, infer hidden worlds, select experiments, or issue the C2
+verdict. The deterministic Brain remains the authority for triage and judgement.
+
+Implementation evidence:
+
+- `faultline_brain/elastic_investigation.py` defines the restricted agent and its
+  four evidence-only tools.
+- `product/src/faultline_product/adapters/live_telemetry.py` and the audit sink
+  write the corresponding C1/C4 records to Elasticsearch.
+
+## Warp
+
+Faultline is operated as a short, inspectable CLI loop: detection, a reversible
+experiment, measured verdict, clone replay, and canary are emitted as staged
+terminal events. In the recorded full run (`live-13`), that path went from a
+sustained breach to a canaried fix in **6.5 minutes**. The command is deliberately
+safe to interrupt: every production lever has a TTL and its corresponding undo
+is recorded in C4. This turns the terminal from a deployment launcher into a
+high-signal debugging surface for the operator.
+
+## Cognition / Devin
+
+Faultline turns measured evidence into a durable code-change loop. Devin proposes
+a patch; Faultline builds it as orders-v2 in a clone, replays the incident suite,
+and permits only a surviving patch to enter a 5% canary. `live-14` demonstrated
+the negative path too: Devin PR #23 revision 0 regressed checkout latency at the
+canary, Faultline automatically rolled back, returned the measured evidence to
+the same session, and accepted revision 1 only after clone verification and a
+green canary. The system preserves human control by paging rather than silently
+shipping a failed or unavailable revision.
+
+## Ramp
+
+The primary time-saving metric is breach-to-canaried-fix: **6.5 minutes** in
+the recorded `live-13` full run. Cost is constrained by compact telemetry
+fingerprints rather than raw traces: the real OpenAI triage call in that run used
+**3.6k tokens**. Together, those numbers describe the tradeoff the project is
+optimizing: a bounded investigation that reduces both incident time and model
+context cost, while retaining replay and canary gates before a patch is exposed
+to customers.
+
+## Submission checklist
+
+- OpenAI and Token Company: use the sections above; replace only the raw-vs-
+  compressed comparison once a paired live usage capture exists.
+- Elastic: include the read-only Investigation agent boundary and Kibana evidence
+  view; do not represent it as a diagnosis agent.
+- Warp: show one live CLI stage from the recorded `live-13` flow.
+- Cognition/Devin: show the `live-14` revision-and-rollback evidence, not a
+  claim that every generated patch is safe.
+- Ramp: cite 6.5 minutes and 3.6k tokens with the `live-13` scope stated.
+
 ## Benchmark disclosure
 
 The checked-in suite is reproducible with:
