@@ -6,6 +6,7 @@ the clone's ``/stats``) and *how to run the production probe inside the clone* (
 adapter pointed at the clone's control service). Nothing here can reach production.
 """
 
+import json
 import logging
 import time
 from collections.abc import Callable
@@ -14,16 +15,32 @@ from dataclasses import asdict
 from datetime import datetime, timedelta
 
 import httpx
-from faultline_brain import CloneInvestigator, CloneProbe, LabExperiment
+from faultline_brain import (
+    AgenticCloneInvestigator,
+    AttemptRecord,
+    CloneInvestigator,
+    CloneProbe,
+    LabExperiment,
+)
 from faultline_contracts import WINDOW_S, Experiment, Fingerprint, LeverError, TriageResult, utcnow
 from faultline_contracts.clone import CloneInfo, CloneLab, CloneSpec, LabError
 
+from ..paths import PRODUCT_ROOT
 from ..ports import HypothesisInvestigation, Investigation
 from .clone import DEFAULT_RECIPES, Recipe
 from .live_telemetry import FingerprintWriter, LiveTelemetrySource, TelemetryUnavailable
 from .sandbox import SandboxLeverAdapter
 
 log = logging.getLogger(__name__)
+
+RECIPES_LOG = PRODUCT_ROOT / "state" / "recipes.jsonl"
+
+
+def _append_recipe(record: dict) -> None:
+    """Persist a reproduced recipe so future incidents start from what worked."""
+    RECIPES_LOG.parent.mkdir(parents=True, exist_ok=True)
+    with RECIPES_LOG.open("a") as fh:
+        fh.write(json.dumps(record) + "\n")
 
 
 class FixtureInvestigation:
@@ -89,6 +106,9 @@ class LabInvestigation(Investigation):
         levers_factory: Callable[[CloneInfo], SandboxLeverAdapter] | None = None,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], datetime] = utcnow,
+        agent=None,
+        budget: int = 3,
+        recipe_sink: Callable[[dict], None] | None = None,
     ):
         self._lab = lab
         self._recipes = recipes or DEFAULT_RECIPES
@@ -100,6 +120,9 @@ class LabInvestigation(Investigation):
         self._levers_factory = levers_factory or _clone_levers
         self._sleep = sleep
         self._clock = clock
+        self._agent = agent
+        self._budget = budget
+        self._recipe_sink = recipe_sink if recipe_sink is not None else _append_recipe
 
     def investigate(
         self,
@@ -109,15 +132,19 @@ class LabInvestigation(Investigation):
         healthy_reference: list[Fingerprint],
         production_probe: Experiment,
     ) -> list[HypothesisInvestigation]:
-        healthy = healthy_reference[-1] if healthy_reference else production_incident
-        jobs = [
-            (h.id, self._recipes[h.id]) for h in triage.hypotheses if h.id in self._recipes
-        ]
-        skipped = [
-            HypothesisInvestigation(h.id, None, None, False, False, None, None,
-                                    "no reproduction recipe; not investigated")
-            for h in triage.hypotheses if h.id not in self._recipes
-        ]
+        healthy = list(healthy_reference) if healthy_reference else [production_incident]
+        if self._agent is not None:
+            jobs = [(h, None) for h in triage.hypotheses]
+            skipped = []
+        else:
+            jobs = [
+                (h.id, self._recipes[h.id]) for h in triage.hypotheses if h.id in self._recipes
+            ]
+            skipped = [
+                HypothesisInvestigation(h.id, None, None, False, False, None, None,
+                                        "no reproduction recipe; not investigated")
+                for h in triage.hypotheses if h.id not in self._recipes
+            ]
         if not jobs:
             return skipped
         with ThreadPoolExecutor(max_workers=max(1, min(self._max_clones, len(jobs)))) as pool:
@@ -135,10 +162,28 @@ class LabInvestigation(Investigation):
         self,
         incident_id: str,
         triage: TriageResult,
+        hypothesis,
+        recipe: Recipe | None,
+        production_incident: Fingerprint,
+        healthy: list[Fingerprint],
+        production_probe: Experiment,
+    ) -> HypothesisInvestigation:
+        if self._agent is not None:
+            return self._one_agent(
+                incident_id, triage, hypothesis, production_incident, healthy, production_probe
+            )
+        return self._one_recipe(
+            incident_id, triage, hypothesis, recipe, production_incident, healthy, production_probe
+        )
+
+    def _one_recipe(
+        self,
+        incident_id: str,
+        triage: TriageResult,
         hypothesis_id: str,
         recipe: Recipe,
         production_incident: Fingerprint,
-        healthy: Fingerprint,
+        healthy: list[Fingerprint],
         production_probe: Experiment,
     ) -> HypothesisInvestigation:
         sources: dict[str, LiveTelemetrySource] = {}
@@ -204,6 +249,107 @@ class LabInvestigation(Investigation):
             },
         )
 
+    def _one_agent(
+        self,
+        incident_id: str,
+        triage: TriageResult,
+        hypothesis,
+        production_incident: Fingerprint,
+        healthy: list[Fingerprint],
+        production_probe: Experiment,
+    ) -> HypothesisInvestigation:
+        sources: dict[str, LiveTelemetrySource] = {}
+
+        def observe(clone: CloneInfo) -> Fingerprint:
+            source = self._source(sources, clone, incident_id)
+            self._sleep(self._settle_s)
+            latest = source.latest()
+            if latest is None:
+                raise TelemetryUnavailable(f"no telemetry from clone {clone.clone_id}")
+            return latest
+
+        def run_probe(clone: CloneInfo, probe: Experiment, recipe: Recipe) -> CloneProbe:
+            return self._probe(sources, clone, incident_id, recipe, probe)
+
+        spec = CloneSpec(name=_clone_name(incident_id, hypothesis.id))
+        try:
+            result = AgenticCloneInvestigator(
+                _CleanupTolerantLab(self._lab), observe, self._agent,
+                budget=self._budget, wait=self._sleep,
+            ).investigate(
+                hypothesis, spec, production_incident, healthy,
+                triage=triage, production_probe=production_probe, run_probe=run_probe,
+            )
+        except (LabError, LeverError, TelemetryUnavailable, httpx.HTTPError, RuntimeError, ValueError) as exc:
+            return HypothesisInvestigation(
+                hypothesis.id, next(iter(sources), None), None, False, False, None, None,
+                f"investigation aborted: {exc}",
+            )
+        except Exception as exc:  # noqa: BLE001 - a clone problem must never take the production loop down
+            log.exception("investigator %s crashed", hypothesis.id)
+            return HypothesisInvestigation(
+                hypothesis.id, next(iter(sources), None), None, False, False, None, None,
+                f"investigation crashed: {type(exc).__name__}: {exc}",
+            )
+        finally:
+            for source in sources.values():
+                source.stop()
+        attempts = [_attempt_dict(a) for a in result.attempts]
+        clone_id = result.clone_id or next(iter(sources), None)
+        if result.evidence is None:
+            detail = (
+                f"did not reproduce the production fingerprint in "
+                f"{len(result.attempts)}/{self._budget} attempts"
+            )
+            if result.stopped_reason:
+                detail += f"; agent stopped: {result.stopped_reason}"
+            return HypothesisInvestigation(
+                hypothesis.id, clone_id, None, False, False, None, None, detail,
+                attempts=attempts,
+            )
+        evidence = result.evidence
+        pred = evidence.prediction
+        if pred is not None and pred.measured_expectations == 0:
+            pred = None
+        detail = (
+            f"{'reproduced' if evidence.reproduction.reproduced else 'did not reproduce'} the production "
+            f"fingerprint ({evidence.reproduction.similarity.matching_metrics}/"
+            f"{evidence.reproduction.similarity.shared_metrics} metrics within noise); "
+            f"{'recovered' if evidence.recovery.recovered else 'did not recover'} once the cause was removed"
+            f"; attempts {len(result.attempts)}/{self._budget}"
+        )
+        if pred is not None:
+            detail += f"; {production_probe.id} in the clone matched {pred.matched_expectations}/{pred.measured_expectations} predicted directions"
+        else:
+            detail += f"; {production_probe.id} not measured in the clone"
+        if evidence.reproduction.reproduced and result.recipe is not None:
+            try:
+                self._recipe_sink({
+                    "incident_id": incident_id,
+                    "hypothesis_id": hypothesis.id,
+                    "recipe": result.recipe,
+                    "attempts": len(result.attempts),
+                    "ts": self._clock().isoformat(),
+                })
+            except Exception:  # noqa: BLE001 - persisting a recipe must never fail the loop
+                log.exception("could not persist reproduced recipe for %s", hypothesis.id)
+        return HypothesisInvestigation(
+            hypothesis_id=hypothesis.id,
+            clone_id=clone_id,
+            recipe=result.recipe,
+            reproduced=evidence.reproduction.reproduced,
+            recovered=evidence.recovery.recovered,
+            prediction_matches=pred.matched_expectations if pred else None,
+            prediction_total=pred.measured_expectations if pred else None,
+            detail=detail,
+            evidence={
+                "reproduction": asdict(evidence.reproduction.similarity),
+                "recovery": asdict(evidence.recovery.similarity),
+                "prediction": asdict(pred) if pred else None,
+            },
+            attempts=attempts,
+        )
+
     def _probe(
         self,
         sources: dict[str, LiveTelemetrySource],
@@ -232,7 +378,9 @@ class LabInvestigation(Investigation):
         healthy_baseline = source.series(t_healthy_end - timedelta(seconds=4 * WINDOW_S), t_healthy_end)
 
         cause = self._lab.apply(clone.clone_id, recipe["action"], recipe["params"], recipe["ttl_s"])
-        self._sleep(recipe["ttl_s"] + self._settle_s)  # let the trigger end and the incident sustain itself
+        # Let a transient trigger end and the incident sustain itself; a persistent cause is
+        # already sustaining, so don't sleep out its whole (possibly long) ttl.
+        self._sleep(min(recipe["ttl_s"], 30) + self._settle_s)
         t_incident_end = self._clock()
         incident_baseline = source.series(t_incident_end - timedelta(seconds=4 * WINDOW_S), t_incident_end)
 
@@ -278,6 +426,23 @@ def _clone_levers(clone: CloneInfo) -> SandboxLeverAdapter:
     # A clone's control service proxies into Orders, which is saturated during a storm; 5 s is
     # not enough there (seen live), while production's control answered within it.
     return SandboxLeverAdapter(base_url=clone.endpoints.control_url, timeout_s=20.0)
+
+
+def _attempt_dict(record: AttemptRecord) -> dict:
+    return {
+        "action": record.proposal.action,
+        "params": record.proposal.params.as_dict(),
+        "ttl_s": record.proposal.ttl_s,
+        "observe_after_s": record.proposal.observe_after_s,
+        "rationale": record.proposal.rationale,
+        "predicted": [{"metric": p.metric, "direction": p.direction} for p in record.proposal.predicted],
+        "matching_metrics": record.similarity.matching_metrics,
+        "shared_metrics": record.similarity.shared_metrics,
+        "mean_abs_z": record.similarity.mean_abs_z,
+        "predicted_matched": record.predicted_matched,
+        "predicted_total": record.predicted_total,
+        "reproduced": record.reproduced,
+    }
 
 
 def _clone_name(incident_id: str, hypothesis_id: str) -> str:

@@ -255,6 +255,48 @@ def test_orchestrator_survives_a_broken_investigation_stage(tmp_path):
     assert any(e.kind == EventKind.action_apply for e in events)
 
 
+def test_agent_investigation_records_attempts_and_persists_recipe():
+    from faultline_brain import SeedInvestigator
+
+    bundle = load_fixture("storm")
+    series = _series()
+    healthy, incident = series[0], series[12]
+    probe = Experiment.model_validate(next(e for e in json.loads((CONTRACT_FIXTURES / "experiments.json").read_text()) if e["id"] == "retry_cap_0_20s"))
+    # H_meta clone: reproduces (incident), recovers (healthy); probe windows from the storm fixture
+    h_meta = ScriptedCloneTelemetry(
+        latest=[incident, healthy],
+        series=[series[:12], series[12:24], series[24:28], series[28:]],
+    )
+    # H_db clone: never reproduces (stays healthy); the seed agent then stops
+    h_db = ScriptedCloneTelemetry(latest=[healthy], series=[])
+    lab, levers, sink = FakeLab(), RecordingLevers(), []
+    clock = FixtureClock(T0)
+    inv = LabInvestigation(
+        lab,
+        telemetry_factory=lambda clone, incident_id: {"h_meta": h_meta, "h_db": h_db}[clone.spec.name.split("-")[0]],
+        levers_factory=lambda clone: levers,
+        sleep=clock.sleep,
+        clock=clock,
+        max_clones=2,
+        agent=SeedInvestigator(),
+        recipe_sink=sink.append,
+    )
+
+    results = inv.investigate("inc-5", bundle.triage, incident, [healthy], probe)
+
+    by_id = {r.hypothesis_id: r for r in results}
+    assert by_id["H_meta"].reproduced and by_id["H_meta"].recovered and by_id["H_meta"].survives
+    assert by_id["H_meta"].recipe == {"action": "db_latency", "params": {"extra_ms": 800}, "ttl_s": 20}
+    assert by_id["H_meta"].attempts and by_id["H_meta"].attempts[0]["action"] == "db_latency"
+    assert by_id["H_meta"].attempts[0]["reproduced"] is True
+    assert "attempts 1/3" in by_id["H_meta"].detail
+    assert sink and sink[0]["hypothesis_id"] == "H_meta" and sink[0]["recipe"] == by_id["H_meta"].recipe
+    assert not by_id["H_db"].reproduced and by_id["H_db"].recipe is None
+    assert len(by_id["H_db"].attempts) == 1  # one miss, then the seed agent stops
+    for clone_id in (by_id["H_meta"].clone_id, by_id["H_db"].clone_id):
+        assert f"destroy:{clone_id}" in lab.events
+
+
 def test_reset_failure_during_cleanup_keeps_the_evidence():
     bundle = load_fixture("storm")
     series = _series()

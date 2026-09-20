@@ -328,6 +328,7 @@ class Orchestrator:
                     "prediction_total": item.prediction_total,
                     "survives": item.survives,
                     "evidence": item.evidence,
+                    "attempts": item.attempts,
                 },
                 experiment_id=production_probe.id,
             )

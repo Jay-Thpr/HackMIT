@@ -16,12 +16,24 @@ from faultline_contracts import (
     TriageResult,
 )
 
+from types import SimpleNamespace
+
 from faultline_brain.investigator import (
     CloneInvestigator,
     CloneProbe,
     LabExperiment,
     score_clone_prediction,
+    similarity,
 )
+from faultline_brain.investigator_agent import (
+    AgenticCloneInvestigator,
+    InvestigatorAgent,
+    InvestigatorValidationError,
+    LabParams,
+    LabProposal,
+    MetricDirection,
+)
+from faultline_contracts.clone import LAB_CATALOG
 
 FIXTURES = Path(__file__).resolve().parents[3] / "contracts" / "fixtures"
 
@@ -112,3 +124,134 @@ def test_clone_probe_scores_measured_c2_predictions():
     assert evidence.measured_expectations == 5
     assert evidence.matched_expectations == 5
     assert evidence.predicts is True
+
+
+def test_similarity_multiwindow_reference_and_absolute_floors():
+    series = _series()
+    healthy, incident = series[0], series[12]
+    # healthy reference with error_rate ~0 vs an observed 2% error rate: the absolute
+    # sigma floor (0.05) keeps that jitter from reading as a breach
+    observed = healthy.model_copy(deep=True)
+    observed.services["orders"].error_rate = 0.02
+
+    sim = similarity([healthy, series[1], series[2]], observed)
+    assert sim.matches and sim.matching_metrics == sim.shared_metrics
+    assert sim.z_scores["svc.orders.error_rate"] < 3.0
+
+    storm = similarity([healthy, series[1], series[2]], incident)
+    assert not storm.matches
+
+    # a single fingerprint reference still works
+    assert similarity(healthy, observed).matches
+
+
+def _proposal(action="db_latency", params=None, ttl_s=20, observe_after_s=30,
+              predicted=(("db.qps", "up"),), stop=False):
+    params = params or {"extra_ms": 800}
+    return LabProposal(
+        action=action,
+        params=LabParams(
+            extra_ms=params.get("extra_ms"), capacity_qps=params.get("capacity_qps"),
+            service=params.get("service"), cpus=params.get("cpus"),
+            max_retries=params.get("max_retries"), timeout_ms=params.get("timeout_ms"),
+        ),
+        ttl_s=ttl_s, observe_after_s=observe_after_s,
+        predicted=[MetricDirection(metric=m, direction=d) for m, d in predicted],
+        rationale="test", stop=stop, stop_reason="done" if stop else "",
+    )
+
+
+class ScriptedAgent:
+    def __init__(self, proposals):
+        self.proposals = list(proposals)
+        self.calls = []
+
+    def propose(self, hypothesis, catalog, production_incident, healthy, history, attempts_left):
+        self.calls.append(len(history))
+        return self.proposals.pop(0)
+
+
+class _Hyp:
+    id = "H_meta"
+    label = "meta"
+    description = ""
+
+
+def test_agentic_investigator_reproduces_on_second_attempt():
+    series = _series()
+    healthy, incident = series[0], series[12]
+    observed = iter([healthy, incident, healthy])  # miss, reproduce, recover
+    lab = FakeCloneLab()
+    agent = ScriptedAgent([_proposal(), _proposal(params={"extra_ms": 900}, observe_after_s=35)])
+
+    result = AgenticCloneInvestigator(lab, lambda _c: next(observed), agent, budget=3).investigate(
+        _Hyp(), CloneSpec(name="h-meta"), incident, [healthy]
+    )
+
+    assert len(result.attempts) == 2
+    assert result.attempts[0].reproduced is False
+    assert result.attempts[1].reproduced is True
+    assert result.evidence is not None and result.evidence.survives_falsification
+    assert result.recipe == {"action": "db_latency", "params": {"extra_ms": 900}, "ttl_s": 20}
+    # the clone was reset between attempts and destroyed at the end
+    resets = [e for e in lab.events if e.startswith("reset")]
+    assert len(resets) == 2  # one between attempts, one in cleanup
+    assert lab.events[0] == "create" and lab.events[-1] == "destroy:clone-a"
+
+
+def test_agentic_investigator_budget_exhausted():
+    series = _series()
+    healthy, incident = series[0], series[12]
+    lab = FakeCloneLab()
+    agent = ScriptedAgent([_proposal(), _proposal()])
+
+    result = AgenticCloneInvestigator(
+        lab, lambda _c: healthy, agent, budget=2
+    ).investigate(_Hyp(), CloneSpec(name="h-meta"), incident, [healthy])
+
+    assert len(result.attempts) == 2 and result.evidence is None and result.recipe is None
+    assert lab.events[-1] == "destroy:clone-a"
+
+
+class _FakeCompletions:
+    def __init__(self, payloads):
+        self.payloads = list(payloads)
+        self.calls = 0
+
+    def create(self, model, messages, response_format):
+        self.calls += 1
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=self.payloads.pop(0)))],
+            usage=None,
+        )
+
+
+def test_investigator_agent_retries_on_invalid_proposal():
+    series = _series()
+    healthy, incident = series[0], series[12]
+    good = _proposal().model_dump_json()
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=_FakeCompletions(['{"action": "nope"}', good]))
+    )
+    agent = InvestigatorAgent(client)
+
+    proposal = agent.propose(_Hyp(), LAB_CATALOG, incident, [healthy], [], 3)
+
+    assert proposal.action == "db_latency"
+    assert client.chat.completions.calls == 2
+
+
+def test_investigator_agent_raises_after_repeated_invalid():
+    series = _series()
+    healthy, incident = series[0], series[12]
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=_FakeCompletions(['{"action": "nope"}', '{"action": "nope"}']))
+    )
+    agent = InvestigatorAgent(client)
+
+    try:
+        agent.propose(_Hyp(), LAB_CATALOG, incident, [healthy], [], 3)
+    except InvestigatorValidationError:
+        pass
+    else:
+        raise AssertionError("expected InvestigatorValidationError")

@@ -6,7 +6,8 @@ hidden world labels, Docker, or a fault controller.
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from math import ceil
 
 from faultline_contracts import (
     CloneInfo,
@@ -23,6 +24,41 @@ from faultline_contracts import (
 from .noise import NoiseModel
 
 DEFAULT_MATCH_Z = 3.0
+
+# The metrics an incident is judged on: db health, the orders->payments retry path,
+# orders latency, and the checkout SLO. Edge/gateway counters are too noisy to compare.
+KEY_METRICS = frozenset(
+    {
+        "db.qps",
+        "db.query_p50_ms",
+        "db.query_p99_ms",
+        "db.pool_busy_ratio",
+        "svc.orders.retry_ratio",
+        "svc.orders.error_rate",
+        "svc.orders.p99_ms",
+        "slo.checkout.value",
+    }
+)
+
+
+def sigma_floor(metric: str) -> float:
+    """Absolute lower bound for a metric's sigma in clone-vs-production comparisons.
+
+    Clone windows are single samples and production baselines can be near-degenerate
+    (an error_rate pinned at 0 has measured std 0), so the relative noise floor alone
+    makes healthy jitter look like a breach. These floors are in canonical units.
+    """
+    if metric.endswith("_ms"):
+        return 10.0
+    if metric.endswith(".qps"):
+        return 5.0
+    if metric.endswith("retry_ratio"):
+        return 0.25
+    if metric.endswith("_rate") or metric.endswith("_ratio"):
+        return 0.05
+    if metric.startswith("slo.") and metric.endswith(".value"):
+        return 10.0
+    return 0.0
 
 
 @dataclass(frozen=True)
@@ -48,6 +84,7 @@ class SimilarityEvidence:
     matching_metrics: int
     mean_abs_z: float
     matches: bool
+    z_scores: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -107,25 +144,54 @@ CloneObserver = Callable[[CloneInfo], Fingerprint]
 CloneProbeRunner = Callable[[CloneInfo, Experiment], CloneProbe]
 
 
-def similarity(reference: Fingerprint, observed: Fingerprint, *, threshold_z: float = DEFAULT_MATCH_Z) -> SimilarityEvidence:
+def floored_sigma(model: NoiseModel, metric: str) -> float | None:
+    """The model's sigma widened to the absolute floor for this metric's units."""
+    sigma = model.sigma(metric)
+    return None if sigma is None else max(sigma, sigma_floor(metric))
+
+
+def _z(model: NoiseModel, metric: str, measured: float) -> float:
+    sigma = floored_sigma(model, metric)
+    baseline = model.baseline(metric)
+    if sigma is None or baseline is None:
+        raise KeyError(metric)
+    if sigma == 0:
+        return float("inf") if measured != baseline else 0.0
+    return (measured - baseline) / sigma
+
+
+def similarity(
+    reference: Fingerprint | list[Fingerprint],
+    observed: Fingerprint,
+    *,
+    threshold_z: float = DEFAULT_MATCH_Z,
+    metrics: frozenset[str] | None = KEY_METRICS,
+) -> SimilarityEvidence:
     """Compare shared C1 metrics using the reference's measured noise floor.
 
-    Missing telemetry remains omitted. A clone matches when every shared metric
-    is within ``threshold_z`` and at least one metric is available; callers can
-    choose a narrower fingerprint before invoking this function if desired.
+    ``reference`` may be one fingerprint or a list of windows (a multi-window
+    baseline measures real variance). Only ``metrics`` keys present in both the
+    reference model and ``observed`` are compared (``metrics=None`` compares all
+    shared metrics). A clone matches when at least three quarters of the shared
+    metrics are within ``threshold_z`` of the floored-sigma baseline.
     """
-    model = NoiseModel.from_windows([reference])
-    z_scores = []
+    references = [reference] if isinstance(reference, Fingerprint) else list(reference)
+    model = NoiseModel.from_windows(references)
+    z_scores: dict[str, float] = {}
     for metric, value in observed.metrics().items():
         if value is None or model.baseline(metric) is None:
             continue
-        z_scores.append(abs(model.z(metric, value)))
-    matching = sum(score < threshold_z for score in z_scores)
+        if metrics is not None and metric not in metrics:
+            continue
+        z_scores[metric] = abs(_z(model, metric, value))
+    matching = sum(score < threshold_z for score in z_scores.values())
+    shared = len(z_scores)
     return SimilarityEvidence(
-        shared_metrics=len(z_scores),
+        shared_metrics=shared,
         matching_metrics=matching,
-        mean_abs_z=sum(z_scores) / len(z_scores) if z_scores else float("inf"),
-        matches=bool(z_scores) and matching == len(z_scores),
+        mean_abs_z=sum(z_scores.values()) / shared if shared else float("inf"),
+        matches=shared >= 1 and matching >= ceil(0.75 * shared),
+        z_scores=z_scores,
     )
 
 
@@ -187,8 +253,8 @@ class CloneInvestigator:
         self,
         hypothesis_id: str,
         spec: CloneSpec,
-        production_incident: Fingerprint,
-        healthy_reference: Fingerprint,
+        production_incident: Fingerprint | list[Fingerprint],
+        healthy_reference: Fingerprint | list[Fingerprint],
         experiment: LabExperiment,
         *,
         triage: TriageResult | None = None,

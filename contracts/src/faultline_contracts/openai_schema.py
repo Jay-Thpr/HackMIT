@@ -34,8 +34,13 @@ def strictify(schema: Any) -> Any:
     return out
 
 
-def triage_response_format() -> dict[str, Any]:
+def strict_response_format(model: Any, name: str) -> dict[str, Any]:
+    """OpenAI strict ``response_format`` for any pydantic model."""
     return {
         "type": "json_schema",
-        "json_schema": {"name": "triage", "strict": True, "schema": strictify(TriageDraft.model_json_schema())},
+        "json_schema": {"name": name, "strict": True, "schema": strictify(model.model_json_schema())},
     }
+
+
+def triage_response_format() -> dict[str, Any]:
+    return strict_response_format(TriageDraft, "triage")

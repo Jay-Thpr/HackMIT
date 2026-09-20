@@ -13,6 +13,17 @@ from .investigator import (
     score_clone_prediction,
     similarity,
 )
+from .investigator_agent import (
+    AgentInvestigationEvidence,
+    AgenticCloneInvestigator,
+    AttemptRecord,
+    InvestigatorAgent,
+    InvestigatorValidationError,
+    LabParams,
+    LabProposal,
+    MetricDirection,
+    SeedInvestigator,
+)
 from .noise import DEFAULT_Z, FLOOR_FRAC, NoiseModel
 from .planner import ExperimentScore, Plan, confirmation_experiment, plan_experiment, score_experiment
 from .telemetry import (
@@ -58,6 +69,16 @@ __all__ = [
     "SimilarityEvidence",
     "score_clone_prediction",
     "similarity",
+    # LLM clone investigators
+    "AgentInvestigationEvidence",
+    "AgenticCloneInvestigator",
+    "AttemptRecord",
+    "InvestigatorAgent",
+    "InvestigatorValidationError",
+    "LabParams",
+    "LabProposal",
+    "MetricDirection",
+    "SeedInvestigator",
     # Triage
     "run_triage",
     "TriageValidationError",
