@@ -2,6 +2,7 @@ import argparse
 import json
 import logging
 import os
+import shlex
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,7 +18,10 @@ from faultline_telemetry import (
 )
 
 from .adapters import (
+    CommandPager,
+    PagingAuditSink,
     TeeAuditSink,
+    WebhookPager,
     DevinAdapter,
     CanaryPreparationError,
     FixtureCanaryDeployer,
@@ -50,12 +54,16 @@ log = logging.getLogger(__name__)
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="faultline", description="Faultline operator CLI")
     parser.add_argument("--audit-log", type=Path, default=DEFAULT_AUDIT_LOG)
+    parser.add_argument("--pager-webhook", help="POST every page_human here (env: FAULTLINE_PAGER_WEBHOOK)")
+    parser.add_argument("--pager-command", help="run this shell command with the page as JSON on stdin (env: FAULTLINE_PAGER_COMMAND)")
     commands = parser.add_subparsers(dest="command", required=True)
 
     watch = commands.add_parser("watch", help="run the incident workflow")
     watch.add_argument("--fixture", choices=("storm",), default="storm")
     watch.add_argument("--incident", help="override the generated incident id")
     watch.add_argument("--real-time", action="store_true")
+    watch.add_argument("--resume", action="store_true",
+                       help="continue an incident already in the audit log: keep its action budget and release leftover levers")
     watch.add_argument("--devin", action="store_true", help="ask Devin for the durable fix (needs DEVIN_API_KEY + DEVIN_ORG_ID)")
     watch.add_argument("--devin-acu-limit", type=int, default=5, help="max ACUs a Faultline-created Devin session may spend")
     watch.add_argument("--levers", choices=("fixture", "sandbox"), default="fixture")
@@ -178,6 +186,12 @@ def main(argv: list[str] | None = None) -> int:
         es_client = _persistence_client(elasticsearch_url, elasticsearch_api_key)
         audit = TeeAuditSink(audit, ElasticsearchAuditSink(es_client), log=log,
                              clone_id=getattr(args, "clone_id", None))
+    pager_webhook = args.pager_webhook or os.environ.get("FAULTLINE_PAGER_WEBHOOK")
+    pager_command = args.pager_command or os.environ.get("FAULTLINE_PAGER_COMMAND")
+    if pager_webhook:
+        audit = PagingAuditSink(audit, WebhookPager(pager_webhook), log=log)
+    elif pager_command:
+        audit = PagingAuditSink(audit, CommandPager(shlex.split(pager_command)), log=log)
     live_telemetry = None
     writer = None
     try:
@@ -209,8 +223,12 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         bundle = load_fixture(args.fixture)
         incident_id = args.incident or _run_incident_id(bundle.triage.incident_id)
-        if args.command in {"watch", "investigate", "experiment"} and audit.query(incident_id):
-            print("faultline: error: incident already exists; pick a new id")
+        resume = getattr(args, "resume", False)
+        if args.command in {"watch", "investigate", "experiment"} and audit.query(incident_id) and not resume:
+            print("faultline: error: incident already exists; pick a new id (or watch --resume)")
+            return 2
+        if resume and not audit.query(incident_id):
+            print(f"faultline: error: nothing to resume; no audit events for {incident_id!r}")
             return 2
         if args.telemetry == "sandbox":
             host = args.sandbox_host
@@ -306,6 +324,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(verdict.summary)
         else:
+            if resume:
+                orchestrator.resume(incident_id)
             orchestrator.run(incident_id=incident_id, now=now)
         return 0
     except (CanaryPreparationError, LeverError, RuntimeError, TelemetryUnavailable, ValueError) as exc:

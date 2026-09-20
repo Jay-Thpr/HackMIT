@@ -116,6 +116,57 @@ class Orchestrator:
             self._renderer.event("report", f"aborted ({type(exc).__name__}) — paged human")
             raise
 
+    def resume(self, incident_id: str) -> int:
+        """Pick an incident back up after a restart: the action budget continues from the audit
+        log and any lever a previous run left applied is released (or left to its TTL if the
+        release does not land). Returns the number of actions already counted against the budget.
+        """
+        events = self._audit.query(incident_id)
+        fields = set(ActionHandle.model_fields)
+        applied = {
+            e.action_id: ActionHandle.model_validate({k: v for k, v in e.payload.items() if k in fields})
+            for e in events
+            if e.kind == EventKind.action_apply and e.action_id and "lever_id" in e.payload
+        }
+        released = {
+            e.action_id
+            for e in events
+            if e.kind == EventKind.action_undo and e.payload.get("status") in ("undone", "expired")
+        }
+        now = self._clock()
+        leftover = [h for aid, h in applied.items() if aid not in released and h.expires_at > now]
+        self._actions = len(applied)
+        self._incident_id = incident_id
+        still_active: list[str] = []
+        for handle in leftover:
+            try:
+                if self._levers.status(handle) != ActionStatus.active:
+                    continue
+                _, landed = self._release(
+                    incident_id, handle, Stage.mitigate, f"released {handle.lever_id} left over from a previous run"
+                )
+            except LeverError as exc:
+                landed = False
+                self._record(
+                    incident_id, Stage.mitigate, EventKind.refused, Actor.adapter,
+                    f"could not check {handle.lever_id} left over from a previous run: {exc}",
+                    {"lever_id": handle.lever_id, "expires_at": handle.expires_at.isoformat()},
+                    action_id=handle.action_id,
+                )
+            if not landed:
+                still_active.append(handle.lever_id)
+        self._record(
+            incident_id, Stage.mitigate, EventKind.mitigation, Actor.orchestrator,
+            f"resumed: {self._actions}/{self._action_budget} actions already applied, "
+            f"{len(leftover)} lever(s) found applied, {len(leftover) - len(still_active)} released",
+            {"resumed": True, "actions_applied": self._actions, "leftover": [h.lever_id for h in leftover],
+             "still_active": still_active},
+        )
+        self._renderer.event(
+            "resume", f"{self._actions}/{self._action_budget} actions used; {len(leftover)} leftover lever(s)"
+        )
+        return self._actions
+
     def _run(self, incident_id: str, fp: Fingerprint, now: datetime) -> RunResult:
         triage = self.triage(incident_id, fp)
         experiment = self.plan(incident_id, triage)

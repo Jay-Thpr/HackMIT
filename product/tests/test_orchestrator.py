@@ -1,5 +1,5 @@
 import pytest
-from faultline_contracts import ActionStatus, Actor, EventKind, HypothesisSupport, JsonlSink, LeverError, Stage
+from faultline_contracts import ActionStatus, Actor, AuditEvent, EventKind, HypothesisSupport, JsonlSink, LeverError, Stage
 from faultline_product.adapters import (
     FixtureBrain,
     FixtureCanaryDeployer,
@@ -429,3 +429,50 @@ def test_missing_breach_is_a_precondition_not_an_incident(tmp_path):
     with pytest.raises(ValueError):
         orchestrator.run("no-breach", bundle.experiment_start)
     assert audit.query("no-breach") == []
+
+
+def test_resume_continues_the_budget_and_releases_leftover_levers(tmp_path):
+    bundle = load_fixture("storm")
+    audit = JsonlSink(tmp_path / "audit.jsonl")
+    clock = FixtureClock(bundle.experiment_start, bundle.telemetry.last_window_end)
+    levers = FixtureLeverAdapter(clock=clock)
+    # a previous run applied two levers, released one, and died before releasing the other
+    released = levers.apply("retry_cap", {"max_retries": 0}, 50)
+    levers.undo(released)
+    leftover = levers.apply("db_failover", {}, 900)
+    for handle, undone in ((released, True), (leftover, False)):
+        audit.write(AuditEvent(incident_id="resume", stage=Stage.experiment, kind=EventKind.action_apply, actor=Actor.adapter,
+                               summary=f"applied {handle.lever_id}", payload=handle.model_dump(mode="json"), action_id=handle.action_id))
+        if undone:
+            audit.write(AuditEvent(incident_id="resume", stage=Stage.experiment, kind=EventKind.action_undo, actor=Actor.adapter,
+                                   summary="released", payload={**handle.model_dump(mode="json"), "status": "undone"}, action_id=handle.action_id))
+    orchestrator = Orchestrator(levers, audit, FixtureDevinAdapter(), FixtureCanaryDeployer(), TerminalRenderer([].append),
+                                bundle.telemetry, FixtureBrain(bundle.triage, bundle.experiment, bundle.verdict), clock, clock.sleep, 5)
+
+    assert orchestrator.resume("resume") == 2
+    assert orchestrator._actions == 2
+    assert levers.status(leftover) == ActionStatus.undone
+    events = audit.query("resume")
+    undo = [e for e in events if e.kind == EventKind.action_undo and e.action_id == leftover.action_id]
+    assert undo and "left over from a previous run" in undo[-1].summary
+    note = next(e for e in events if e.payload.get("resumed"))
+    assert note.payload == {"resumed": True, "actions_applied": 2, "leftover": ["db_failover"], "still_active": []}
+    # the continued run then has only 3 actions left before it must page
+    orchestrator._action_budget = 4
+    with pytest.raises(BudgetExceeded):
+        orchestrator.run("resume", bundle.experiment_start)
+
+
+def test_resume_ignores_expired_and_already_released_levers(tmp_path):
+    bundle = load_fixture("storm")
+    audit = JsonlSink(tmp_path / "audit.jsonl")
+    clock = FixtureClock(bundle.experiment_start, bundle.telemetry.last_window_end)
+    levers = FixtureLeverAdapter(clock=clock)
+    old = levers.apply("retry_cap", {"max_retries": 0}, 20)
+    audit.write(AuditEvent(incident_id="expired", stage=Stage.experiment, kind=EventKind.action_apply, actor=Actor.adapter,
+                           summary="applied", payload=old.model_dump(mode="json"), action_id=old.action_id))
+    clock.sleep(60)  # the TTL has long passed: nothing to release
+    orchestrator = Orchestrator(levers, audit, FixtureDevinAdapter(), FixtureCanaryDeployer(), TerminalRenderer([].append),
+                                bundle.telemetry, FixtureBrain(bundle.triage, bundle.experiment, bundle.verdict), clock, clock.sleep, 5)
+    assert orchestrator.resume("expired") == 1
+    assert not any(e.kind == EventKind.action_undo for e in audit.query("expired"))
