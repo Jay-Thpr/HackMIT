@@ -161,13 +161,6 @@ export function ReplayLibrary({ scenario }: { scenario: Scenario }) {
 export function ElasticLineage() {
   const { set } = useWorkspace()
   const [surface, setSurface] = useState<'timeline' | 'clone' | 'memory'>('timeline')
-  const stages = [
-    ['01', 'OpenTelemetry', 'Traces, metrics, and logs enter through one standard collector.'],
-    ['02', 'Elastic Cloud', 'Raw signals remain inspectable beside the structured incident record.'],
-    ['03', 'Evidence', 'C1 fingerprints and C4 audit events keep each decision reproducible.'],
-    ['04', 'Retrieve', 'Bounded ES|QL tools and Jina memory surface only scoped context.'],
-    ['05', 'Decide', 'OpenAI explains the evidence; the noise-model judge owns the verdict.'],
-  ]
   const querySurfaces = {
     timeline: {
       label: 'Incident timeline',
@@ -195,22 +188,28 @@ export function ElasticLineage() {
   return <div className="elastic-lineage-view">
     <section className="elastic-intro">
       <div className="elastic-kicker">
-        <div className="elastic-attribution"><img src="https://www.elastic.co/favicon.ico" alt="" /><span>Built with Elastic</span></div>
-        <span className="overline">THE EVIDENCE LINEAGE</span>
+        <span className="overline">FAULTLINE ARCHITECTURE</span>
       </div>
-      <h2>From noisy telemetry to a decision you can inspect.</h2>
-      <p>Elastic is the evidence layer: it keeps the raw signal, the incident record, and the bounded retrieval path connected. Faultline’s judge still decides from measured change.</p>
+      <h2>From a production symptom to a measured answer.</h2>
+      <p>Faultline observes the system, builds a bounded evidence package, tests competing explanations safely, and keeps the full decision trail available for review.</p>
     </section>
-    <section className="elastic-pipeline" aria-label="Faultline and Elastic evidence pipeline">
-      {stages.map(([number, title, detail], index) => <div className="elastic-stage" key={title}>
-        <span className="elastic-stage-number">{number}</span>
-        <div><h3>{title}</h3><p>{detail}</p></div>
-        {index < stages.length - 1 && <span className="elastic-connector" aria-hidden="true" />}
-      </div>)}
+    <section className="architecture-map" aria-labelledby="architecture-map-title">
+      <div className="architecture-map-heading"><div><span className="overline">THE INCIDENT LOOP</span><h3 id="architecture-map-title">A system of evidence, experiments, and feedback.</h3></div><span>Read-only observation · TTL-bound action</span></div>
+      <div className="architecture-diagram">
+        <svg className="architecture-wires" viewBox="0 0 1000 500" preserveAspectRatio="none" aria-hidden="true"><defs><marker id="architecture-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7Z" /></marker></defs><path d="M164 115 H232" markerEnd="url(#architecture-arrow)"/><path d="M164 340 H232" markerEnd="url(#architecture-arrow)"/><path d="M404 115 H476" markerEnd="url(#architecture-arrow)"/><path d="M404 340 H476" markerEnd="url(#architecture-arrow)"/><path d="M646 115 H716" markerEnd="url(#architecture-arrow)"/><path d="M646 340 H716" markerEnd="url(#architecture-arrow)"/><path className="architecture-feedback" d="M846 385 C846 470 585 474 585 415" markerEnd="url(#architecture-arrow)"/><path className="architecture-feedback" d="M585 415 C585 470 118 474 118 395" markerEnd="url(#architecture-arrow)"/></svg>
+        <article className="architecture-node observed"><span>01 · OBSERVE</span><strong>Production system</strong><p>Services, dependencies, SLOs, and public stats.</p><small>Docker target</small></article>
+        <article className="architecture-node ingest"><span>02 · INGEST</span><strong>Telemetry paths</strong><p>OpenTelemetry traces, logs, metrics, and five-second fingerprints.</p><small>Collector + C1 builder</small></article>
+        <article className="architecture-node evidence"><span>03 · EVIDENCE</span><strong>Elastic records</strong><p>Raw OTLP, incident windows, audit events, and incident memory.</p><small>Searchable and retained</small></article>
+        <article className="architecture-node reason"><span>04 · REASON</span><strong>Hypotheses</strong><p>GPT explains scoped evidence; the math judge checks predictions.</p><small>Schema + noise gates</small></article>
+        <article className="architecture-node action"><span>05 · TEST</span><strong>Safe response</strong><p>Plan a reversible probe with a time limit and action budget.</p><small>C3 controls</small></article>
+        <article className="architecture-node clones"><span>06 · COMPARE</span><strong>Isolated clones</strong><p>Reproduce competing causes without copying hidden production state.</p><small>C6 clone lab</small></article>
+        <article className="architecture-node review"><span>07 · REVIEW</span><strong>Measured verdict</strong><p>Keep or reject the hypothesis, retain proof, then clean up.</p><small>C4 audit trail</small></article>
+        <article className="architecture-note"><strong>Only measurements close the loop.</strong><p>The model proposes and explains. A reversible test and the noise model decide.</p></article>
+      </div>
     </section>
-    <section className="elastic-guardrail"><span>WHY THIS MATTERS</span><p>Historical similarity can add context. It cannot name a cause, select a production action, or override the measured confirmation test.</p></section>
+    <section className="elastic-guardrail"><span>THE SAFETY BOUNDARY</span><p>Historical similarity can add context. It cannot name a cause, select a production action, or override the measured confirmation test.</p></section>
     <section className="query-surface" aria-labelledby="query-surface-title">
-      <div className="query-surface-heading"><div><span className="overline">INSPECT THE RETRIEVAL</span><h3 id="query-surface-title">The agent sees reviewed tools, not open-ended search.</h3></div><span className="query-readonly">Read-only · bounded</span></div>
+      <div className="query-surface-heading"><div><span className="overline">ONE PART OF THE LOOP · RETRIEVAL</span><h3 id="query-surface-title">The agent sees reviewed tools, not open-ended search.</h3></div><span className="query-readonly">Read-only · bounded</span></div>
       <div className="query-tabs" role="tablist" aria-label="Elastic tool examples">{(Object.keys(querySurfaces) as (keyof typeof querySurfaces)[]).map(key => <button key={key} role="tab" aria-selected={surface === key} onClick={() => setSurface(key)}>{querySurfaces[key].label}</button>)}</div>
       <div className="query-detail">
         <div className="tool-call-card"><span className="overline">AGENT BUILDER TOOL CALL</span><strong>{selectedSurface.tool}</strong><p>{selectedSurface.purpose}</p><div className="tool-parameters"><span>Required inputs</span>{selectedSurface.parameters.map(parameter => <code key={parameter}>{parameter}</code>)}</div><small>Only these named values can change. The query structure is fixed in Faultline.</small></div>
