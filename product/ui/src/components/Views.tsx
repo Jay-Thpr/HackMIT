@@ -1,4 +1,4 @@
-import { ArrowRight, Box, Database, FlaskConical, GitBranch, Layers3, Play, Search, ShieldCheck } from 'lucide-react'
+import { ArrowRight, Box, Database, GitBranch, Layers3, Play, Search } from 'lucide-react'
 import { useState } from 'react'
 import { metricLabel, timeLabel, visibleEvents, type Environment, type Scenario, type WorkspaceState } from '../model'
 import { useWorkspace } from '../store'
@@ -24,18 +24,35 @@ export function Observability({ scenario, environment }: { scenario: Scenario; e
 }
 
 export function ExperimentLab({ scenario, workspace }: { scenario: Scenario; workspace: WorkspaceState }) {
-  const { cursor, seek, set } = useWorkspace()
+  const { cursor, seek, focus, set, startDemo } = useWorkspace()
+  const events = visibleEvents(scenario, cursor)
+  const hypotheses = events.some(event => event.kind === 'reason') ? scenario.hypotheses : []
+  const clones = workspace.environments.filter(environment => environment.id !== 'production')
+  const lifecycleLabels = { unknown: 'Readiness not recorded', starting: 'Starting', ready: 'Ready', investigating: 'Investigating', destroying: 'Removing' }
   return <div className="lab-view">
-    <section className="lab-banner"><div className="lab-banner-icon"><FlaskConical size={29} strokeWidth={1.2} /></div><div><span className="overline">CLONE EXPERIMENTS</span><h2>Test a possible cause.</h2><p>Choose a cause, predict what should happen, and test it in a clone.</p></div><button className="primary-button" onClick={() => set({ dialog: 'experiment' })}>Design an experiment <ArrowRight size={15} /></button></section>
-    <div className="section-heading"><h3>Isolated environments</h3><span>{workspace.environments.length - 1} active in this replay</span></div>
-    <div className="clone-card-grid">{scenario.hypotheses.map(hypothesis => {
-      const creation = scenario.events.find(event => event.kind === 'clone' && event.environment?.hypothesisId === hypothesis.id)
+    <section className="lab-banner"><div><h2>Compare causes in isolated copies.</h2><p>Clones are isolated test environments built from the system’s topology, versions, and workload. Each investigator tests one possible cause without copying production data or hidden fault state.</p><p className="page-instruction">Inspect a clone to follow its agent and test results in the 3D workspace.</p></div><div className="lab-draft-action"><button className="primary-button" onClick={() => set({ dialog: 'experiment' })}>Draft a test <ArrowRight size={15} /></button><small>Validate a plan only; nothing runs.</small></div></section>
+    <div className="section-heading"><h3>Clones in this demo</h3><span>{clones.length} present · {timeLabel(cursor)}</span></div>
+    {hypotheses.length === 0 ? <section className="lab-empty"><h3>No clone investigation yet</h3><p>The demo starts healthy. After an incident is detected, Faultline proposes causes, starts clean clones, and tests them before confirming a result and removing the clones.</p><button className="secondary-button" onClick={() => startDemo(scenario.id)}><Play size={14} />Watch incident demo</button></section> : <div className="clone-card-grid">{hypotheses.map(hypothesis => {
+      const creation = events.find(event => event.kind === 'clone' && event.environment?.hypothesisId === hypothesis.id)
       const environmentId = creation?.environmentId
-      const observation = scenario.events.find(event => event.kind === 'observe' && event.environmentId === environmentId)
-      const environment = workspace.environments.find(env => env.id === environmentId)
-      return <article className="panel lab-clone-card" key={hypothesis.id}><div className="clone-card-top"><span className="clone-icon" style={{ color: hypothesis.color }}><GitBranch size={23} /></span><span className="quiet-badge">{environment ? 'Isolated · simulated' : 'Not active at this time'}</span></div><span className="overline">HYPOTHESIS {hypothesis.id}</span><h3>{hypothesis.title}</h3><p>{hypothesis.description}</p><dl><div><dt>Inherits</dt><dd>Topology, versions, workload</dd></div><div><dt>Does not inherit</dt><dd>Production data or hidden state</dd></div><div><dt>Observation</dt><dd>{environment ? `Through ${timeLabel(cursor)}` : 'No active clone'}</dd></div></dl><button className="secondary-button" disabled={!creation} onClick={() => { if (!creation || !environmentId) return; seek(observation?.at ?? creation.at); set({ view: 'investigation', environmentId, selectedNode: undefined, focusRevision: useWorkspace.getState().focusRevision + 1 }) }}>Explore this reproduction <ArrowRight size={14} /></button></article>
-    })}</div>
-    <section className="panel lab-safety"><ShieldCheck size={23} /><div><h3>Nothing runs against your infrastructure here.</h3><p>These are simulated experiments. Running a real test requires a connected backend and a verified way to undo the change.</p></div></section>
+      const environment = clones.find(env => env.id === environmentId)
+      const archive = events.find(event => event.kind === 'archive' && event.environmentId === environmentId)
+      const latest = environmentId ? events.filter(event => event.environmentId === environmentId).at(-1) : undefined
+      const status = environment ? lifecycleLabels[environment.lifecycle] : archive ? 'Archived' : 'Waiting for clone'
+      const statusId = `clone-status-${hypothesis.id}`
+      return <article className="panel lab-clone-card" key={hypothesis.id}>
+        <div className="clone-card-top"><span className="clone-identity"><GitBranch size={17} />{creation?.environment?.label ?? `Hypothesis ${hypothesis.id}`}</span><span className="clone-lifecycle" data-state={environment?.lifecycle ?? (archive ? 'archived' : 'waiting')}>{status}</span></div>
+        <h3>{hypothesis.title}</h3><p>{hypothesis.description}</p>
+        <dl><div><dt>Expected response</dt><dd>{hypothesis.prediction}</dd></div><div><dt>Latest step</dt><dd id={statusId}>{latest?.title ?? 'Continue the timeline to see this clone start.'}</dd></div></dl>
+        <button className="secondary-button" disabled={!environment && !archive} aria-describedby={statusId} onClick={() => {
+          if (!creation || !environmentId) return
+          if (archive) seek(creation.at)
+          focus(environmentId)
+          set({ view: 'investigation', playing: Boolean(archive), follow: Boolean(archive) })
+        }}>{archive ? <><Play size={14} />Replay this experiment</> : environment ? <>Inspect clone <ArrowRight size={14} /></> : 'Waiting for clone startup'}</button>
+      </article>
+    })}</div>}
+    <p className="page-source-note">Simulated clone lifecycle and test results. No infrastructure is connected.</p>
   </div>
 }
 
