@@ -45,6 +45,24 @@ for (const width of [1512, 900, 600, 390]) {
   })
 }
 
+test('context dropdowns use the workspace theme instead of default controls', async ({ page }) => {
+  await page.goto('/')
+  for (const name of ['Example architecture', 'Selected environment']) {
+    const select = page.getByRole('combobox', { name, exact: true })
+    await expect(select).toHaveCSS('appearance', 'none')
+    await expect(select).toHaveCSS('border-radius', '6px')
+    await expect(select).toHaveCSS('background-color', 'rgb(43, 49, 45)')
+    await expect(select).toHaveCSS('color', 'rgb(230, 232, 226)')
+    expect(await select.evaluate(element => getComputedStyle(element).backgroundImage)).toContain('data:image/svg+xml')
+    await select.focus()
+    await expect(select).toHaveCSS('outline-color', 'rgb(183, 195, 150)')
+  }
+  await page.getByRole('combobox', { name: 'Example architecture', exact: true }).selectOption('pipeline')
+  await expect(page.getByRole('combobox', { name: 'Example architecture', exact: true })).toHaveValue('pipeline')
+  await page.getByRole('combobox', { name: 'Selected environment', exact: true }).selectOption('clone-a')
+  await expect(page.getByTestId('topology-stage')).toHaveAttribute('data-isolated-layer', 'clone-a')
+})
+
 test('seeking backward removes future environments and evidence', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByRole('combobox', { name: 'Selected environment' }).locator('option')).toHaveCount(3)

@@ -1046,10 +1046,20 @@ main { padding: 22px 22px 0; }
 .app-shell .icon-button:hover { background: #3c4139; color: #edeeec; }
 .app-shell .context-bar { color: #c4c7c0; }
 .app-shell .scenario-context, .app-shell .scenario-context>svg { color: #b3b8ae; }
-.app-shell .scenario-context select { color: #d2d4cf; color-scheme: dark; }
+.app-shell .context-bar select {
+  appearance: none; -webkit-appearance: none; color-scheme: dark;
+  min-height: 34px; padding: 6px 30px 6px 11px; border: 1px solid #4a5147; border-radius: 6px;
+  background: #2b312d url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23bcc3b7' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 10px center;
+  color: #e6e8e2; font-size: 11px; font-weight: 500; line-height: 1.4; text-overflow: ellipsis;
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+.app-shell .context-bar select:hover { border-color: #66705f; background-color: #343b35; }
+.app-shell .context-bar select:focus-visible { outline: 2px solid #b7c396; outline-offset: 2px; border-color: #b7c396; }
+.app-shell .context-bar select option { background: #2b312d; color: #e6e8e2; }
+.app-shell .scenario-context select { max-width: 230px; }
 .app-shell .context-type, .app-shell .environment-context>span { color: #adb3a8; }
 .app-shell .context-separator { background: #4c5248; }
-.app-shell .environment-context select { background: #252a27; border-color: #4e544a; color: #ced1cb; color-scheme: dark; }
+.app-shell .environment-context select { max-width: 170px; }
 .app-shell .phase-disclosure>summary, .app-shell .phase-disclosure>summary>span { color: #b0b5ab; }
 .app-shell .phase-disclosure>summary:hover { color: #eaebe8; }
 .app-shell .path-step { background: transparent; color: #b6bbb1; border-color: #464c42; }
@@ -1326,7 +1336,7 @@ main { padding: 22px 22px 0; }
 .app-shell :is(.brand,.profile strong,.coverage-card h3,.table-entity,.lab-clone-card h3) { color:#eeefe9; }
 .app-shell .service-table :is(th,td) { border-color:#434b42; color:#cbd1c5; background:transparent; }
 .app-shell .service-table tr:hover { background:#343d32; }
-.app-shell :is(.search-input,.environment-context select) { background:#252a27; border-color:#525d4b; color:#dde1d7; }
+.app-shell .search-input { background:#252a27; border-color:#525d4b; color:#dde1d7; }
 .app-shell input::placeholder { color:#b8c1b0; }.app-shell .search-input input { color:#eeefe9; background:transparent; }
 .app-shell .timeline { background:transparent; }.app-shell .page-timeline { border:0; border-radius:0; }
 .app-shell .workspace-dialog { background:#2b312b; color:#eeefe9; border:1px solid #535c4e; border-radius:6px; }
