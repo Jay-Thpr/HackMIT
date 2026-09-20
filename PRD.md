@@ -489,12 +489,12 @@ The project is done when a judge watching the demo can see all thirteen of these
 - [x] Clones start healthy and inherit no hidden state (fairness test); C6 actions cannot reach production (`sandbox/scripts/validate_lab.py fairness`, 8/8).
 - [x] Both hero hypotheses reproduce the production fingerprint in clones; CPU starvation reproduces neither (`validate_lab.py storm|degraded|cpu`, 25/25; the CPU world matches on the dashboard but fails both confirmation tests, as in production).
 - [ ] Ambiguity check: nearest-centroid and passive LLM near chance on storm vs. degraded DB.
-- [x] Full loop runs unattended from incident to report with no manual steps (`integration/live_loop.py`: detect → triage → plan → experiment → verdict → mitigation → patch → report on the live sandbox, both hero worlds; canary stage still refused without `--canary-context`).
-- [ ] Every action in the audit log has a recorded undo, and a regression triggers it automatically. *(Undo pairing verified live on both worlds; auto-revert on canary regression is unit-tested only.)*
-- [ ] v5 loop ran end to end on the live sandbox with real OpenAI triage (incident → triage → experiment → verdict), before clone work started. *(Ran live with the fixture-triage fallback: storm H_meta confirmed, degraded H_db confirmed. Still needed: the same run with `OPENAI_API_KEY`.)*
+- [x] Full loop runs unattended from incident to report with no manual steps (`integration/live_loop.py`: detect → triage → plan → experiment → verdict → mitigation → patch → report on the live sandbox, both hero worlds). **Full v6 path live (Owner 4, runs `live-11`/`live-13`):** clone investigators → production probe → verdict → patch → clone verification → 5 % canary → report `ready`; `live-13` did it with real OpenAI triage and a real Devin PR (#20), 6.5 min breach-to-canaried-fix.
+- [ ] Every action in the audit log has a recorded undo, and a regression triggers it automatically. *(Undo pairing verified live on both worlds; auto-revert on canary regression seen live once (`live-7`, a false regression rolled back in 0 s) and unit-tested; a genuinely bad patch has not been canaried live.)*
+- [x] v5 loop ran end to end on the live sandbox with real OpenAI triage (incident → triage → experiment → verdict). *(`live-13`, gpt-4.1: `H_meta vs H_db vs H_cpu`, ambiguous, retry cap planned with separation 4, `H_meta confirmed` on production; one call, 3.6 k tokens. Product adds a taxonomy + full-matrix requirement to the triage prompt; without it the model's per-hypothesis predictions never overlapped and nothing was plannable.)*
 - [ ] Benchmark run completed on the live sandbox on frozen code; numbers on slides match the run output and say which arm and how many incidents.
 - [ ] Similar-incident search returns the right prior incident for a fresh storm and a fresh degraded-DB run.
-- [ ] Fallback video recorded; prebuilt patch works if Devin doesn't return in time.
+- [ ] Fallback video recorded. *(Prebuilt patch verified: `branch:faultline/fallback-retry-cap` resolves automatically, passed clone verification and the 5 % canary in `live-11`.)*
 - [ ] Each primary sponsor's tool is visible at a named moment in the demo.
 
 ## Risks, limits and open items
