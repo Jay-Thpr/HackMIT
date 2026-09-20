@@ -44,6 +44,7 @@ from .ports import (
 from .renderer import TerminalRenderer
 
 BASELINE_S = 120
+MAX_TELEMETRY_LAG_S = 3 * WINDOW_S  # newest window may trail the clock by one window plus poll jitter
 CODE_SUPERSEDES = {"retry_cap"}  # levers whose job the durable code patch takes over
 
 
@@ -93,9 +94,29 @@ class Orchestrator:
         self._incident_id = ""
 
     def run(self, incident_id: str, now: datetime | None = None) -> RunResult:
+        """Run the incident; any failure Faultline cannot handle itself is audited and paged
+        before it propagates, so a person owns the incident even when the loop dies."""
         self._incident_id = incident_id
         now = now or self._clock()
         fp = self.detect(incident_id, now)
+        try:
+            return self._run(incident_id, fp, now)
+        except BudgetExceeded:
+            raise  # _apply already paged
+        except Exception as exc:  # noqa: BLE001 - the audit trail must end with a human owner
+            self._record(
+                incident_id, Stage.report, EventKind.refused, Actor.orchestrator,
+                f"incident loop aborted: {type(exc).__name__}",
+                {"aborted": True, "error": f"{type(exc).__name__}: {exc}", "actions_applied": self._actions},
+            )
+            self._record(
+                incident_id, Stage.report, EventKind.page_human, Actor.orchestrator,
+                "incident loop aborted; applied levers revert on their TTL; page human", {},
+            )
+            self._renderer.event("report", f"aborted ({type(exc).__name__}) — paged human")
+            raise
+
+    def _run(self, incident_id: str, fp: Fingerprint, now: datetime) -> RunResult:
         triage = self.triage(incident_id, fp)
         experiment = self.plan(incident_id, triage)
         if experiment is None:
@@ -445,7 +466,22 @@ class Orchestrator:
         if landed:
             self._renderer.event("experiment", f"{experiment.lever_id} released")
         self._sleep(spec.default_watch_s)
-        after_release = self._telemetry.series(t, self._clock())
+        end = self._clock()
+        after_release = self._telemetry.series(t, end)
+        lag = max(_telemetry_lag_s(during, t), _telemetry_lag_s(after_release, end))
+        if lag > MAX_TELEMETRY_LAG_S:
+            self._record(
+                incident_id,
+                Stage.experiment,
+                EventKind.refused,
+                Actor.adapter,
+                f"telemetry is {lag:.0f}s stale; experiment phases cannot be aligned, verdict withheld",
+                {"stale_telemetry": True, "lag_s": lag, "max_lag_s": MAX_TELEMETRY_LAG_S},
+                action_id=action.action_id,
+                experiment_id=experiment.id,
+            )
+            self._renderer.event("observe", f"telemetry {lag:.0f}s stale — verdict withheld")
+            return baseline, [], []
         self._renderer.event(
             "observe", f"after-release window collected ({len(after_release)} windows)"
         )
@@ -959,6 +995,14 @@ class Orchestrator:
                 experiment_id=experiment_id,
             )
         )
+
+
+def _telemetry_lag_s(windows: list[Fingerprint], now: datetime) -> float:
+    """Seconds between the clock and the newest window collected; 0 when nothing was collected
+    (the judge already treats an empty phase as insufficient telemetry)."""
+    if not windows:
+        return 0.0
+    return (now - max(fp.window_end for fp in windows)).total_seconds()
 
 
 def _verification_evidence(verification: PatchVerification) -> str:

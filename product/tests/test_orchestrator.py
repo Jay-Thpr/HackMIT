@@ -344,3 +344,88 @@ def test_triage_event_carries_the_full_triage_result(tmp_path):
     assert [h["id"] for h in dump["hypotheses"]] == triage.payload["hypotheses"]
     assert {p["experiment_id"] for p in dump["predictions"]} == {p.experiment_id for p in bundle.triage.predictions}
     assert all("confirms_if" in p for p in dump["predictions"])
+
+
+class LaggingTelemetry:
+    """Every read returns windows that end `lag_s` before the time asked for (ingest lag)."""
+
+    def __init__(self, source, lag_s):
+        self.source, self.lag_s = source, lag_s
+
+    def window(self, start, end):
+        return self.source.window(start, end)
+
+    def series(self, start, end, step_s=5):
+        from datetime import timedelta
+        shift = timedelta(seconds=self.lag_s)
+        return [fp.model_copy(update={"window_start": fp.window_start - shift, "window_end": fp.window_end - shift})
+                for fp in self.source.series(start - shift, end - shift, step_s)]
+
+
+def test_stale_telemetry_withholds_the_verdict_and_pages(tmp_path):
+    bundle = load_fixture("storm")
+    orchestrator, audit, _ = _orchestrator(tmp_path, telemetry=LaggingTelemetry(bundle.telemetry, lag_s=30))
+    stale = []
+    orchestrator._brain.judge = lambda triage, experiment, baseline, during, after_release: stale.append((during, after_release)) or bundle.verdict.model_copy(update={"incident_id": "stale"})
+
+    orchestrator.run("stale", bundle.experiment_start)
+
+    assert stale and stale[0] == ([], [])  # the judge never sees mis-aligned phases
+    events = audit.query("stale")
+    refused = next(e for e in events if e.kind == EventKind.refused and e.payload.get("stale_telemetry"))
+    assert refused.stage == Stage.experiment and refused.actor == Actor.adapter
+    assert refused.payload["lag_s"] >= 30 and "stale" in refused.summary
+
+
+def test_fresh_telemetry_is_not_flagged(tmp_path):
+    orchestrator, audit, bundle = _orchestrator(tmp_path)
+    orchestrator.run("fresh", bundle.experiment_start)
+    assert not any(e.payload.get("stale_telemetry") for e in audit.query("fresh"))
+
+
+class ExplodingPatches(FixtureDevinAdapter):
+    def propose(self, incident_id, verdict, triage):
+        raise ConnectionError("Devin API: 502 Bad Gateway")
+
+
+def test_unhandled_failure_is_audited_and_paged_before_propagating(tmp_path):
+    output = []
+    orchestrator, audit, bundle = _orchestrator(tmp_path, output=output)
+    orchestrator._patches = ExplodingPatches()
+
+    with pytest.raises(ConnectionError):
+        orchestrator.run("crash", bundle.experiment_start)
+
+    events = audit.query("crash")
+    assert [e.kind for e in events[-2:]] == [EventKind.refused, EventKind.page_human]
+    assert events[-2].payload["aborted"] is True
+    assert events[-2].payload["error"].startswith("ConnectionError")
+    assert events[-2].payload["actions_applied"] == 2  # experiment + kept mitigation, both TTL-bounded
+    assert events[-1].stage == Stage.report
+    assert output[-1] == "[report] aborted (ConnectionError) — paged human"
+
+
+def test_budget_exceeded_is_not_paged_twice(tmp_path):
+    bundle = load_fixture("storm")
+    orchestrator, audit, _ = _orchestrator(tmp_path, budget=0)
+    with pytest.raises(BudgetExceeded):
+        orchestrator.run("budget-once", bundle.experiment_start)
+    assert sum(e.kind == EventKind.page_human for e in audit.query("budget-once")) == 1
+
+
+def test_missing_breach_is_a_precondition_not_an_incident(tmp_path):
+    bundle = load_fixture("storm")
+    healthy = next(fp for fp in bundle.telemetry.series(bundle.experiment_start, bundle.telemetry.last_window_end)
+                   if not any(slo.breached for slo in fp.slos))
+
+    class Healthy:
+        def window(self, start, end):
+            return healthy
+
+        def series(self, start, end, step_s=5):
+            return [healthy]
+
+    orchestrator, audit, _ = _orchestrator(tmp_path, telemetry=Healthy())
+    with pytest.raises(ValueError):
+        orchestrator.run("no-breach", bundle.experiment_start)
+    assert audit.query("no-breach") == []

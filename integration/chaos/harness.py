@@ -247,8 +247,9 @@ def check_invariants(o: Outcome, action_budget: int) -> list[str]:
             fails.append("report: ready and a human was paged")
         if o.breached_at_end:
             fails.append("report: ready while the production SLO is still breached")
-    # I7  Anything that is not a clean success pages a human (a person always owns the incident).
-    if o.final in ("escalated", "paged", "refused") and not o.has(EventKind.page_human):
+    # I7  Anything that is not a clean success pages a human (a person always owns the incident),
+    #     including a run that died on an unhandled error after the breach was detected.
+    if o.final in ("escalated", "paged", "refused", "raised") and not o.has(EventKind.page_human):
         fails.append(f"page: final={o.final} without a page_human event")
     # I8  An unconfirmed / none-of-the-above verdict never reaches patch or canary.
     if o.diagnosis == NONE_OF_THE_ABOVE and (o.has(EventKind.patch_opened) or o.has(EventKind.action_apply, Stage.canary)):
