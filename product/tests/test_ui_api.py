@@ -63,6 +63,46 @@ def test_scenario_from_a_real_run_matches_the_ui_model():
     assert reason["actor"] == "model"
 
 
+def test_local_resource_windows_roundtrip(tmp_path):
+    from datetime import timedelta
+
+    from faultline_contracts import Edge, Fingerprint, ResourceStats, ServiceStats, SloStatus
+    from faultline_telemetry.local import JsonlFingerprintStore
+
+    events = _events()
+    detect = next(e for e in events if e.kind.value == "detect")
+    store = JsonlFingerprintStore(tmp_path / "fingerprints.jsonl")
+
+    def fp(offset_s, breached, qps=10.0, latency=20.0, lag=4.0):
+        start = detect.ts + timedelta(seconds=offset_s)
+        return Fingerprint(
+            window_start=start, window_end=start + timedelta(seconds=5),
+            services={"gateway": ServiceStats(qps=qps, p99_ms=latency)},
+            edges=[Edge(src="gateway", dst="db")],
+            resources={"kafka_partition_0": ResourceStats(lag_messages=lag),
+                       "shard_0_replica": ResourceStats(replication_lag_bytes=128)},
+            slos=[SloStatus(name="p99", metric="svc.gateway.p99_ms", threshold=100,
+                            value=latency, breached=breached)])
+
+    store.write(fp(-10, False), incident_id="demo-storm-2")
+    store.write(fp(-5, False), incident_id="demo-storm-2")
+    store.write(fp(0, True, latency=900), incident_id="demo-storm-2")
+    store.write(fp(120, False, qps=99, lag=99), incident_id="demo-storm-2")
+    windows = store.query(events[0].ts - timedelta(minutes=3),
+                          events[-1].ts + timedelta(minutes=1),
+                          incident_id="demo-storm-2")
+    sc = scenario_from_incident("demo-storm-2", events, windows=windows)
+    kinds = {n["id"]: n["kind"] for n in sc["topology"]["nodes"]}
+    assert kinds["shard_0_replica"] == "datastore" and kinds["kafka_partition_0"] == "queue"
+    baseline = sc["baseline"]
+    assert baseline["gateway"]["qps"] == 10 and baseline["gateway"]["latency"] == 20
+    assert baseline["kafka_partition_0"]["resourceMetrics"] == {"lag_messages": 4.0}
+    assert baseline["kafka_partition_0"]["health"] == "unknown"
+    det = next(e for e in sc["events"] if e["kind"] == "detect")
+    assert det["readings"]["shard_0_replica"]["resourceMetrics"]["replication_lag_bytes"] == 128
+    assert det["readings"]["db"]["health"] == "unknown"  # fp.db is None: no attribute error
+
+
 def test_scenario_without_windows_reads_unknown_not_zero():
     sc = scenario_from_incident("demo-storm-2", _events())
     assert all(r == {"health": "unknown"} for r in sc["baseline"].values())

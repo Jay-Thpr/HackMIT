@@ -21,6 +21,7 @@ import json
 import logging
 import math
 import os
+import re
 import signal
 import time
 from contextlib import asynccontextmanager, suppress
@@ -46,7 +47,9 @@ SANDBOX_DIR = Path(__file__).resolve().parents[2]
 COMPOSE_FILE = SANDBOX_DIR / "docker-compose.yml"
 CLONE_OVERRIDE = SANDBOX_DIR / "clone.override.yml"  # no masquerade: clones can't pose as host traffic
 PRODUCTION_PROJECT = "faultline-sandbox"
-CLONE_PROJECT_PREFIX = "faultline-clone-"
+CLONE_PROJECT_PREFIX = os.environ.get("LAB_PROJECT_PREFIX", "faultline-clone-")
+if not re.fullmatch(r"faultline-(?:clone|demo)-[a-z0-9-]*", CLONE_PROJECT_PREFIX):
+    raise ValueError("LAB_PROJECT_PREFIX must be a faultline-clone- or faultline-demo- prefix")
 CLONE_SERVICES = ["db-primary", "db-standby", "payments", "orders", "envoy", "loadgen", "control",
                   "otel-collector"]  # never faultctl
 LAB_SERVICES = {"orders", "orders-v2", "payments"}
@@ -63,6 +66,9 @@ READY_TIMEOUT_S = float(os.environ.get("LAB_READY_TIMEOUT_S", "120"))
 RESET_TIMEOUT_S = float(os.environ.get("RESET_TIMEOUT_S", "120"))
 TOKEN = {"X-Sandbox-Token": os.environ.get("SANDBOX_TOKEN", "sandbox-internal")}
 BASE_PORTS = {"gateway": 8080, "orders": 8101, "payments": 8102, "loadgen": 8103, "orders-v2": 8104, "control": 9901}
+PORT_OFFSET = int(os.environ.get("LAB_PORT_OFFSET", "0"))
+if PORT_OFFSET < 0 or max(BASE_PORTS.values()) + PORT_OFFSET + MAX_CLONES * 1000 > 65535:
+    raise ValueError("LAB_PORT_OFFSET out of range")
 CATALOG = {a.id: a for a in LAB_CATALOG}
 
 http = httpx.AsyncClient(timeout=5.0)
@@ -118,7 +124,7 @@ class Clone:
         self.db_extra: dict[str, float] = {}  # action_id -> extra_ms contribution on the primary
         self.cpu_orig: dict[str, int] = {}  # service -> original NanoCpus
         self.lock = asyncio.Lock()
-        self.ports = {k: v + 1000 * slot for k, v in BASE_PORTS.items()}
+        self.ports = {k: v + PORT_OFFSET + 1000 * slot for k, v in BASE_PORTS.items()}
 
     @property
     def remaining_s(self) -> float:
@@ -130,7 +136,9 @@ class Clone:
             "LOAD_RPS": str(self.spec.workload.rps),
             "ORDERS_MAX_RETRIES": str(self.spec.retry_policy.max_retries),
             "ORDERS_ATTEMPT_TIMEOUT_MS": str(self.spec.retry_policy.timeout_ms),
-            "ORDERS_V2_IMAGE": f"faultline-clone-orders-v2:{self.slot}",
+            "ORDERS_V2_IMAGE": (f"{self.project}-orders-v2:prepared"
+                                if self.project.startswith("faultline-demo-")
+                                else f"faultline-clone-orders-v2:{self.slot}"),
             "PORT_GATEWAY": str(self.ports["gateway"]), "PORT_ORDERS": str(self.ports["orders"]),
             "PORT_PAYMENTS": str(self.ports["payments"]), "PORT_LOADGEN": str(self.ports["loadgen"]),
             "PORT_ORDERS_V2": str(self.ports["orders-v2"]), "PORT_CONTROL": str(self.ports["control"]),
@@ -681,6 +689,7 @@ async def healthz():
     return {
         "ok": True, "clones_alive": len(_alive()), "max_clones": MAX_CLONES_CFG,
         "clone_max_lifetime_s": MAX_LIFETIME_S,
+        "project_prefix": CLONE_PROJECT_PREFIX, "port_offset": PORT_OFFSET,
         "clones": [
             {"clone_id": c.clone_id, "status": c.status.value,
              "expires_at": c.expires_at.isoformat(), "remaining_s": c.remaining_s,

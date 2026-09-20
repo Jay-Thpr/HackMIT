@@ -73,6 +73,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -159,6 +160,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -245,6 +247,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -331,6 +334,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -417,6 +421,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -503,6 +508,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -589,6 +595,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -675,6 +682,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -761,6 +769,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -847,6 +856,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -933,6 +943,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -1019,6 +1030,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -1105,6 +1117,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -1216,6 +1229,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -1327,6 +1341,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -1438,6 +1453,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -1549,6 +1565,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -1660,6 +1677,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -1771,6 +1789,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -1882,6 +1901,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -1993,6 +2013,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -2104,6 +2125,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -2215,6 +2237,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -2326,6 +2349,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -2437,6 +2461,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -2542,6 +2567,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -2647,6 +2673,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -2752,6 +2779,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -2857,6 +2885,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -2968,6 +2997,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -3079,6 +3109,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -3190,6 +3221,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -3301,6 +3333,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",
@@ -3412,6 +3445,7 @@
         "error_rate": 0.0
       }
     ],
+    "resources": {},
     "slos": [
       {
         "name": "checkout",

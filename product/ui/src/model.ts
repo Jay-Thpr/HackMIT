@@ -31,6 +31,7 @@ export interface NodeReading {
   errorRate?: number
   retryRatio?: number
   utilization?: number
+  resourceMetrics?: Record<string, number>
 }
 
 export interface Environment {
@@ -280,6 +281,13 @@ export function environmentPresence(environment: Environment, cursor: number, re
 export function metricLabel(value: number | undefined, unit: string): string {
   if (value === undefined || !Number.isFinite(value)) return 'Not collected'
   return `${new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(value)}${unit === '%' ? '' : ' '}${unit}`
+}
+
+export function resourceUnit(name: string): string {
+  if (name.endsWith('_bytes')) return 'bytes'
+  if (name.endsWith('_ms')) return 'ms'
+  if (name.endsWith('_messages')) return 'messages'
+  return ''
 }
 
 export function timeLabel(time: number): string {

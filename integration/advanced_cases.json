@@ -1,0 +1,47 @@
+{
+  "schema_version": "faultline-advanced-cases/1",
+  "status": "not_run",
+  "qualification": "Development scenarios; injection recipes are not evidence of successful diagnosis or recovery",
+  "cases": [
+    {
+      "id": "hot_partition",
+      "title": "One tenant overloads a Kafka partition and its database shard",
+      "action": "workload",
+      "params": {"extra_rps": 120, "tenant": "tenant-a"},
+      "ttl_s": 120,
+      "expected_class": "H_hotkey"
+    },
+    {
+      "id": "replica_slowdown",
+      "title": "A shard replica stops replaying while writes continue",
+      "action": "replica_pause",
+      "params": {"shard": 0},
+      "ttl_s": 120,
+      "expected_class": "H_db"
+    },
+    {
+      "id": "consumer_retry",
+      "title": "One partition encounters a slow fulfillment dependency",
+      "action": "worker_delay",
+      "params": {"partition": 0, "delay_ms": 800},
+      "ttl_s": 120,
+      "expected_class": "H_queue"
+    },
+    {
+      "id": "worker_cpu",
+      "title": "One consumer becomes CPU constrained",
+      "action": "cpu_limit",
+      "params": {"worker": "worker-0", "cpus": 0.05},
+      "ttl_s": 120,
+      "expected_class": "H_cpu"
+    },
+    {
+      "id": "cache_stampede",
+      "title": "Short cache lifetimes increase database read pressure",
+      "action": "cache_policy",
+      "params": {"tenant": "tenant-a", "ttl_s": 1},
+      "ttl_s": 120,
+      "expected_class": "H_cache"
+    }
+  ]
+}

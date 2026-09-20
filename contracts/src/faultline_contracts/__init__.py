@@ -30,7 +30,7 @@ from .clone import (
     WorkloadSpec,
 )
 from .common import SCHEMA_VERSION, WINDOW_S, utcnow
-from .fingerprint import ChangeEvent, DbStats, Edge, Fingerprint, LogHighlight, ServiceStats, SloStatus, TelemetrySource
+from .fingerprint import ChangeEvent, DbStats, Edge, Fingerprint, LogHighlight, ResourceStats, ServiceStats, SloStatus, TelemetrySource
 from .levers import (
     CATALOG,
     ActionHandle,

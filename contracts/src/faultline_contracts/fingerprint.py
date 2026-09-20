@@ -28,6 +28,20 @@ class DbStats(Model):
     pool_busy_ratio: float | None = None
 
 
+class ResourceStats(Model):
+    lag_messages: float | None = Field(None, ge=0, allow_inf_nan=False)
+    replication_lag_bytes: float | None = Field(None, ge=0, allow_inf_nan=False)
+    outstanding: float | None = Field(None, ge=0, allow_inf_nan=False)
+    oldest_pending_ms: float | None = Field(None, ge=0, allow_inf_nan=False)
+    cache_hit_ratio: float | None = Field(None, ge=0, le=1, allow_inf_nan=False)
+    cpu_throttled_ratio: float | None = Field(None, ge=0, le=1, allow_inf_nan=False)
+    ready_replicas: float | None = Field(None, ge=0, allow_inf_nan=False)
+    desired_replicas: float | None = Field(None, ge=0, allow_inf_nan=False)
+    accepted_total: float | None = Field(None, ge=0, allow_inf_nan=False)
+    completed_total: float | None = Field(None, ge=0, allow_inf_nan=False)
+    completion_p99_ms: float | None = Field(None, ge=0, allow_inf_nan=False)
+
+
 class Edge(Model):
     src: str
     dst: str
@@ -65,6 +79,7 @@ class Fingerprint(Model):
     services: dict[str, ServiceStats] = Field(default_factory=dict)
     db: DbStats | None = None
     edges: list[Edge] = Field(default_factory=list)
+    resources: dict[str, ResourceStats] = Field(default_factory=dict)
     slos: list[SloStatus] = Field(default_factory=list)
     log_highlights: list[LogHighlight] = Field(default_factory=list)
     change_events: list[ChangeEvent] = Field(default_factory=list)
@@ -87,6 +102,8 @@ class Fingerprint(Model):
         for s in self.slos:
             if s.value is not None:
                 out[f"slo.{s.name}.value"] = float(s.value)
+        for name, stats in self.resources.items():
+            put(f"resource.{name}", stats)
         return out
 
 

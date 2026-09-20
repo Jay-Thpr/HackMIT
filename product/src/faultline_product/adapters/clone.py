@@ -120,12 +120,14 @@ class LabPatchVerifier(PatchVerifier):
         telemetry_factory: Callable[[CloneInfo, str], LiveTelemetrySource] | None = None,
         levers_factory: Callable[[CloneInfo], SandboxLeverAdapter] | None = None,
         writer: FingerprintWriter | None = None,
+        require_complete_evidence: bool = False,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], datetime] = utcnow,
     ):
         self._lab = lab
         self._context = context
         self._writer = writer  # Owner 2's ES store: clone windows land tagged with clone_id
+        self._require_complete_evidence = require_complete_evidence
         self._recipes = recipes or DEFAULT_RECIPES
         self._recipe_store = recipe_store
         self._stress = stress or []
@@ -244,6 +246,14 @@ class LabPatchVerifier(PatchVerifier):
             "gateway_p99_ms_after": _mean(fp.services["gateway"].p99_ms for fp in after if "gateway" in fp.services),
             "retry_ratio_after": _mean(fp.services["orders_v2"].retry_ratio for fp in after if "orders_v2" in fp.services),
         }
+        if self._require_complete_evidence:
+            from ..prepared_evidence import healthy_window_issue
+            issue = healthy_window_issue(after, minimum_windows=self._healthy_windows)
+            if issue:
+                return PatchVerification(
+                    VerificationStatus.failed, issue,
+                    clone_id=clone.clone_id, recipe=recipe, evidence=evidence,
+                )
         if not after:
             return PatchVerification(
                 VerificationStatus.failed, "no clone telemetry after the replay",
