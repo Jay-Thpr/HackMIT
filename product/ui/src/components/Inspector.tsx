@@ -56,7 +56,7 @@ export function Inspector({ scenario, workspace, environment }: { scenario: Scen
       <p>{agent ? `${environment.label} · Working on ${node.label}` : `${environment.label} · ${node.kind} · ${node.instrumented ? 'Instrumented' : 'Observed dependency'}`}</p>
       {!agent && <><div className="entity-metrics"><span>p99 latency<b>{metricLabel(reading?.latency, 'ms')}</b></span><span>Issued load<b>{metricLabel(reading?.qps, 'qps')}</b></span>
         {Object.entries(reading?.resourceMetrics ?? {}).map(([name, value]) => <span key={name}>{name}<b>{metricLabel(value, resourceUnit(name))}</b></span>)}</div>
-      <div className="entity-health"><i className={`health-dot ${reading?.health ?? 'unknown'}`} />{reading?.health ?? 'unknown'}<span>Instances: {node.instances ?? 'not collected'}</span></div></>}
+      <div className="entity-health"><i className={`health-dot ${reading?.health ?? 'unknown'}`} />{reading?.health ?? 'unknown'}<span>Instances: {node.instances ?? 'not collected'}</span></div>{node.tenants?.length ? <div className="entity-tenants"><b>Tenants served</b><ul>{node.tenants.map(tenant => <li key={tenant}><code>{tenant}</code></li>)}</ul></div> : null}</>}
     </div>}
 
     {suiteCheck && <div className="selected-entity"><div><strong>{environment.label} · Test suite</strong><button className="icon-button" aria-label="Close test inspector" onClick={() => set({ selectedSuiteCheck: undefined })}><X size={15} /></button></div><p>{scenario.live ? 'Recorded test suite' : 'Simulated tests'}</p></div>}

@@ -1619,3 +1619,9 @@ main { padding: 22px 22px 0; }
 .observer-card code{font-family:var(--mono);font-size:11px;background:#2f352f;border-radius:4px;padding:2px 5px;color:#d7dbd2}
 .observer-diagnosis,.observer-hypotheses,.observer-evidence,.observer-recommendation{margin-bottom:8px}
 .observer-footnote{font-family:var(--mono);font-size:10.5px;color:#bac1b6;margin:0}
+
+/* Which tenants a node serves, so confined blame is legible rather than inferred from a label. */
+.entity-tenants{margin-top:8px}
+.entity-tenants b{display:block;font-size:10px;letter-spacing:.9px;text-transform:uppercase;color:#bac1b6;margin-bottom:4px;font-weight:600}
+.entity-tenants ul{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:5px}
+.entity-tenants code{font-family:var(--mono);font-size:11px;background:#2f352f;border-radius:4px;padding:2px 6px;color:#d7dbd2}

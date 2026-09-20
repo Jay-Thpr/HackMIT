@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { replay } from './model'
-import { scenarios } from './scenarios'
+import { uniformTimelineScenarios } from './scenarios'
 import { deriveNodeRecovery } from './recovery'
 
 describe('measured node recovery', () => {
-  for (const scenario of scenarios) {
+  for (const scenario of uniformTimelineScenarios) {
     const stateAt = (time: number, environmentId = 'production') => {
       const environment = replay(scenario, time).environments.find(item => item.id === environmentId)!
       return deriveNodeRecovery(scenario, environment, scenario.targetId, time)
@@ -26,19 +26,19 @@ describe('measured node recovery', () => {
     })
   }
   it('keeps omitted measurements unknown even after a verdict', () => {
-    const scenario = scenarios[1]
+    const scenario = uniformTimelineScenarios[1]
     const environment = replay(scenario, 100).environments[0]
     expect(deriveNodeRecovery(scenario, environment, 'admin-api', 100)).toBe('unknown')
     expect(deriveNodeRecovery(scenario, environment, 'missing-node', 100)).toBe('unknown')
   })
   it.each([['H_db', false], ['none_of_the_above', false], [undefined, undefined]] as const)('does not turn healthy readings into confirmed recovery for %s / %s', (diagnosis, confirmed) => {
-    const source = scenarios[0]
+    const source = uniformTimelineScenarios[0]
     const scenario = { ...source, events: source.events.map(event => event.kind === 'verdict' ? { ...event, diagnosis, confirmed } : event) }
     const environment = replay(scenario, 100).environments[0]
     expect(deriveNodeRecovery(scenario, environment, scenario.targetId, 100)).toBe('recovering')
   })
   it('does not accept a model-authored verdict as measured confirmation', () => {
-    const source = scenarios[0]
+    const source = uniformTimelineScenarios[0]
     const scenario = { ...source, events: source.events.map(event => event.kind === 'verdict' ? { ...event, actor: 'model' as const } : event) }
     const environment = replay(scenario, 100).environments[0]
     expect(deriveNodeRecovery(scenario, environment, scenario.targetId, 100)).toBe('recovering')

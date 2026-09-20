@@ -170,7 +170,7 @@ export interface WorkspaceState {
 export function deriveTopology(input: {
   services: Record<string, unknown>
   edges: { src: string; dst: string }[]
-}, hints: Record<string, Partial<Pick<Entity, 'kind' | 'label' | 'instances'>>> = {}): Topology {
+}, hints: Record<string, Partial<Pick<Entity, 'kind' | 'label' | 'instances' | 'tenants'>>> = {}): Topology {
   const ids = new Set([...Object.keys(input.services), ...input.edges.flatMap(edge => [edge.src, edge.dst])])
   const nodes = [...ids].sort().map(id => ({
     id,
@@ -178,6 +178,7 @@ export function deriveTopology(input: {
     kind: hints[id]?.kind ?? (Object.hasOwn(input.services, id) ? 'service' : 'external'),
     instrumented: Object.hasOwn(input.services, id),
     ...(hints[id]?.instances === undefined ? {} : { instances: hints[id].instances }),
+    ...(hints[id]?.tenants === undefined ? {} : { tenants: hints[id].tenants }),
   }))
   const edges = [...new Map(input.edges.map(edge => {
     const id = JSON.stringify([edge.src, edge.dst])

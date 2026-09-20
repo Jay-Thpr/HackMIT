@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { ARCHIVED_PRESENCE, deriveTopology, environmentPresence, replay, visibleEvents, metricLabel, type WorkspaceEvent } from './model'
-import { scenarios } from './scenarios'
+import { uniformTimelineScenarios } from './scenarios'
 
 describe('incident lifecycle', () => {
-  for (const scenario of scenarios) {
+  for (const scenario of uniformTimelineScenarios) {
     it(`${scenario.id}: begins healthy and waits for observed clone readiness`, () => {
       expect(replay(scenario, 0)).toMatchObject({ lifecycle: 'monitoring', cleanup: 'not-started' })
       expect(replay(scenario, 12).lifecycle).toBe('detected')
@@ -60,7 +60,7 @@ describe('incident lifecycle', () => {
   }
 
   it('does not remove clones or claim cleanup just because a verdict exists', () => {
-    const scenario = { ...scenarios[0], events: scenarios[0].events.filter(event => event.kind !== 'archive' && event.lifecycle !== 'destroying') }
+    const scenario = { ...uniformTimelineScenarios[0], events: uniformTimelineScenarios[0].events.filter(event => event.kind !== 'archive' && event.lifecycle !== 'destroying') }
     expect(replay(scenario, 112).environments).toHaveLength(3)
     expect(replay(scenario, 112).cleanup).toBe('not-started')
   })
@@ -94,23 +94,23 @@ describe('adapter-independent topology', () => {
 
 describe('deterministic simulated replay', () => {
   it('never exposes future clones, actions, or verdicts', () => {
-    const state = replay(scenarios[0], 0)
+    const state = replay(uniformTimelineScenarios[0], 0)
     expect(state.environments.map(env => env.id)).toEqual(['production'])
     expect(state.actions).toHaveLength(0)
     expect(state.verdict).toBeUndefined()
-    expect(visibleEvents(scenarios[0], 0).every(event => event.at <= 0)).toBe(true)
+    expect(visibleEvents(uniformTimelineScenarios[0], 0).every(event => event.at <= 0)).toBe(true)
   })
 
   it('creates clean clones instead of copying production incident metrics', () => {
-    const state = replay(scenarios[0], 25)
+    const state = replay(uniformTimelineScenarios[0], 25)
     const production = state.environments.find(env => env.id === 'production')!
     const clone = state.environments.find(env => env.id === 'clone-a')!
-    expect(production.nodes[scenarios[0].targetId].health).toBe('degraded')
-    expect(clone.nodes[scenarios[0].targetId].health).toBe('healthy')
+    expect(production.nodes[uniformTimelineScenarios[0].targetId].health).toBe('degraded')
+    expect(clone.nodes[uniformTimelineScenarios[0].targetId].health).toBe('healthy')
   })
 
   it('keeps clone changes out of production and restores earlier state on seek', () => {
-    const scenario = scenarios[0]
+    const scenario = uniformTimelineScenarios[0]
     const during = replay(scenario, 47)
     expect(during.actions.some(action => action.environmentId === 'clone-a')).toBe(true)
     expect(during.actions.some(action => action.environmentId === 'production')).toBe(false)
@@ -120,7 +120,7 @@ describe('deterministic simulated replay', () => {
 
   it('does not claim successful reversion just because a TTL elapsed', () => {
     const event: WorkspaceEvent = { id: 'apply', sequence: 1, at: 1, kind: 'action', actor: 'adapter', environmentId: 'production', targetId: 'x', title: 'Apply', detail: '', action: { id: 'ttl', label: 'test', ttl: 5 } }
-    const state = replay({ ...scenarios[0], events: [event] }, 10)
+    const state = replay({ ...uniformTimelineScenarios[0], events: [event] }, 10)
     expect(state.actions[0].status).toBe('awaiting-reversion')
   })
 
@@ -129,12 +129,12 @@ describe('deterministic simulated replay', () => {
       { id: 'later', sequence: 2, at: 1, kind: 'verdict', actor: 'math', environmentId: 'production', title: 'second', detail: '' },
       { id: 'earlier', sequence: 1, at: 1, kind: 'verdict', actor: 'math', environmentId: 'production', title: 'first', detail: '' },
     ]
-    expect(replay({ ...scenarios[0], events }, 2).verdict).toBe('second')
+    expect(replay({ ...uniformTimelineScenarios[0], events }, 2).verdict).toBe('second')
   })
 
   it.each([['H_meta', true], ['H_db', true], ['H_db', false], ['none_of_the_above', false]] as const)('replays the measured diagnosis %s with confirmation %s', (diagnosis, confirmed) => {
     const event: WorkspaceEvent = { id: 'verdict', sequence: 1, at: 20, kind: 'verdict', actor: 'math', environmentId: 'production', title: 'Measured result', detail: '', diagnosis, confirmed }
-    const scenario = { ...scenarios[0], live: true, events: [event] }
+    const scenario = { ...uniformTimelineScenarios[0], live: true, events: [event] }
     expect(replay(scenario, 19).diagnosis).toBeUndefined()
     expect(replay(scenario, 20)).toMatchObject({ diagnosis, confirmed })
     const unconfirmed = { ...event, id: 'later', at: 30, diagnosis: 'none_of_the_above', confirmed: false }
@@ -144,14 +144,14 @@ describe('deterministic simulated replay', () => {
 
   it('does not infer confirmation from a legacy title or a model-authored verdict', () => {
     const event: WorkspaceEvent = { id: 'verdict', sequence: 1, at: 20, kind: 'verdict', actor: 'math', environmentId: 'production', title: 'H_meta confirmed', detail: '' }
-    expect(replay({ ...scenarios[0], events: [event] }, 20).confirmed).toBe(false)
-    expect(replay({ ...scenarios[0], events: [{ ...event, actor: 'model', diagnosis: 'H_db', confirmed: true }] }, 20).confirmed).not.toBe(true)
+    expect(replay({ ...uniformTimelineScenarios[0], events: [event] }, 20).confirmed).toBe(false)
+    expect(replay({ ...uniformTimelineScenarios[0], events: [{ ...event, actor: 'model', diagnosis: 'H_db', confirmed: true }] }, 20).confirmed).not.toBe(true)
   })
 
   it.each(['active', 'undone', 'expired', 'unknown', undefined] as const)('preserves release status %s and awaits confirmation at TTL', (undoStatus) => {
     const apply: WorkspaceEvent = { id: 'apply', sequence: 1, at: 1, kind: 'action', actor: 'adapter', environmentId: 'production', title: 'Apply', detail: '', action: { id: 'ttl', label: 'test', ttl: 10 } }
     const undo: WorkspaceEvent = { id: 'undo', sequence: 2, at: 5, kind: 'undo', actor: 'adapter', environmentId: 'production', title: 'Release', detail: '', undoId: 'ttl', undoStatus }
-    const scenario = { ...scenarios[0], live: true, events: [apply, undo] }
+    const scenario = { ...uniformTimelineScenarios[0], live: true, events: [apply, undo] }
     const released = undoStatus === 'undone' || undoStatus === 'expired'
     expect(replay(scenario, 4).actions[0].status).toBe('active')
     expect(replay(scenario, 5).actions[0].status).toBe(released ? 'reverted' : undoStatus === 'active' ? 'release-failed' : 'awaiting-reversion')
@@ -162,13 +162,13 @@ describe('deterministic simulated replay', () => {
   it('never releases an action in another environment with the same id', () => {
     const apply: WorkspaceEvent = { id: 'apply', sequence: 1, at: 1, kind: 'action', actor: 'adapter', environmentId: 'production', title: 'Apply', detail: '', action: { id: 'shared', label: 'test', ttl: 10 } }
     const undo: WorkspaceEvent = { id: 'undo', sequence: 2, at: 5, kind: 'undo', actor: 'adapter', environmentId: 'clone-a', title: 'Release', detail: '', undoId: 'shared', undoStatus: 'undone' }
-    expect(replay({ ...scenarios[0], events: [apply, undo] }, 5).actions[0].status).toBe('active')
+    expect(replay({ ...uniformTimelineScenarios[0], events: [apply, undo] }, 5).actions[0].status).toBe('active')
   })
 
   it('uses the same model for a queue-based, cyclic architecture', () => {
-    const state = replay(scenarios[1], 47)
+    const state = replay(uniformTimelineScenarios[1], 47)
     expect(state.environments).toHaveLength(3)
-    expect(scenarios[1].topology.nodes.some(node => node.kind === 'queue')).toBe(true)
-    expect(state.environments[0].nodes[scenarios[1].targetId]).toBeDefined()
+    expect(uniformTimelineScenarios[1].topology.nodes.some(node => node.kind === 'queue')).toBe(true)
+    expect(state.environments[0].nodes[uniformTimelineScenarios[1].targetId]).toBeDefined()
   })
 })
