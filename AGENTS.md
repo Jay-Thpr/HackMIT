@@ -6,7 +6,7 @@ Read this first. Then `PRD.md` (product plan, v6: adds the clone lab) and `contr
 
 An autonomous incident responder. When telemetry can't distinguish causes that fit the same symptoms, Faultline runs a safe, reversible experiment on the live system to tell them apart. Hero case: self-sustaining retry storm vs. degraded DB — cap retries; if the system stays healthy after release it was a storm, if the storm returns the DB is degraded. **The LLM proposes and explains; measurement against noise decides.**
 
-## Agent Builder runtime branch (not deployed)
+## Agent Builder runtime branch
 
 `brain/agent-builder-runtime` adds opt-in Agent Builder triage and clone proposals with explicit inference routing, existing schema/semantic validation and audited direct-OpenAI fallback. The math judge, action budget and C3/C6 execution remain unchanged. Default reasoning remains direct OpenAI.
 
@@ -15,7 +15,7 @@ An autonomous incident responder. When telemetry can't distinguish causes that f
 - From `faultline/brain/`, `uv run python scripts/deploy_elastic_investigation_agent.py --role triage --dry-run` prints the manifest offline; `--role investigator` prints the other. The script defaults to dry-run; `--apply` is a separate operator-authorized cloud mutation, not part of tests.
 - From `product/`, `uv run faultline report --incident <id> --elastic-evidence [--explain]` adds read-only evidence and optional cited Agent Builder observations without replacing the audit verdict. The explanation agent must also be deployed. Missing/partial evidence is labelled, never treated as health.
 - Focused checks only: Brain `uv run pytest -q tests/test_agent_builder.py tests/test_elastic_investigation.py`; Product `uv run pytest -q tests/test_agent_builder.py tests/test_elastic_evidence.py`; telemetry `uv run pytest -q tests/test_evidence.py`. Do not run the full integration suite during shared-stack activity.
-- Deployment status: the user reports primary reads passed on the separate `elastic-diagnostics` branch. Running responder mirror configuration/delivery, role deployment and live Agent Builder inference are not verified by these local tests. Root `.env` contents alone establish none of those facts.
+- Live check (2026-09-20): `faultline-triage` and `faultline-clone-investigator` were registered and their tool-free definitions verified. The selected `faultline-openai-investigation` endpoint is OpenAI `gpt-4.1` / `chat_completion`. The first fixture-only triage failed with `AgentBuilderError` before a usable response (cause undetermined); one explicitly authorized retry completed and passed C2 schema/semantic validation, with no tool calls, fallback or infrastructure actions. This is a smoke result, not evidence of sustained reliability. The report/explanation agent is still absent. The user separately reports primary reads passed; the running responder's actual mirror configuration/delivery remains unverified.
 
 ## Repository status snapshot
 
