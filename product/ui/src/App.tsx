@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { Activity, ArrowDownRight, ArrowRight, Box, ChevronDown, ChevronRight, CircleHelp, Compass, FlaskConical, Focus, GitBranch, Layers3, LayoutDashboard, ListFilter, Maximize2, MousePointer2, Network, Pause, Play, Plus, ShieldCheck, Sparkles, Waves } from 'lucide-react'
+import { Activity, ArrowDownRight, ArrowRight, Box, ChevronDown, ChevronRight, CircleHelp, Compass, Focus, GitBranch, Layers3, LayoutDashboard, ListFilter, Maximize2, MousePointer2, Network, Pause, Play, Plus, ShieldCheck, Sparkles, Waves } from 'lucide-react'
 import { followIncident, loadLiveScenarios } from './live'
 import { environmentLifecycleLabel, environmentOutcomeLabel, replay, timeLabel, visibleEvents, type IncidentLifecycle } from './model'
 import { useWorkspace, type View } from './store'
@@ -7,29 +7,24 @@ import { useLayout } from './use-layout'
 import { Inspector } from './components/Inspector'
 import { MetricChart } from './components/MetricChart'
 import { Timeline } from './components/Timeline'
-import { ElasticLineage, ExperimentLab, Observability, ReplayLibrary } from './components/Views'
+import { ElasticLineage, Observability, ReplayLibrary } from './components/Views'
 import { Explanation } from './components/Explanation'
 import { Dialogs } from './components/Dialogs'
-import { ComparisonReplay } from './comparison'
 
 const TopologyScene = lazy(() => import('./components/TopologyScene'))
 const navigation: { view: View; label: string; icon: typeof Activity }[] = [
   { view: 'explanation', label: 'Why this incident?', icon: CircleHelp },
   { view: 'observability', label: 'Observability', icon: LayoutDashboard },
   { view: 'investigation', label: 'Agent workspace', icon: Network },
-  { view: 'experiments', label: 'Clone experiments', icon: FlaskConical },
   { view: 'replay', label: 'Incident replay', icon: Layers3 },
   { view: 'elastic', label: 'Evidence lineage', icon: GitBranch },
-  { view: 'comparison', label: 'Compare responders', icon: GitBranch },
 ]
 const viewTitles: Record<View, { eyebrow: string; title: string; subtitle: string }> = {
   explanation: { eyebrow: 'UNDERSTAND THE INCIDENT', title: 'Why this incident?', subtitle: 'The symptoms, the possible causes, and the tests that tell them apart.' },
   investigation: { eyebrow: 'THE INVESTIGATION WORKSPACE', title: 'Investigation workspace', subtitle: 'Trace the symptoms. Test in isolation. Follow the evidence.' },
   observability: { eyebrow: 'SYSTEM OBSERVABILITY', title: 'Observability', subtitle: 'Metrics, dependencies, and context at the same moment in time.' },
-  experiments: { eyebrow: 'THE CLONE LAB', title: 'Clone experiments', subtitle: 'Inspect what each isolated copy is testing, or draft a new test without running it.' },
   replay: { eyebrow: 'THE EVIDENCE LIBRARY', title: 'Incident replay', subtitle: 'Choose a recorded demo to watch again. Playback never reruns infrastructure actions.' },
   elastic: { eyebrow: 'BUILT WITH ELASTIC', title: 'Evidence lineage', subtitle: 'How telemetry becomes a bounded, inspectable decision.' },
-  comparison: { eyebrow: 'RESPONDER COMPARISON', title: 'Compare responders', subtitle: 'Replay recorded runs side by side. Development-set comparison, not a held-out benchmark.' },
 }
 const lifecycleSteps: { id: IncidentLifecycle; label: string; title: string; detail: string }[] = [
   { id: 'monitoring', label: 'Normal system', title: 'Healthy reference system', detail: 'Monitored services are at baseline. Play the demo to follow an incident from its first symptoms to cleanup.' },
@@ -127,7 +122,7 @@ export default function App() {
     </aside>
 
     <div className="main-shell">
-      <header className="topbar"><div className="breadcrumb"><span>Workspace</span><ChevronRight size={12} /><strong>{navigation.find(item => item.view === view)?.label}</strong></div><div className="topbar-actions"><span className="demo-badge"><i />{view === 'comparison' ? 'Recorded comparison' : scenario.live ? (scenario.complete ? 'Live incident' : 'Live incident · in progress') : 'Simulated data'}</span>{view !== 'comparison' && <>{scenario.live && <a className="pause-all" href={`/api/incidents/${encodeURIComponent(scenario.id)}/evidence.json`} download>Export evidence</a>}<span className="topbar-divider" /><button className="pause-all" onClick={() => set({ playing: false })} disabled={!playing}><Pause size={13} />Pause simulation</button></>}</div></header>
+      <header className="topbar"><div className="breadcrumb"><span>Workspace</span><ChevronRight size={12} /><strong>{navigation.find(item => item.view === view)?.label}</strong></div><div className="topbar-actions"><span className="demo-badge"><i />{scenario.live ? (scenario.complete ? 'Live incident' : 'Live incident · in progress') : 'Simulated data'}</span>{scenario.live && <a className="pause-all" href={`/api/incidents/${encodeURIComponent(scenario.id)}/evidence.json`} download>Export evidence</a>}<span className="topbar-divider" /><button className="pause-all" onClick={() => set({ playing: false })} disabled={!playing}><Pause size={13} />Pause simulation</button></div></header>
       <main id="main-content">
         <section className="workspace-header"><div><div className="workspace-brief"><span className="case-id">{scenario.incident}</span><span className="case-state" data-lifecycle={workspace.lifecycle}><i />{workspace.phase}</span></div><h1>{view === 'investigation' ? (workspace.lifecycle === 'monitoring' ? 'Healthy reference system' : workspace.verdict ?? scenario.incidentTitle) : title.title}</h1>{view !== 'investigation' && <p>{title.subtitle}</p>}</div><div className="workspace-header-actions">{view === 'investigation' && <button className="primary-button" onClick={toggleDemo}>{playing ? <Pause size={14} /> : <Play size={14} />}{playbackLabel}</button>}<button className="secondary-button" onClick={() => set({ dialog: 'experiment' })}><Plus size={15} />Draft experiment</button></div></section>
         <div className="context-bar"><div className="scenario-context"><Box size={15} /><select aria-label="Example architecture" value={scenarioId} onChange={event => { setScenario(event.target.value); setEntitySearch('') }}>{scenarios.map(item => <option value={item.id} key={item.id}>{item.name}</option>)}</select><span className="context-separator" /><span className="context-type">{scenario.subtitle}</span></div><div className="environment-context"><span>Environment</span><select aria-label="Selected environment" value={environment.id} onChange={event => focus(event.target.value)}>{workspace.environments.map(env => <option key={env.id} value={env.id}>{env.label}</option>)}</select></div></div>
@@ -164,12 +159,11 @@ export default function App() {
         </> : <>
           {view === 'explanation' && <Explanation scenario={scenario} workspace={workspace} />}
           {view === 'observability' && <Observability scenario={scenario} environment={environment} />}
-          {view === 'experiments' && <ExperimentLab scenario={scenario} workspace={workspace} />}
           {view === 'replay' && <ReplayLibrary scenario={scenario} />}
           {view === 'elastic' && <ElasticLineage />}
           <div className="panel page-timeline"><Timeline scenario={scenario} /></div>
         </>}
-        <footer className="page-footer"><span><Mark />Faultline <span>·</span> The model proposes. Measurement decides.</span><span>{view === 'comparison' ? 'Read-only comparison replay' : scenario.live ? 'Real audit log · readings from Elasticsearch' : <>Interactive design prototype <ArrowDownRight size={12} /></>}</span></footer>
+        <footer className="page-footer"><span><Mark />Faultline <span>·</span> The model proposes. Measurement decides.</span><span>{scenario.live ? 'Real audit log · readings from Elasticsearch' : <>Interactive design prototype <ArrowDownRight size={12} /></>}</span></footer>
       </main>
     </div>
     <Dialogs scenario={scenario} workspace={workspace} />
