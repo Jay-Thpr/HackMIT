@@ -336,9 +336,7 @@ TARGET_CASES: list[ChaosCase] = [
     ChaosCase("degraded", "hero world B: batch job halves DB capacity; a patch cannot fix hardware, so the canary must fail",
               degrade(), F({ESCALATED}), "H_db"),
     ChaosCase("cpu_starve", "none-of-the-above world: payments CPU-starved, DB is a victim",
-              cpu_starve(), F({PAGED, ESCALATED}), NONE,
-              known_gap="db_failover confirms H_db from db.query_p50_ms alone; the SLO never recovers, so the "
-                        "confirms_if should also demand svc.gateway.p99_ms within_baseline"),
+              cpu_starve(), F({PAGED, ESCALATED}), NONE),
     ChaosCase("storm_mild", "short, shallow hiccup: does a 400 ms / 5 s blip even ignite a storm?",
               storm(delay_ms=400, duration_s=5), F({READY, NO_BREACH}), F({"H_meta"})),
     ChaosCase("storm_long", "60 s hiccup still ongoing when Faultline acts: the trigger has not left yet",
@@ -378,10 +376,7 @@ RESPONDER_CASES: list[ChaosCase] = [
     ChaosCase("telemetry_lag", "every read is 10 s stale", storm(), F({READY, PAGED, ESCALATED}), F({"H_meta", NONE}),
               telemetry=lambda t: Lagging(t, lag_s=10)),
     ChaosCase("telemetry_lag_severe", "every read is 30 s stale: after-release reads mostly see the hold", storm(),
-              F({READY, PAGED, ESCALATED}), F({"H_meta", NONE}), telemetry=lambda t: Lagging(t, lag_s=30),
-              known_gap="no telemetry freshness check: with 30 s of ingest lag the judge's during/after-release "
-                        "phases are mis-aligned and it confirms H_db in a storm world; experiment() should verify "
-                        "the last window_end is within one WINDOW_S of the clock before judging"),
+              F({PAGED}), NONE, telemetry=lambda t: Lagging(t, lag_s=30)),
     ChaosCase("no_db_exporter", "db.* honestly missing in every window", storm(), F({READY, PAGED}), F({"H_meta", NONE}),
               telemetry=NoDbExporter),
     ChaosCase("db_counter_reset", "DB exporter restarts mid-run and reports zeros (contract violation upstream)",

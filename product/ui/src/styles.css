@@ -350,6 +350,11 @@ tr:last-child td{border-bottom:0}
 .replay-row h3{font-size:15px;font-weight:500;margin:6px 0}
 .replay-row p{font-size:10px;color:#6e665c}
 .replay-row .secondary-button{margin-left:auto}
+.replay-row .replay-actions{margin-left:auto;display:flex;gap:8px}
+.replay-row .replay-actions .secondary-button{margin-left:0}
+.replay-row.is-selected{outline:1px solid #b7c396;outline-offset:-1px}
+.report-evidence{font-size:11px;line-height:1.8;color:#6e665c;margin:8px 0 14px;word-break:break-word}
+.report-preview .secondary-button{margin:6px 0 14px}
 .report-preview{padding:25px}
 .report-preview h3{margin:13px 0;font-weight:450;font-size:20px}
 .report-preview>p{max-width:650px;font-size:11px;color:#6e665c}

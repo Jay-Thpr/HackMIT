@@ -122,9 +122,9 @@ test('pages explain their jobs and offer meaningful empty-state actions', async 
   await expect(page.getByRole('status')).toContainText('Nothing was saved or executed')
   await page.keyboard.press('Escape')
   await navigation.getByRole('button', { name: 'Incident replay', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Available demos' })).toBeVisible()
-  await page.getByRole('button', { name: 'Replay this demo: Event pipeline', exact: true }).click()
-  await expect(page.getByRole('combobox', { name: 'Example architecture' })).toHaveValue('pipeline')
+  await expect(page.getByRole('heading', { name: 'Review an investigation.' })).toBeVisible()
+  await expect(page.getByText(/no recorded incidents loaded/)).toBeVisible()  // says so rather than implying saved history
+  await page.getByRole('button', { name: 'Play from the start', exact: true }).click()
   await expect(page.getByRole('region', { name: 'Incident lifecycle' })).toHaveAttribute('data-phase', 'monitoring')
   await expect(page.getByRole('button', { name: 'Pause demo', exact: true })).toBeVisible()
 })

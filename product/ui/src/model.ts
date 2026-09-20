@@ -76,6 +76,22 @@ export interface Scenario {
   live?: boolean  // built from a real audit log by the Product API, not a scripted example
   complete?: boolean  // live only: the run has written its report (false while it is still happening)
   now?: number  // live only: wall-clock position on the replay axis when the API built this
+  report?: {  // live only: what the audit log recorded for stages 5-8
+    outcome: string
+    diagnosis: string | null
+    confirmed: boolean
+    verdictAt: number | null
+    patch: string | null
+    patchProvider: string | null
+    patchRevision: number | null
+    verification: string | null
+    canary: string | null
+    mitigationHeld: string | null
+    productionActions: number
+    pages: number
+    startedAt: string
+    endedAt: string
+  }
   name: string
   subtitle: string
   incident: string
