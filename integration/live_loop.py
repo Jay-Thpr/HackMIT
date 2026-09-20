@@ -66,6 +66,31 @@ class LiveLoop:
             self.report.windows.append({"phase": f"{self.step}/{label}", **w})
         return span
 
+    def quench(self, label: str, attempts: int = 2) -> bool:
+        """Break a storm that outlived its trigger, so the next case starts clean.
+
+        Clearing the C5 fault removes the *trigger*; a retry storm that has become
+        self-sustaining keeps running without it -- that is the whole premise of the
+        hero scenario. A single post-reset health sample can also land in a brief
+        lull and read healthy while the storm re-establishes, which is how a case
+        ends up measuring its noise model against a stormed baseline.
+
+        So: if the system is not healthy after the reset, cap retries to collapse the
+        amplification, release the cap, and require health to *hold* afterwards. The
+        cap is released before the caller's baseline begins; a cap left on would make
+        the baseline look healthy without it being so.
+        """
+        for attempt in range(attempts):
+            if is_healthy(self.s.tail(self.phase(10, f"{label} settle"), 8)):
+                return True
+            self.ctl.post("/admin/retry_override", json={"max_retries": 0, "ttl_s": 40})
+            self.phase(25, f"{label} quench")
+            self.ctl.delete("/admin/retry_override")
+            if is_healthy(self.s.tail(self.phase(20, f"{label} quench release"), 10)):
+                self.check(f"{label}: storm quenched (attempt {attempt + 1})", True)
+                return True
+        return False
+
     def reset(self, label: str) -> None:
         try:
             st = self.fc.reset()
@@ -75,6 +100,8 @@ class LiveLoop:
         lv = self.ctl.get("/admin/levers").json()
         self.check(f"{label}: C5 reset healthy, levers inactive", st.world == World.none and not any(v["active"] for v in lv.values()),
                    json.dumps({k: v["active"] for k, v in lv.items()}))
+        if not self.quench(label):
+            self.check(f"{label}: sandbox healthy before next phase", False, fmt(self.s.tail(self.phase(5, f"{label} final"), 5)))
 
     # -- one world -------------------------------------------------------------------------------
     def run_world(self, name: str, start_watch: str, *, spec: dict | None = None, incident: str | None = None) -> Path:
