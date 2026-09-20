@@ -208,8 +208,9 @@ class FollowUpFixtureBrain(FixtureBrain):
     def confirmation_experiment(self, triage, hypothesis_id, catalog, blast_radius, excluded_ids):
         del triage, catalog, blast_radius
         assert hypothesis_id == "H_db"
-        assert "retry_cap_0_20s" in excluded_ids
-        return self._follow_up
+        if excluded_ids:  # the follow-up lookup excludes the probe already run
+            assert "retry_cap_0_20s" in excluded_ids
+        return self._follow_up  # also the relief lever held as mitigation afterwards
 
 
 def test_unconfirmed_diagnostic_probe_runs_direct_confirmation_follow_up(tmp_path):
@@ -235,6 +236,31 @@ def test_unconfirmed_diagnostic_probe_runs_direct_confirmation_follow_up(tmp_pat
 
     result = orchestrator.run("follow-up", bundle.experiment_start)
 
-    starts = [event.experiment_id for event in audit.query("follow-up") if event.kind == EventKind.experiment_start]
+    events = audit.query("follow-up")
+    starts = [event.experiment_id for event in events if event.kind == EventKind.experiment_start]
     assert starts == ["retry_cap_0_20s", "db_failover_30s"]
     assert result.diagnosis == "H_db"
+    # H_db is not cured by the probe: the relieving lever (failover) is held as the mitigation
+    held = [e for e in events if e.kind == EventKind.mitigation and "held as mitigation" in e.summary]
+    assert held and held[0].payload["lever_id"] == "db_failover"
+
+
+def test_relief_mitigation_is_kept_through_the_canary(tmp_path):
+    """A failover held for H_db is not released before the canary: the patch does not replace it."""
+    orchestrator, audit, bundle = _orchestrator(tmp_path)
+    db_failover = next(item for item in bundle.experiments if item.id == "db_failover_30s")
+    first = bundle.verdict.model_copy(update={
+        "diagnosis": "none_of_the_above", "confirmed": False,
+        "support": [HypothesisSupport(hypothesis_id="H_db", support=1.0, confirmed=False)]})
+    second = bundle.verdict.model_copy(update={
+        "diagnosis": "H_db", "confirmed": True,
+        "support": [HypothesisSupport(hypothesis_id="H_db", support=1.0, confirmed=True)]})
+    orchestrator._brain = FollowUpFixtureBrain(bundle.triage, bundle.experiment, [first, second], db_failover)
+
+    orchestrator.run("relief", bundle.experiment_start)
+
+    events = audit.query("relief")
+    held = next(e for e in events if e.kind == EventKind.mitigation and "held as mitigation" in e.summary)
+    undone_ids = {e.action_id for e in events if e.kind == EventKind.action_undo}
+    assert held.action_id not in undone_ids  # failover still in place when the report is written
+    assert not any("released emergency mitigation" in e.summary for e in events)

@@ -43,6 +43,7 @@ from .ports import (
 from .renderer import TerminalRenderer
 
 BASELINE_S = 120
+CODE_SUPERSEDES = {"retry_cap"}  # levers whose job the durable code patch takes over
 
 
 class BudgetExceeded(RuntimeError):
@@ -499,17 +500,59 @@ class Orchestrator:
                 experiment_id=experiment.id,
             )
             return action
-        else:
-            self._record(
-                incident_id,
-                Stage.mitigate,
-                EventKind.mitigation,
-                Actor.orchestrator,
-                "experiment lever released; durable fix required",
-                {"lever_id": experiment.lever_id},
-                experiment_id=experiment.id,
-            )
+        # The probe was diagnostic, not curative (H_db: the cap only lowered load). Hold the
+        # lever that directly relieves the diagnosed cause instead, so production is not left in
+        # the incident while the durable fix is written and verified.
+        relief = self._relief_experiment(triage, verdict.diagnosis, experiment)
+        if relief is not None:
+            spec = next(spec for spec in self._levers.catalog() if spec.id == relief.lever_id)
+            try:
+                action = self._apply(
+                    incident_id, relief.lever_id, relief.params, spec.max_ttl_s, Stage.mitigate, relief.id
+                )
+            except (LeverError, BudgetExceeded) as exc:
+                self._record(
+                    incident_id, Stage.mitigate, EventKind.refused, Actor.adapter,
+                    f"relief lever {relief.lever_id} unavailable: {exc}", {"lever_id": relief.lever_id},
+                )
+                action = None
+            if action is not None:
+                self._record(
+                    incident_id, Stage.mitigate, EventKind.action_apply, Actor.adapter,
+                    f"applied {relief.lever_id} as mitigation", action.model_dump(mode="json"),
+                    action_id=action.action_id, experiment_id=relief.id,
+                )
+                self._record(
+                    incident_id, Stage.mitigate, EventKind.mitigation, Actor.orchestrator,
+                    f"{relief.lever_id} held as mitigation while the durable fix is prepared",
+                    {"lever_id": relief.lever_id, "action_id": action.action_id, "ttl_s": spec.max_ttl_s},
+                    action_id=action.action_id, experiment_id=relief.id,
+                )
+                self._renderer.event("mitigate", f"{relief.lever_id} held (ttl {spec.max_ttl_s}s)")
+                return action
+        self._record(
+            incident_id,
+            Stage.mitigate,
+            EventKind.mitigation,
+            Actor.orchestrator,
+            "experiment lever released; durable fix required",
+            {"lever_id": experiment.lever_id},
+            experiment_id=experiment.id,
+        )
+        return None
+
+    def _relief_experiment(
+        self, triage: TriageResult, diagnosis: str, probe: Experiment
+    ) -> Experiment | None:
+        """The catalog lever that directly relieves the diagnosed cause (Brain's confirmation
+        experiment for that hypothesis), if it is not the probe we already ran."""
+        find = getattr(self._brain, "confirmation_experiment", None)
+        if find is None:
             return None
+        relief = find(triage, diagnosis, self._levers.catalog(), self._levers.estimate_blast_radius, set())
+        if relief is None or relief.blast_radius_pct > 50:
+            return None
+        return relief  # may be the probe itself (e.g. failover confirmed H_db): then it is re-held
 
     def patch(self, incident_id: str, verdict: Verdict, triage: TriageResult) -> PatchProposal:
         patch = self._patches.propose(incident_id, verdict, triage)
@@ -653,7 +696,11 @@ class Orchestrator:
         except CanaryPreparationError as exc:
             return self._refuse_canary(incident_id, f"patch target unavailable: {exc}")
 
-        if mitigation is not None:
+        if mitigation is not None and mitigation.lever_id in CODE_SUPERSEDES:
+            # The patch replaces this lever's job (a bounded retry policy supersedes the retry
+            # cap), so judge v2 without it. A relief lever such as db_failover stays: it fixes
+            # the dependency, which no Orders patch can, and pulling it would blame the patch
+            # for the incident coming back.
             released_mitigation = self._levers.undo(mitigation)
             self._record(
                 incident_id,
