@@ -20,6 +20,7 @@ OWNER2_TOOL_IDS = (
     "faultline.clone_vs_production",
     "faultline.similar_incidents",
     "faultline.incident_context",
+    "faultline.semantic_incident_memory",
 )
 TOOLS_ROUTE = "/api/agent_builder/tools"
 MAX_WINDOW_DAYS = 90
@@ -137,6 +138,25 @@ _DEFINITIONS = (
         "| SORT ts ASC, event_id ASC | LIMIT 200",
         clone_id=_CLONE_PARAM,
     ),
+    _definition(
+        OWNER2_TOOL_IDS[4],
+        "Retrieve up to 10 prior curated incident reports by semantic meaning through the managed Jina "
+        "embedding field. query_text must describe only already-observed evidence, never a hidden cause or "
+        "requested diagnosis. The exact environment/clone and a bounded historical interval are required. "
+        "Results are human-written retrieval context only, not C1 telemetry, never a causal diagnosis, a verdict, "
+        "an experiment recommendation, or a substitute for the Brain math judge.",
+        "FROM faultline-incident-memory METADATA _score | WHERE " + _GUARD
+        + "AND incident_id != ?incident_id AND " + _ORIGIN
+        + "AND created_at >= TO_DATETIME(?start) AND created_at < TO_DATETIME(?end) "
+        + "AND MATCH(content, ?query_text) "
+        + "| KEEP incident_id, environment, clone_id, created_at, diagnosis, content, _score "
+        + "| SORT _score DESC, created_at DESC | LIMIT 10",
+        clone_id=_CLONE_PARAM,
+        query_text=_param(
+            "string",
+            "Brief description of already-observed evidence for semantic retrieval; never an arbitrary ES|QL query.",
+        ),
+    ),
 )
 
 
@@ -182,6 +202,8 @@ def query_request(tool_id: str, params: Mapping[str, Any]) -> dict[str, Any]:
                 raise ValueError("metric parameters must be finite nonnegative numbers")
     if not params["incident_id"].strip():
         raise ValueError("incident_id is required")
+    if "query_text" in params and not params["query_text"].strip():
+        raise ValueError("query_text is required")
     if not timedelta(0) < dates["end"] - dates["start"] <= timedelta(days=MAX_WINDOW_DAYS):
         raise ValueError("invalid time window")
     if params["environment"] not in {"production", "clone"}:

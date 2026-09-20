@@ -35,6 +35,7 @@ def parameters(tool_id=OWNER2_TOOL_IDS[0]):
         "start": "2026-01-01T00:00:00Z", "end": "2026-01-01T00:01:00Z",
         "observed_at": "2026-01-01T00:02:00Z", "orders_retry_ratio": 3.0,
         "db_query_p99_ms": 80.0,
+        "query_text": "retry ratio rose while dependency latency was elevated",
     }
     if tool_id == OWNER2_TOOL_IDS[1]:
         values["clone_id"] = "clone-1"
@@ -45,7 +46,7 @@ def parameters(tool_id=OWNER2_TOOL_IDS[0]):
 def test_exact_registry_and_bounded_named_parameters():
     definitions = tool_definitions()
     assert tuple(d["id"] for d in definitions) == OWNER2_TOOL_IDS
-    assert len({d["configuration"]["query"] for d in definitions}) == 4
+    assert len({d["configuration"]["query"] for d in definitions}) == 5
     for definition in definitions:
         validate_tool_definition(definition)
         assert set(definition) == {"id", "type", "description", "tags", "configuration"}
@@ -56,10 +57,11 @@ def test_exact_registry_and_bounded_named_parameters():
         assert {"incident_id", "environment", "start", "end"} <= set(config["params"])
         assert all(p["optional"] is False for p in config["params"].values())
         assert all(p["type"] in {"string", "date", "float"} for p in config["params"].values())
-        assert re.findall(r"FROM ([\w-]+)", query) == [
-            "faultline-audit" if definition["id"] == OWNER2_TOOL_IDS[3] else "faultline-fingerprints"
-        ]
-        assert re.search(r"\| LIMIT (2|20|200)$", query)
+        assert re.findall(r"FROM ([\w-]+)", query) == [{
+            OWNER2_TOOL_IDS[3]: "faultline-audit",
+            OWNER2_TOOL_IDS[4]: "faultline-incident-memory",
+        }.get(definition["id"], "faultline-fingerprints")]
+        assert re.search(r"\| LIMIT (2|10|20|200)$", query)
         assert "TO_DATETIME(?start) + 90 days" in query
         assert not any(word in query.lower() for word in ("payload", "summary", "controller", "hidden", "benchmark"))
         assert "??" not in query
@@ -67,7 +69,7 @@ def test_exact_registry_and_bounded_named_parameters():
 
 
 def test_distinct_evidence_semantics():
-    timeline, comparison, similar, context = tool_definitions()
+    timeline, comparison, similar, context, semantic_memory = tool_definitions()
     assert "incident_id == ?incident_id" in timeline["configuration"]["query"]
     assert "SORT window_start ASC" in timeline["configuration"]["query"]
     query = comparison["configuration"]["query"]
@@ -85,6 +87,12 @@ def test_distinct_evidence_semantics():
     assert "not full fingerprint_similarity" in similar["description"]
     assert "never a causal diagnosis" in similar["description"]
     assert "event_id, stage, kind, actor, action_id, experiment_id" in context["configuration"]["query"]
+    query = semantic_memory["configuration"]["query"]
+    assert "FROM faultline-incident-memory METADATA _score" in query
+    assert "MATCH(content, ?query_text)" in query
+    assert "incident_id != ?incident_id" in query
+    assert "SORT _score DESC, created_at DESC" in query
+    assert "never a causal diagnosis" in semantic_memory["description"]
 
 
 @pytest.mark.parametrize("change", [
@@ -171,7 +179,7 @@ def test_read_only_reconciliation_and_client_close():
 
     with AgentToolsRegistry("https://primary.example/s/evidence/", "secret", transport=httpx.MockTransport(handler)) as registry:
         plan = registry.reconcile()
-        assert [p["operation"] for p in plan] == ["create"] * 4
+        assert [p["operation"] for p in plan] == ["create"] * 5
         assert not registry._client.is_closed
     assert registry._client.is_closed
     assert [(r.method, str(r.url)) for r in requests] == [
@@ -206,9 +214,9 @@ def test_exact_create_put_routes_bodies_and_repeat_idempotence():
         return httpx.Response(200, json={})
 
     with AgentToolsRegistry("https://primary.example", "secret", transport=httpx.MockTransport(handler)) as registry:
-        assert [p["operation"] for p in registry.reconcile(apply=True)] == ["unchanged", "update", "create", "create"]
-        assert [p["operation"] for p in registry.reconcile(apply=True)] == ["unchanged"] * 4
-    assert [r.method for r in requests] == ["GET", "PUT", "POST", "POST", "GET"]
+        assert [p["operation"] for p in registry.reconcile(apply=True)] == ["unchanged", "update", "create", "create", "create"]
+        assert [p["operation"] for p in registry.reconcile(apply=True)] == ["unchanged"] * 5
+    assert [r.method for r in requests] == ["GET", "PUT", "POST", "POST", "POST", "GET"]
     assert stored["unrelated.tool"] == {"id": "unrelated.tool", "type": "index_search"}
 
 

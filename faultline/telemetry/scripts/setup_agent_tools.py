@@ -1,4 +1,4 @@
-"""Preview the four Owner 2 tools; --check reads Kibana, --apply explicitly mutates it."""
+"""Preview the five Owner 2 tools; --check reads Kibana, --apply explicitly mutates it."""
 
 import argparse
 import json
@@ -21,7 +21,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="Print fixed definitions offline (default); no auth or network.")
     mode.add_argument("--check", action="store_true", help="GET primary Kibana and print a reconciliation plan; no writes.")
-    mode.add_argument("--apply", action="store_true", help="Explicitly authorize creating/updating the four fixed tool IDs.")
+    mode.add_argument("--apply", action="store_true", help="Explicitly authorize creating/updating the five fixed tool IDs.")
     args = parser.parse_args(argv)
     if not args.check and not args.apply:
         definitions = tool_definitions()
