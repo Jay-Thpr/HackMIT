@@ -60,9 +60,10 @@ def test_storm_flow_uses_contract_boundaries(tmp_path):
 
     events = audit.query(result.incident_id)
     kinds = [event.kind for event in events]
-    assert kinds[:6] == [
+    assert kinds[:7] == [
         EventKind.detect,
         EventKind.triage,
+        EventKind.triage,  # planner candidate table (actor math)
         EventKind.experiment_start,
         EventKind.action_apply,
         EventKind.action_undo,
@@ -75,9 +76,8 @@ def test_storm_flow_uses_contract_boundaries(tmp_path):
         for event in events
         if event.experiment_id == bundle.experiment.id and event.stage == 4
     ]
-    assert {event.action_id for event in experiment_events if event.action_id} == {
-        experiment_events[0].action_id
-    }
+    start = next(event for event in experiment_events if event.kind == EventKind.experiment_start)
+    assert {event.action_id for event in experiment_events if event.action_id} == {start.action_id}
     assert output[2] == "[triage] source: fixture"
     assert output[4] == "[experiment] retry_cap on: {'max_retries': 0}"
     assert output[5] == "[experiment] retry_cap released"

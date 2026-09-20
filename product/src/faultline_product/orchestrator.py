@@ -9,6 +9,7 @@ from faultline_contracts import (
     NONE_OF_THE_ABOVE,
     WINDOW_S,
     ActionHandle,
+    ActionStatus,
     Actor,
     AuditEvent,
     AuditSink,
@@ -201,7 +202,7 @@ class Orchestrator:
             EventKind.triage,
             Actor.llm,
             f"ambiguous: {' vs '.join(ids)}",
-            {"hypotheses": ids, "ambiguous": triage.ambiguous},
+            {"hypotheses": ids, "ambiguous": triage.ambiguous, "triage": triage.model_dump(mode="json")},
         )
         self._renderer.event("triage", f"ambiguous: {' vs '.join(ids)}")
         source = self._brain.triage_source()
@@ -210,9 +211,24 @@ class Orchestrator:
         return triage
 
     def plan(self, incident_id: str, triage: TriageResult) -> Experiment | None:
-        experiment = self._brain.plan(
-            triage, self._levers.catalog(), self._levers.estimate_blast_radius
-        )
+        catalog, blast_radius = self._levers.catalog(), self._levers.estimate_blast_radius
+        experiment = self._brain.plan(triage, catalog, blast_radius)
+        plan_scores = getattr(self._brain, "plan_scores", None)
+        if plan_scores is not None:
+            selected_id = experiment.id if experiment is not None else None
+            candidates = [
+                {**item, "selected": item["experiment_id"] == selected_id}
+                for item in plan_scores(triage, catalog, blast_radius)
+            ]
+            self._record(
+                incident_id,
+                Stage.experiment,
+                EventKind.triage,
+                Actor.math,
+                f"planner: {len(candidates)} candidates scored",
+                {"planner": True, "candidates": candidates},
+                experiment_id=selected_id,
+            )
         if experiment is None:
             self._record(
                 incident_id,
@@ -411,28 +427,23 @@ class Orchestrator:
         self._sleep(experiment.hold_s)
         t = self._clock()
         during = self._telemetry.series(t - timedelta(seconds=experiment.hold_s), t)
-        released = self._levers.undo(action)
-        self._record(
-            incident_id,
-            Stage.experiment,
-            EventKind.action_undo,
-            Actor.adapter,
-            f"released {experiment.lever_id}",
-            released.model_dump(mode="json"),
-            action_id=action.action_id,
-            experiment_id=experiment.id,
+        released, landed = self._release(
+            incident_id, action, Stage.experiment, f"released {experiment.lever_id}", experiment.id
         )
         self._record(
             incident_id,
             Stage.experiment,
             EventKind.experiment_end,
             Actor.orchestrator,
-            "lever released; after-release observation started",
+            "lever released; after-release observation started"
+            if landed
+            else "lever still active; after-release observation is not a release",
             {"status": released.status.value},
             action_id=action.action_id,
             experiment_id=experiment.id,
         )
-        self._renderer.event("experiment", f"{experiment.lever_id} released")
+        if landed:
+            self._renderer.event("experiment", f"{experiment.lever_id} released")
         self._sleep(spec.default_watch_s)
         after_release = self._telemetry.series(t, self._clock())
         self._renderer.event(
@@ -716,15 +727,11 @@ class Orchestrator:
             # cap), so judge v2 without it. A relief lever such as db_failover stays: it fixes
             # the dependency, which no Orders patch can, and pulling it would blame the patch
             # for the incident coming back.
-            released_mitigation = self._levers.undo(mitigation)
-            self._record(
+            self._release(
                 incident_id,
+                mitigation,
                 Stage.mitigate,
-                EventKind.action_undo,
-                Actor.adapter,
                 "released emergency mitigation before canary verification",
-                released_mitigation.model_dump(mode="json"),
-                action_id=mitigation.action_id,
             )
         try:
             canary = self._apply(
@@ -750,16 +757,10 @@ class Orchestrator:
         self._sleep(spec.default_watch_s)
         canary_end = self._clock()
         fingerprints = self._telemetry.series(canary_start, canary_end)
-        released = self._levers.undo(canary)
-        self._record(
-            incident_id,
-            Stage.canary,
-            EventKind.action_undo,
-            Actor.adapter,
-            "released canary_weight",
-            released.model_dump(mode="json"),
-            action_id=canary.action_id,
-        )
+        _, landed = self._release(incident_id, canary, Stage.canary, "released canary_weight")
+        if not landed:
+            detail = f"canary_weight release did not land; TTL {canary.ttl_s}s will revert it"
+            return CanaryResult(CanaryStatus.regressed, detail, target)
         regression = self._canary_regression(fingerprints, target)
         if regression is not None:
             self._record(
@@ -876,6 +877,63 @@ class Orchestrator:
             raise BudgetExceeded("action budget exceeded")
         self._actions += 1
         return self._levers.apply(lever_id, params, ttl_s)
+
+    def _release(
+        self,
+        incident_id: str,
+        handle: ActionHandle,
+        stage: Stage,
+        summary: str,
+        experiment_id: str | None = None,
+    ) -> tuple[ActionHandle, bool]:
+        """Undo, then re-read status(); retry once. A release that did not land is recorded,
+        a human is paged, and the TTL is left to revert it."""
+        released = self._levers.undo(handle)
+        landed = self._levers.status(handle) != ActionStatus.active
+        if not landed:
+            released = self._levers.undo(handle)
+            landed = self._levers.status(handle) != ActionStatus.active
+        if not landed:
+            released = released.model_copy(update={"status": ActionStatus.active})
+        self._record(
+            incident_id,
+            stage,
+            EventKind.action_undo,
+            Actor.adapter,
+            summary,
+            released.model_dump(mode="json"),
+            action_id=handle.action_id,
+            experiment_id=experiment_id,
+        )
+        if not landed:
+            detail = f"release of {handle.lever_id} did not land; TTL {handle.ttl_s}s will revert it"
+            self._record(
+                incident_id,
+                stage,
+                EventKind.refused,
+                Actor.adapter,
+                detail,
+                {
+                    "release_failed": True,
+                    "lever_id": handle.lever_id,
+                    "ttl_s": handle.ttl_s,
+                    "expires_at": handle.expires_at.isoformat(),
+                },
+                action_id=handle.action_id,
+                experiment_id=experiment_id,
+            )
+            self._record(
+                incident_id,
+                stage,
+                EventKind.page_human,
+                Actor.orchestrator,
+                f"{handle.lever_id} still active after release; page human",
+                {},
+                action_id=handle.action_id,
+                experiment_id=experiment_id,
+            )
+            self._renderer.event(stage.name, f"{detail} — paged human")
+        return released, landed
 
     def _record(
         self,

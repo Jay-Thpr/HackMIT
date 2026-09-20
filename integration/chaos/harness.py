@@ -220,11 +220,16 @@ def check_invariants(o: Outcome, action_budget: int) -> list[str]:
             fails.append(f"blast: {e.payload['lever_id']} {radius:g}% > 50%")
     # I5  Nothing stays applied except a recorded mitigation: a completed run released everything
     #     it applied unless a `mitigation` event names the action (PRD stage 5 keeps one reversible
-    #     lever, e.g. db_failover holding a degraded DB up until a human fixes it); a crashed run
-    #     may leave levers behind only until their TTL expires.
+    #     lever, e.g. db_failover holding a degraded DB up until a human fixes it) or a `refused`
+    #     event with `release_failed` admits the undo did not land and a human was paged; a crashed
+    #     run may leave levers behind only until their TTL expires.
     if o.raised is None:
         held = {e.action_id for e in o.events if e.kind == EventKind.mitigation and e.action_id}
-        held_levers = {e.payload.get("lever_id") for e in applies if e.action_id in held}
+        failed = {e.action_id for e in o.events if e.kind == EventKind.refused and e.payload.get("release_failed")}
+        paged = {e.action_id for e in o.events if e.kind == EventKind.page_human}
+        if unpaged := failed - paged:
+            fails.append(f"release: {len(unpaged)} failed release(s) without a page_human")
+        held_levers = {e.payload.get("lever_id") for e in applies if e.action_id in held | failed}
         if stray := [l for l in o.active_at_end if l not in held_levers]:
             fails.append(f"release: levers still active after a completed run: {stray}")
         if missing := [e.action_id for e in applies if e.action_id not in undone and e.action_id not in held]:

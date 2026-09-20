@@ -392,10 +392,7 @@ RESPONDER_CASES: list[ChaosCase] = [
     ChaosCase("failover_refused", "db failover endpoint returns 503 in the degraded world (follow-up probe)", degrade(),
               F({RAISED, PAGED}), None, levers=lambda l: RefusingApply(l, "db_failover")),
     ChaosCase("undo_never_lands", "releases are acknowledged but never applied: TTL must clean up", storm(),
-              F({READY, ESCALATED, PAGED}), None, levers=StickyUndo,
-              known_gap="the orchestrator trusts the handle returned by undo() and never re-reads status(); a "
-                        "release that did not land is audited as 'released' and the report is 'ready' while "
-                        "retry_cap and canary_weight are still applied (only the TTL cleans up)"),
+              F({ESCALATED, PAGED}), None, levers=StickyUndo),
     ChaosCase("lever_noop", "control plane says yes, data plane does nothing", storm(), F({PAGED}), NONE,
               levers=SilentNoop),
     ChaosCase("llm_garbage", "LLM predicts for experiments that do not exist", storm(), F({REFUSED}), "refused",

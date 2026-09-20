@@ -1,5 +1,5 @@
 import pytest
-from faultline_contracts import EventKind, HypothesisSupport, JsonlSink, LeverError, Stage
+from faultline_contracts import ActionStatus, Actor, EventKind, HypothesisSupport, JsonlSink, LeverError, Stage
 from faultline_product.adapters import (
     FixtureBrain,
     FixtureCanaryDeployer,
@@ -189,6 +189,7 @@ def test_no_separating_experiment_finishes_run_and_pages_human(tmp_path):
     assert result.diagnosis == "refused"
     events = audit.query("no-experiment")
     assert [event.kind for event in events if event.stage == Stage.experiment] == [
+        EventKind.triage,  # planner scored the candidates, none selected
         EventKind.refused,
         EventKind.page_human,
     ]
@@ -271,3 +272,75 @@ def test_relief_mitigation_is_kept_through_the_canary(tmp_path):
         assert report.summary == "incident mitigated; human action required"
         assert report.payload["mitigation_held"] == "db_failover"
         assert any(e.kind == EventKind.page_human and "needs a human fix" in e.summary for e in events)
+
+
+class StickyUndoLevers(FixtureLeverAdapter):
+    """undo() reports `undone` but the target keeps the lever active (the DELETE never landed)."""
+
+    def __init__(self, clock=None):
+        super().__init__(clock=clock) if clock else super().__init__()
+        self.undo_calls = []
+
+    def undo(self, handle):
+        self.undo_calls.append(handle.action_id)
+        return handle.model_copy(update={"status": ActionStatus.undone})
+
+    def status(self, handle):
+        return ActionStatus.active
+
+
+def test_release_that_does_not_land_is_retried_recorded_and_paged(tmp_path):
+    output = []
+    levers = StickyUndoLevers()
+    orchestrator, audit, bundle = _orchestrator(tmp_path, levers=levers, output=output)
+
+    result = orchestrator.run("sticky", bundle.experiment_start)
+
+    events = audit.query("sticky")
+    applied = [e.action_id for e in events if e.kind == EventKind.action_apply]
+    # every release was retried exactly once
+    assert all(levers.undo_calls.count(action_id) == 2 for action_id in applied)
+    for stage, lever in ((Stage.experiment, "retry_cap"), (Stage.mitigate, "retry_cap"), (Stage.canary, "canary_weight")):
+        refused = [e for e in events if e.stage == stage and e.kind == EventKind.refused and e.payload.get("release_failed")]
+        assert refused and refused[0].actor == Actor.adapter and refused[0].action_id
+        assert refused[0].summary.startswith(f"release of {lever} did not land; TTL ")
+        assert refused[0].summary.endswith("s will revert it")
+        assert any(e.stage == stage and e.kind == EventKind.page_human and e.action_id == refused[0].action_id for e in events)
+    # the audit never claims a release that did not happen
+    assert all(e.payload["status"] == "active" for e in events if e.kind == EventKind.action_undo)
+    assert result.canary.status.value == "regressed"
+    assert "did not land" in result.canary.detail
+    assert events[-1].summary == "incident escalated: canary regressed"
+    assert any(line.startswith("[experiment] release of retry_cap did not land") for line in output)
+
+
+def test_planner_candidate_table_is_audited(tmp_path):
+    orchestrator, audit, bundle = _orchestrator(tmp_path)
+    orchestrator.run("planner", bundle.experiment_start)
+
+    planner = [e for e in audit.query("planner") if e.stage == Stage.experiment and e.payload.get("planner")]
+    assert len(planner) == 1
+    event = planner[0]
+    assert event.kind == EventKind.triage and event.actor == Actor.math
+    assert event.summary == "planner: 1 candidates scored"
+    assert event.experiment_id == bundle.experiment.id
+    (row,) = event.payload["candidates"]
+    assert row == {
+        "experiment_id": bundle.experiment.id, "lever_id": "retry_cap", "separation": 1,
+        "score": 1 - 0.1 * bundle.experiment.blast_radius_pct,
+        "blast_radius_pct": bundle.experiment.blast_radius_pct, "selected": True,
+    }
+
+
+def test_triage_event_carries_the_full_triage_result(tmp_path):
+    orchestrator, audit, bundle = _orchestrator(tmp_path)
+    orchestrator.run("triage-dump", bundle.experiment_start)
+
+    triage = next(e for e in audit.query("triage-dump") if e.stage == Stage.triage and e.kind == EventKind.triage)
+    assert triage.actor == Actor.llm
+    assert triage.payload["hypotheses"] == [h.id for h in bundle.triage.hypotheses]
+    dump = triage.payload["triage"]
+    assert dump["incident_id"] == "triage-dump"
+    assert [h["id"] for h in dump["hypotheses"]] == triage.payload["hypotheses"]
+    assert {p["experiment_id"] for p in dump["predictions"]} == {p.experiment_id for p in bundle.triage.predictions}
+    assert all("confirms_if" in p for p in dump["predictions"])
