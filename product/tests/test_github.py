@@ -27,7 +27,10 @@ def _repo_with_remote(tmp_path):
     from faultline_product.paths import REPOSITORY_ROOT
 
     bare = tmp_path / "origin.git"
-    _git("init", "--bare", "--quiet", "-b", "main", str(bare), cwd=tmp_path)
+    # Git 2.15 (the oldest version we support locally) predates `git init -b`.
+    # Set the bare repository's symbolic HEAD explicitly instead.
+    _git("init", "--bare", "--quiet", str(bare), cwd=tmp_path)
+    _git("symbolic-ref", "HEAD", "refs/heads/main", cwd=bare)
     work = tmp_path / "work"
     _git("clone", "--quiet", str(bare), str(work), cwd=tmp_path)
     for rel in base_paths:

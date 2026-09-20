@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import json
+import shutil
 import os
 import re
 import subprocess
@@ -109,15 +110,25 @@ class GitHubPatchAdapter:
         self._workdir.mkdir(parents=True, exist_ok=True)
         self._git(["worktree", "prune"], cwd=root)
         if target.exists():
-            self._git(["worktree", "remove", "--force", str(target)], cwd=root)
-        self._git(["worktree", "add", "--quiet", "--detach", str(target), base_sha], cwd=root)
+            # Git 2.15 has `worktree prune` but not `worktree remove`. This
+            # directory belongs solely to this adapter and has a deterministic
+            # path below `self._workdir`, so removing it before pruning is safe.
+            shutil.rmtree(target)
+            self._git(["worktree", "prune"], cwd=root)
+        # `worktree add --quiet` is not available in Git 2.15, which is still
+        # common on developer machines. The command's normal output is never
+        # surfaced to the incident report, so quietness is not worth losing PR
+        # creation on those installations.
+        self._git(["worktree", "add", "--detach", str(target), base_sha], cwd=root)
         try:
             self._git(["apply", "--index", str(self._patch_file)], cwd=target)
             self._git(["commit", "--quiet", "-m", _commit_message(incident_id, verdict)], cwd=target, env=AUTHOR)
             sha = self._git(["rev-parse", "HEAD"], cwd=target)
             self._git([*self._auth_config(), "push", "--quiet", "--force", self._remote, f"HEAD:refs/heads/{branch}"], cwd=target)
         finally:
-            self._git(["worktree", "remove", "--force", str(target)], cwd=root)
+            if target.exists():
+                shutil.rmtree(target)
+            self._git(["worktree", "prune"], cwd=root)
         return sha
 
     def _auth_config(self) -> list[str]:
