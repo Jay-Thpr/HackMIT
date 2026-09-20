@@ -1,4 +1,5 @@
 import json
+import urllib.error
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -45,7 +46,12 @@ class _FakeReader:
             "source": "primary_elasticsearch",
             "status": "ok",
             "scope": {"incident_id": incident_id, "environment": "clone" if clone_id else "production", "clone_id": clone_id},
-            "timeline": {"status": "ok", "items": [{"reference": "c1:w1"}], "truncated": False, "rejected": 0, "lag_s": 5.0},
+            "timeline": {"status": "ok", "items": [{
+                "reference": "c1:w1",
+                "metrics": {"svc.orders.retry_ratio": 1.0, "svc.payments.qps": 74.0},
+                "window_start": start.isoformat(),
+                "window_end": end.isoformat(),
+            }], "truncated": False, "rejected": 0, "lag_s": 5.0},
             "audit": {"status": "ok", "items": [{"reference": "c4:e1"}], "truncated": False, "rejected": 0},
         }
 
@@ -358,14 +364,11 @@ def test_report_evidence_unavailable_preserves_report(tmp_path):
     assert "RuntimeError" in text
 
 
-def test_report_explanation_cites_only_known_references(tmp_path):
+def test_report_explanation_renders_only_recorded_metric_values(tmp_path):
     audit = _write_audit(tmp_path / "audit.jsonl", "inc-r")
     reader = _FakeReader()
     bodies = []
-    explanation = {
-        "observations": [{"text": "retry ratio stayed elevated", "references": ["c1:w1"]}],
-        "limitations": ["audit coverage partial"],
-    }
+    explanation = {"observations": [{"metric": "svc.orders.retry_ratio", "references": ["c1:w1"]}]}
     client = AgentBuilderClient(
         URL, KEY, role="report",
         request=lambda body: bodies.append(body) or {"status": "completed", "response": {"message": json.dumps(explanation)}},
@@ -373,19 +376,121 @@ def test_report_explanation_cites_only_known_references(tmp_path):
 
     text = render_report(audit, "inc-r", evidence_reader=reader, explanation_client=client)
 
-    assert "Agent Builder explanation (not a verdict):" in text
-    assert "retry ratio stayed elevated" in text
+    assert "Agent Builder-selected measured evidence (not a verdict):" in text
+    assert "svc.orders.retry_ratio:" in text
+    assert ": 1.0 " in text
     assert "c1:w1" in text
+    assert "Diagnosis: H_meta" in text
     assert json.loads(bodies[0]["input"])["context"]["status"] == "ok"
 
-    bad = {"observations": [{"text": "invented", "references": ["c1:not-present"]}], "limitations": []}
+    bad = {"observations": [{"metric": "svc.orders.retry_ratio", "references": ["c1:not-present"]}]}
     bad_client = AgentBuilderClient(
         URL, KEY, role="report",
         request=lambda body: {"status": "completed", "response": {"message": json.dumps(bad)}},
     )
     text = render_report(audit, "inc-r", evidence_reader=_FakeReader(), explanation_client=bad_client)
     assert "Agent Builder explanation unavailable (ValueError)" in text
-    assert "invented" not in text
+
+
+def _record(reference, metrics, start="2026-09-20T05:33:00+00:00", end="2026-09-20T05:33:05+00:00", **extra):
+    return {"reference": reference, "metrics": metrics,
+            "window_start": start, "window_end": end, **extra}
+
+
+def _context_with_records(records):
+    return {
+        "source": "primary_elasticsearch",
+        "status": "ok",
+        "scope": {"incident_id": "inc-r", "environment": "production"},
+        "timeline": {"status": "ok", "items": records, "truncated": False, "rejected": 0},
+        "audit": {"status": "ok", "items": [{"reference": "c4:e1"}], "truncated": False, "rejected": 0},
+    }
+
+
+def test_report_explanation_displays_only_measured_values_in_window_order(tmp_path):
+    audit = _write_audit(tmp_path / "audit.jsonl", "inc-r")
+    reader = _FakeReader(context_result=_context_with_records([
+        _record("c1:before", {"svc.orders.retry_ratio": 1.0, "svc.payments.qps": 74.0},
+                start="2026-09-20T05:32:55+00:00", end="2026-09-20T05:33:00+00:00"),
+        _record("c1:after", {"svc.orders.retry_ratio": 3.9, "svc.payments.qps": 318.0},
+                start="2026-09-20T05:33:30+00:00", end="2026-09-20T05:33:35+00:00"),
+    ]))
+    explanation = {"observations": [
+        {"metric": "svc.payments.qps", "references": ["c1:after", "c1:before"]},
+        {"metric": "svc.orders.retry_ratio", "references": ["c1:before", "c1:after"]},
+    ]}
+    client = AgentBuilderClient(
+        URL, KEY, role="report",
+        request=lambda body: {"status": "completed", "response": {"message": json.dumps(explanation)}},
+    )
+
+    text = render_report(audit, "inc-r", evidence_reader=reader, explanation_client=client)
+
+    qps_before = "2026-09-20T05:32:55+00:00 -> 2026-09-20T05:33:00+00:00: 74.0"
+    qps_after = "2026-09-20T05:33:30+00:00 -> 2026-09-20T05:33:35+00:00: 318.0"
+    assert qps_before in text and qps_after in text
+    assert text.index(qps_before) < text.index(qps_after)
+    assert ": 1.0 " in text and ": 3.9 " in text
+    assert "abnormally high" not in text and "no dramatic spike" not in text
+
+
+@pytest.mark.parametrize("explanation,records,error_label", [
+    ({"observations": [{"metric": "svc.orders.retry_ratio", "references": ["c1:w1"], "text": "invented prose"}]},
+     [_record("c1:w1", {"svc.orders.retry_ratio": 1.0})], "ValidationError"),
+    ({"observations": [{"metric": "svc.orders.retry_ratio", "references": ["c1:w1"], "value": 9.9}]},
+     [_record("c1:w1", {"svc.orders.retry_ratio": 1.0})], "ValidationError"),
+    ({"observations": [{"metric": "svc.payments.qps", "references": ["c1:w1", "c1:w2"]}]},
+     [_record("c1:w1", {"svc.payments.qps": 74.0}), _record("c1:w2", {"svc.orders.retry_ratio": 1.0})], "ValueError"),
+    ({"observations": [{"metric": "svc.orders.retry_ratio", "references": ["c4:e1"]}]},
+     [_record("c1:w1", {"svc.orders.retry_ratio": 1.0})], "ValueError"),
+    ({"observations": [{"metric": "svc.orders.retry_ratio", "references": ["c1:w1"]}]},
+     [_record("c1:w1", {"svc.orders.retry_ratio": float("nan")})], "configuration"),
+    ({"observations": [{"metric": "svc.orders.retry_ratio", "references": ["c1:w1"]}]},
+     [_record("c1:w1", {"svc.orders.retry_ratio": -1.0})], "ValueError"),
+    ({"observations": [{"metric": "svc.orders.retry_ratio", "references": ["c1:w1"]}]},
+     [_record("c1:w1", {"svc.orders.retry_ratio": 1.0}, start="2026-09-20T05:33:00")], "ValueError"),
+])
+def test_report_explanation_rejects_ungrounded_model_output(tmp_path, explanation, records, error_label):
+    audit = _write_audit(tmp_path / "audit.jsonl", "inc-r")
+    reader = _FakeReader(context_result=_context_with_records(records))
+    client = AgentBuilderClient(
+        URL, KEY, role="report",
+        request=lambda body: {"status": "completed", "response": {"message": json.dumps(explanation)}},
+    )
+
+    text = render_report(audit, "inc-r", evidence_reader=reader, explanation_client=client)
+
+    assert f"Agent Builder explanation unavailable ({error_label})" in text
+    assert "invented prose" not in text
+
+
+def test_report_explanation_empty_observations_renders_header_only(tmp_path):
+    audit = _write_audit(tmp_path / "audit.jsonl", "inc-r")
+    client = AgentBuilderClient(
+        URL, KEY, role="report",
+        request=lambda body: {"status": "completed", "response": {"message": json.dumps({"observations": []})}},
+    )
+
+    text = render_report(audit, "inc-r", evidence_reader=_FakeReader(), explanation_client=client)
+
+    assert "Agent Builder-selected measured evidence (not a verdict):" in text
+    assert "Elastic evidence: ok" in text
+    assert "windows: 1 returned" in text
+
+
+def test_report_explanation_failure_shows_sanitized_category(tmp_path):
+    audit = _write_audit(tmp_path / "audit.jsonl", "inc-r")
+    client = AgentBuilderClient(
+        URL, KEY, role="report",
+        request=lambda body: (_ for _ in ()).throw(
+            urllib.error.HTTPError("https://kibana-marker.example.com", 503, "marker secret body", {}, None)
+        ),
+    )
+
+    text = render_report(audit, "inc-r", evidence_reader=_FakeReader(), explanation_client=client)
+
+    assert "Agent Builder explanation unavailable (server_error HTTP 503)" in text
+    assert "marker secret body" not in text and "kibana-marker" not in text
 
 
 def test_cli_report_uses_read_only_primary_client(tmp_path, monkeypatch):

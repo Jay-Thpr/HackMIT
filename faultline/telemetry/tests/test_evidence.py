@@ -124,6 +124,30 @@ def test_incomplete_shards_are_unavailable():
     assert result["status"] == "unavailable"
 
 
+@pytest.mark.parametrize("metrics", [
+    {"qps": -7.5}, {"p99_ms": -1}, {"error_rate": -0.05},
+    {"retry_ratio": -1.9}, {"error_rate": 1.1}, {"timeout_rate": 1.1},
+])
+def test_nonphysical_metrics_are_rejected_not_clamped(metrics):
+    bad = window("invalid")
+    bad["_source"]["services"] = {"orders": metrics}
+    result = ElasticsearchEvidenceReader(Client([window(), bad])).context("current", START, END)
+    assert result["status"] == "partial"
+    assert result["timeline"]["rejected"] == 1
+    assert [row["reference"] for row in result["timeline"]["items"]] == ["c1:one"]
+
+
+def test_invalid_reference_does_not_rank_history():
+    source = window()["_source"]
+    source["db"]["qps"] = -1
+    fp = Fingerprint.model_validate({k: v for k, v in source.items() if k in Fingerprint.model_fields})
+    client = Client([window("previous", "previous", START - timedelta(seconds=10))])
+    result = ElasticsearchEvidenceReader(client).similar_incidents(fp, incident_id="current", before=START)
+    assert result["status"] == "unavailable"
+    assert result["items"] == []
+    assert client.calls == []
+
+
 @pytest.mark.parametrize("start,end", [(END, START), (START, START), (START, START + timedelta(days=1))])
 def test_rejects_unbounded_or_invalid_scope(start, end):
     with pytest.raises(ValueError):

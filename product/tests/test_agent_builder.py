@@ -1,4 +1,5 @@
 import json
+import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -127,7 +128,8 @@ def test_transport_failure_falls_back_then_fixture_when_all_rejected():
 
     assert result.incident_id == "ab-3"
     assert brain.last_triage_source == "fallback"
-    assert "AgentBuilderError" in brain.last_triage_note
+    assert "agent_builder error: down" in brain.last_triage_note
+    assert "OpenAI error: RuntimeError" in brain.last_triage_note
 
 
 def test_cli_persists_triage_source_and_provider_events(tmp_path, monkeypatch):
@@ -225,6 +227,52 @@ def test_builder_primary_works_without_openai_package(monkeypatch):
     result = brain.triage("no-sdk", bundle.telemetry.first_breach())
     assert result.incident_id == "no-sdk"
     assert brain.last_triage_source == "agent_builder"
+
+
+def test_builder_failure_audit_keeps_http_category_while_direct_fallback_works():
+    bundle = load_fixture("storm")
+    events = []
+    brain = LiveBrain(
+        bundle.experiments,
+        client=_builder(urllib.error.HTTPError("https://kibana-marker.example.com", 429, "marker secret body", {}, None)),
+        fallback_client=_DirectClient(content=_draft()),
+        provider="agent_builder",
+        triage_fallback=bundle.triage,
+        provider_sink=events.append,
+    )
+
+    result = brain.triage("ab-429", bundle.telemetry.first_breach())
+
+    assert result.incident_id == "ab-429"
+    assert brain.last_triage_source == "openai"
+    assert "HTTP 429" in brain.last_triage_note
+    rejected = events[0]
+    assert rejected["provider"] == "agent_builder" and rejected["status"] == "rejected"
+    assert rejected["reason"] == "AgentBuilderError"
+    assert rejected["error"] == {"category": "rate_limited", "http_status": 429}
+    assert events[1] == {"provider": "openai", "role": "triage", "status": "validated"}
+    rendered = json.dumps(events) + brain.last_triage_note
+    assert "marker secret body" not in rendered and "kibana-marker" not in rendered
+
+
+def test_builder_failure_audit_keeps_timeout_category_while_direct_fallback_works():
+    bundle = load_fixture("storm")
+    events = []
+    brain = LiveBrain(
+        bundle.experiments,
+        client=_builder(TimeoutError("marker timed out")),
+        fallback_client=_DirectClient(content=_draft()),
+        provider="agent_builder",
+        triage_fallback=bundle.triage,
+        provider_sink=events.append,
+    )
+
+    brain.triage("ab-timeout", bundle.telemetry.first_breach())
+
+    assert brain.last_triage_source == "openai"
+    assert events[0]["error"] == {"category": "timeout"}
+    assert "timeout" in brain.last_triage_note
+    assert "marker timed out" not in json.dumps(events) + brain.last_triage_note
 
 
 def test_fixture_fallback_emits_fixture_provider_status():

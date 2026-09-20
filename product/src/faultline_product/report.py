@@ -1,9 +1,12 @@
-from datetime import timedelta
+import math
+from datetime import datetime, timedelta
 
 from pydantic import BaseModel, ConfigDict
 
+from faultline_brain.agent_builder import AgentBuilderError
 from faultline_brain.elastic_investigation import INFERENCE_ID
 from faultline_contracts import AuditEvent, AuditSink, EventKind
+from faultline_contracts.metrics import is_valid_metric_key
 from faultline_contracts.openai_schema import strict_response_format
 
 from .adapters.evidence import evidence_references
@@ -11,14 +14,13 @@ from .adapters.evidence import evidence_references
 
 class EvidenceObservation(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    text: str
+    metric: str
     references: list[str]
 
 
 class EvidenceExplanation(BaseModel):
     model_config = ConfigDict(extra="forbid")
     observations: list[EvidenceObservation]
-    limitations: list[str]
 
 
 def render_report(
@@ -101,34 +103,73 @@ def _explanation_lines(client, context: dict) -> list[str]:
             response_format=strict_response_format(EvidenceExplanation, "evidence_explanation"),
         )
         explanation = EvidenceExplanation.model_validate_json(response.choices[0].message.content)
-        _check_explanation(explanation, context)
+        observations = _grounded_observations(explanation, context)
     except Exception as exc:
+        if isinstance(exc, AgentBuilderError):
+            detail = exc.category
+            if exc.http_status is not None:
+                detail += f" HTTP {exc.http_status}"
+            return [f"Agent Builder explanation unavailable ({detail})"]
         return [f"Agent Builder explanation unavailable ({type(exc).__name__})"]
-    lines = ["Agent Builder explanation (not a verdict):"]
-    lines.extend(
-        f"  - {observation.text} [refs: {', '.join(sorted(set(observation.references)))}]"
-        for observation in explanation.observations
-    )
-    if explanation.limitations:
-        lines.append("  limitations:")
-        lines.extend(f"    - {limitation}" for limitation in explanation.limitations)
+    lines = ["Agent Builder-selected measured evidence (not a verdict):"]
+    for observation in observations:
+        lines.append(f"  {observation['metric']}:")
+        for row in observation["values"]:
+            lines.append(
+                f"    {row['window_start']} -> {row['window_end']}: {row['value']} "
+                f"[incident: {row['incident_id']}; ref: {row['reference']}]"
+            )
     return lines
 
 
-def _check_explanation(explanation: EvidenceExplanation, context: dict) -> None:
-    allowed = set(evidence_references(context))
+def _grounded_observations(explanation: EvidenceExplanation, context: dict) -> list[dict]:
+    records = {}
+
+    def collect(node):
+        if isinstance(node, dict):
+            reference = node.get("reference")
+            if isinstance(reference, str) and isinstance(node.get("metrics"), dict):
+                if reference in records and records[reference] != node:
+                    raise ValueError("conflicting evidence reference")
+                records[reference] = node
+            for value in node.values():
+                collect(value)
+        elif isinstance(node, list):
+            for value in node:
+                collect(value)
+
+    collect(context)
     if len(explanation.observations) > 10:
         raise ValueError("too many observations")
-    if len(explanation.limitations) > 10:
-        raise ValueError("too many limitations")
+    observations = []
     for observation in explanation.observations:
-        if not observation.text.strip() or len(observation.text) > 2000:
-            raise ValueError("observation text missing or oversized")
-        if not observation.references or any(ref not in allowed for ref in observation.references):
-            raise ValueError("observation cites a reference outside the supplied evidence")
-    for limitation in explanation.limitations:
-        if len(limitation) > 2000:
-            raise ValueError("limitation oversized")
+        if not is_valid_metric_key(observation.metric):
+            raise ValueError("unknown metric key")
+        if not 1 <= len(observation.references) <= 4:
+            raise ValueError("observation requires one to four references")
+        values = []
+        for reference in dict.fromkeys(observation.references):
+            record = records.get(reference)
+            if record is None or observation.metric not in record["metrics"]:
+                raise ValueError("metric absent from cited evidence")
+            value = record["metrics"][observation.metric]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+                raise ValueError("invalid cited metric value")
+            if observation.metric.endswith((".error_rate", ".timeout_rate", ".pool_busy_ratio")) and value > 1:
+                raise ValueError("invalid cited rate")
+            start, end = record["window_start"], record["window_end"]
+            parsed_start, parsed_end = datetime.fromisoformat(start), datetime.fromisoformat(end)
+            if parsed_start.utcoffset() != timedelta(0) or parsed_end.utcoffset() != timedelta(0) or parsed_end <= parsed_start:
+                raise ValueError("invalid cited observation window")
+            values.append({"reference": reference, "window_start": start, "window_end": end,
+                           "value": value,
+                           "incident_id": record.get("incident_id") or (context.get("scope") or {}).get("incident_id", "unknown")})
+        observations.append({"metric": observation.metric, "values": sorted(values, key=lambda row: row["window_start"])})
+    return observations
+
+
+def _check_explanation(explanation: EvidenceExplanation, context: dict) -> None:
+    _grounded_observations(explanation, context)
 
 
 def _payload_value(events: list[AuditEvent], kind: EventKind, key: str, fallback: str) -> str:

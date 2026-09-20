@@ -282,3 +282,44 @@ def test_sandbox_cli_accepts_elasticsearch_and_clone_metadata_options():
     )
     assert args.elasticsearch_url == "http://elastic:9200"
     assert args.clone_id == "clone-h-meta"
+
+
+def test_watch_resume_requires_an_existing_incident_and_continues_it(tmp_path, capsys):
+    audit = tmp_path / "audit.jsonl"
+    assert main(["--audit-log", str(audit), "watch", "--incident", "again", "--resume"]) == 2
+    assert "nothing to resume" in capsys.readouterr().out
+    assert main(["--audit-log", str(audit), "watch", "--incident", "again"]) == 0
+    assert main(["--audit-log", str(audit), "watch", "--incident", "again"]) == 2
+    assert "watch --resume" in capsys.readouterr().out
+    # the resumed run keeps the first run's 3 actions on the budget, so its own experiment,
+    # mitigation and canary would be 6 > 5: it stops and pages instead of acting again
+    assert main(["--audit-log", str(audit), "watch", "--incident", "again", "--resume"]) == 2
+    assert "action budget exceeded" in capsys.readouterr().out
+    from faultline_contracts import JsonlSink
+
+    events = JsonlSink(audit).query("again")
+    note = next(e for e in events if e.payload.get("resumed"))
+    assert note.payload["actions_applied"] == 3
+    assert sum(e.kind == EventKind.action_apply for e in events) == 5
+    assert any(e.kind == EventKind.page_human and "budget" in e.summary for e in events)
+
+
+def test_pager_command_flag_pages_every_page_human(tmp_path, monkeypatch):
+    from faultline_product.adapters import pager
+
+    runs = []
+    monkeypatch.setattr(pager.subprocess, "run", lambda argv, **kw: runs.append((argv, kw["input"])))
+    audit = tmp_path / "audit.jsonl"
+    # a budget of zero pages on the first action
+    from faultline_product import cli
+
+    monkeypatch.setattr(cli, "Orchestrator", lambda **kw: cli_orchestrator_with_budget(kw, 0))
+    assert main(["--audit-log", str(audit), "--pager-command", "notify --title Faultline", "watch", "--incident", "paged"]) == 2
+    assert runs and runs[0][0] == ["notify", "--title", "Faultline"]
+    assert '"incident_id": "paged"' in runs[0][1]
+
+
+def cli_orchestrator_with_budget(kwargs, budget):
+    from faultline_product.orchestrator import Orchestrator
+
+    return Orchestrator(**kwargs, action_budget=budget)

@@ -71,7 +71,6 @@ class SandboxLeverAdapter:
         self._clock = clock
         self._http = http
         self._specs = {spec.id: spec for spec in CATALOG}
-        self._undone: set[str] = set()
 
     def catalog(self) -> list[LeverSpec]:
         return list(CATALOG)
@@ -109,12 +108,9 @@ class SandboxLeverAdapter:
         path = handle.undo.payload["path"]
         status, body = self._request("DELETE", f"/admin/{path}")
         self._raise_for_status(handle.lever_id, status, body)
-        self._undone.add(handle.action_id)
         return handle.model_copy(update={"status": ActionStatus.undone})
 
     def status(self, handle: ActionHandle) -> ActionStatus:
-        if handle.action_id in self._undone:
-            return ActionStatus.undone
         status, body = self._request("GET", "/admin/levers")
         self._raise_for_status(handle.lever_id, status, body)
         try:

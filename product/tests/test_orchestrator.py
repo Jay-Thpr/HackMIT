@@ -1,5 +1,5 @@
 import pytest
-from faultline_contracts import ActionStatus, Actor, EventKind, HypothesisSupport, JsonlSink, LeverError, Stage
+from faultline_contracts import ActionStatus, Actor, AuditEvent, EventKind, HypothesisSupport, JsonlSink, LeverError, Stage
 from faultline_product.adapters import (
     FixtureBrain,
     FixtureCanaryDeployer,
@@ -344,3 +344,221 @@ def test_triage_event_carries_the_full_triage_result(tmp_path):
     assert [h["id"] for h in dump["hypotheses"]] == triage.payload["hypotheses"]
     assert {p["experiment_id"] for p in dump["predictions"]} == {p.experiment_id for p in bundle.triage.predictions}
     assert all("confirms_if" in p for p in dump["predictions"])
+
+
+class LaggingTelemetry:
+    """Every read returns windows that end `lag_s` before the time asked for (ingest lag)."""
+
+    def __init__(self, source, lag_s):
+        self.source, self.lag_s = source, lag_s
+
+    def window(self, start, end):
+        return self.source.window(start, end)
+
+    def series(self, start, end, step_s=5):
+        from datetime import timedelta
+        shift = timedelta(seconds=self.lag_s)
+        return [fp.model_copy(update={"window_start": fp.window_start - shift, "window_end": fp.window_end - shift})
+                for fp in self.source.series(start - shift, end - shift, step_s)]
+
+
+def test_stale_telemetry_withholds_the_verdict_and_pages(tmp_path):
+    bundle = load_fixture("storm")
+    orchestrator, audit, _ = _orchestrator(tmp_path, telemetry=LaggingTelemetry(bundle.telemetry, lag_s=30))
+    stale = []
+    orchestrator._brain.judge = lambda triage, experiment, baseline, during, after_release: stale.append((during, after_release)) or bundle.verdict.model_copy(update={"incident_id": "stale"})
+
+    orchestrator.run("stale", bundle.experiment_start)
+
+    assert stale and stale[0] == ([], [])  # the judge never sees mis-aligned phases
+    events = audit.query("stale")
+    refused = next(e for e in events if e.kind == EventKind.refused and e.payload.get("stale_telemetry"))
+    assert refused.stage == Stage.experiment and refused.actor == Actor.adapter
+    assert refused.payload["lag_s"] >= 30 and "stale" in refused.summary
+
+
+def test_fresh_telemetry_is_not_flagged(tmp_path):
+    orchestrator, audit, bundle = _orchestrator(tmp_path)
+    orchestrator.run("fresh", bundle.experiment_start)
+    assert not any(e.payload.get("stale_telemetry") for e in audit.query("fresh"))
+
+
+class ExplodingPatches(FixtureDevinAdapter):
+    def propose(self, incident_id, verdict, triage):
+        raise ConnectionError("Devin API: 502 Bad Gateway")
+
+
+def test_unhandled_failure_is_audited_and_paged_before_propagating(tmp_path):
+    output = []
+    orchestrator, audit, bundle = _orchestrator(tmp_path, output=output)
+    orchestrator._patches = ExplodingPatches()
+
+    with pytest.raises(ConnectionError):
+        orchestrator.run("crash", bundle.experiment_start)
+
+    events = audit.query("crash")
+    assert [e.kind for e in events[-2:]] == [EventKind.refused, EventKind.page_human]
+    assert events[-2].payload["aborted"] is True
+    assert events[-2].payload["error"].startswith("ConnectionError")
+    assert events[-2].payload["actions_applied"] == 2  # experiment + kept mitigation, both TTL-bounded
+    assert events[-1].stage == Stage.report
+    assert output[-1] == "[report] aborted (ConnectionError) — paged human"
+
+
+def test_budget_exceeded_is_not_paged_twice(tmp_path):
+    bundle = load_fixture("storm")
+    orchestrator, audit, _ = _orchestrator(tmp_path, budget=0)
+    with pytest.raises(BudgetExceeded):
+        orchestrator.run("budget-once", bundle.experiment_start)
+    assert sum(e.kind == EventKind.page_human for e in audit.query("budget-once")) == 1
+
+
+def test_missing_breach_is_a_precondition_not_an_incident(tmp_path):
+    bundle = load_fixture("storm")
+    healthy = next(fp for fp in bundle.telemetry.series(bundle.experiment_start, bundle.telemetry.last_window_end)
+                   if not any(slo.breached for slo in fp.slos))
+
+    class Healthy:
+        def window(self, start, end):
+            return healthy
+
+        def series(self, start, end, step_s=5):
+            return [healthy]
+
+    orchestrator, audit, _ = _orchestrator(tmp_path, telemetry=Healthy())
+    with pytest.raises(ValueError):
+        orchestrator.run("no-breach", bundle.experiment_start)
+    assert audit.query("no-breach") == []
+
+
+def test_resume_continues_the_budget_and_releases_leftover_levers(tmp_path):
+    bundle = load_fixture("storm")
+    audit = JsonlSink(tmp_path / "audit.jsonl")
+    clock = FixtureClock(bundle.experiment_start, bundle.telemetry.last_window_end)
+    levers = FixtureLeverAdapter(clock=clock)
+    # a previous run applied two levers, released one, and died before releasing the other
+    released = levers.apply("retry_cap", {"max_retries": 0}, 50)
+    levers.undo(released)
+    leftover = levers.apply("db_failover", {}, 900)
+    for handle, undone in ((released, True), (leftover, False)):
+        audit.write(AuditEvent(incident_id="resume", stage=Stage.experiment, kind=EventKind.action_apply, actor=Actor.adapter,
+                               summary=f"applied {handle.lever_id}", payload=handle.model_dump(mode="json"), action_id=handle.action_id))
+        if undone:
+            audit.write(AuditEvent(incident_id="resume", stage=Stage.experiment, kind=EventKind.action_undo, actor=Actor.adapter,
+                                   summary="released", payload={**handle.model_dump(mode="json"), "status": "undone"}, action_id=handle.action_id))
+    orchestrator = Orchestrator(levers, audit, FixtureDevinAdapter(), FixtureCanaryDeployer(), TerminalRenderer([].append),
+                                bundle.telemetry, FixtureBrain(bundle.triage, bundle.experiment, bundle.verdict), clock, clock.sleep, 5)
+
+    assert orchestrator.resume("resume") == 2
+    assert orchestrator._actions == 2
+    assert levers.status(leftover) == ActionStatus.undone
+    events = audit.query("resume")
+    undo = [e for e in events if e.kind == EventKind.action_undo and e.action_id == leftover.action_id]
+    assert undo and "left over from a previous run" in undo[-1].summary
+    note = next(e for e in events if e.payload.get("resumed"))
+    assert note.payload == {"resumed": True, "actions_applied": 2, "leftover": ["db_failover"], "still_active": []}
+    # the continued run then has only 3 actions left before it must page
+    orchestrator._action_budget = 4
+    with pytest.raises(BudgetExceeded):
+        orchestrator.run("resume", bundle.experiment_start)
+
+
+def test_resume_ignores_expired_and_already_released_levers(tmp_path):
+    bundle = load_fixture("storm")
+    audit = JsonlSink(tmp_path / "audit.jsonl")
+    clock = FixtureClock(bundle.experiment_start, bundle.telemetry.last_window_end)
+    levers = FixtureLeverAdapter(clock=clock)
+    old = levers.apply("retry_cap", {"max_retries": 0}, 20)
+    audit.write(AuditEvent(incident_id="expired", stage=Stage.experiment, kind=EventKind.action_apply, actor=Actor.adapter,
+                           summary="applied", payload=old.model_dump(mode="json"), action_id=old.action_id))
+    clock.sleep(60)  # the TTL has long passed: nothing to release
+    orchestrator = Orchestrator(levers, audit, FixtureDevinAdapter(), FixtureCanaryDeployer(), TerminalRenderer([].append),
+                                bundle.telemetry, FixtureBrain(bundle.triage, bundle.experiment, bundle.verdict), clock, clock.sleep, 5)
+    assert orchestrator.resume("expired") == 1
+    assert not any(e.kind == EventKind.action_undo for e in audit.query("expired"))
+
+
+class RecordingPatches(FixtureDevinAdapter):
+    def __init__(self):
+        self.evidence = []
+
+    def revise(self, incident_id, patch, evidence):
+        self.evidence.append(evidence)
+        return super().revise(incident_id, patch, evidence)
+
+
+def test_canary_regression_sends_measured_numbers_and_z_scores_to_the_author(tmp_path):
+    import json
+
+    bundle = load_fixture("storm")
+    orchestrator, audit, _ = _orchestrator(tmp_path, telemetry=BreachedTelemetry(bundle.telemetry))
+    patches = RecordingPatches()
+    orchestrator._patches = patches
+
+    result = orchestrator.run("evidence", bundle.experiment_start)
+
+    assert result.canary.status.value == "regressed"
+    assert result.canary.evidence["breached_windows"] == 1 and result.canary.evidence["checkout_slo_threshold_ms"] == 1000
+    assert result.canary.evidence["gateway_p99_ms_max"] > 1000
+    text = patches.evidence[0]
+    assert text.startswith("production canary regressed: checkout SLO breached")
+    measured = json.loads(text.splitlines()[1].split("canary: ", 1)[1])
+    assert measured == result.canary.evidence
+    diagnosis_line = next(line for line in text.splitlines() if line.startswith("diagnosis H_meta"))
+    rows = json.loads(diagnosis_line.split("observations: ", 1)[1])
+    assert rows and {"experiment", "phase", "metric", "baseline", "measured", "sigma", "z", "direction"} <= set(rows[0])
+    refused = next(e for e in audit.query("evidence") if e.stage == Stage.canary and e.kind == EventKind.refused)
+    assert refused.payload["evidence"] == result.canary.evidence
+
+
+class StubSimilar:
+    def __init__(self, ranked=None, error=None):
+        self.ranked, self.error, self.calls = ranked or [], error, []
+
+    def find(self, fingerprint, *, exclude_incident_id, limit):
+        self.calls.append((exclude_incident_id, limit))
+        if self.error:
+            raise self.error
+        return self.ranked
+
+
+def test_triage_records_similar_past_incidents_with_their_recorded_diagnosis(tmp_path):
+    output = []
+    orchestrator, audit, bundle = _orchestrator(tmp_path, output=output)
+    orchestrator.run("past-1", bundle.experiment_start)  # a real earlier incident with an H_meta verdict
+    orchestrator._actions = 0
+    orchestrator._similar = StubSimilar([("past-1", 0.93), ("unknown-9", 0.4)])
+
+    orchestrator.run("current", bundle.experiment_start)
+
+    triage = next(e for e in audit.query("current") if e.stage == Stage.triage and e.kind == EventKind.triage)
+    assert triage.payload["similar_incidents"] == [
+        {"incident_id": "past-1", "score": 0.93, "diagnosis": "H_meta", "confirmed": True},
+        {"incident_id": "unknown-9", "score": 0.4, "diagnosis": None, "confirmed": None},
+    ]
+    assert orchestrator._similar.calls == [("current", 3)]
+    assert "[triage] looks like past-1 (0.93, was H_meta), unknown-9 (0.40)" in output
+
+
+def test_triage_audit_keeps_source_and_similar_incidents(tmp_path):
+    orchestrator, audit, bundle = _orchestrator(tmp_path)
+    orchestrator._similar = StubSimilar([("past-7", 0.81)])
+
+    orchestrator.run("merged", bundle.experiment_start)
+
+    triage = next(e for e in audit.query("merged") if e.stage == Stage.triage and e.kind == EventKind.triage)
+    assert triage.payload["source"] == "fixture"
+    assert triage.payload["similar_incidents"] == [
+        {"incident_id": "past-7", "score": 0.81, "diagnosis": None, "confirmed": None}
+    ]
+
+
+def test_similar_incident_search_failure_never_blocks_triage(tmp_path):
+    output = []
+    orchestrator, audit, bundle = _orchestrator(tmp_path, output=output)
+    orchestrator._similar = StubSimilar(error=ConnectionError("es down"))
+    result = orchestrator.run("lonely", bundle.experiment_start)
+    assert result.diagnosis == "H_meta"
+    triage = next(e for e in audit.query("lonely") if e.stage == Stage.triage and e.kind == EventKind.triage)
+    assert triage.payload["similar_incidents"] == []
+    assert "[triage] similar-incident search unavailable (ConnectionError)" in output

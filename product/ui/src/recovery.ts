@@ -11,6 +11,6 @@ export function deriveNodeRecovery(scenario: Scenario, environment: Environment,
   let lastDegradation = -1
   events.forEach((event, index) => { if (event.readings?.[nodeId]?.health === 'degraded') lastDegradation = index })
   if (lastDegradation < 0) return 'healthy'
-  const verdict = events.slice(lastDegradation + 1).filter(event => event.kind === 'verdict' && event.tool === 'judge.confirm').at(-1)
+  const verdict = events.slice(lastDegradation + 1).filter(event => event.kind === 'verdict').at(-1)
   return verdict && isConfirmedVerdict(verdict) ? 'healthy' : 'recovering'
 }

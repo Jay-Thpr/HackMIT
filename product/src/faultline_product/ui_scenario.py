@@ -109,22 +109,38 @@ def scenario_from_incident(
             out.append({**base, "kind": "detect", "title": e.summary, "phase": phase, "targetId": entry,
                         "tool": "detector.evaluate", "readings": _readings(fp, topology, breached=True),
                         "result": f"{p.get('metric')} = {_fmt(p.get('value'))} ms, threshold {_fmt(p.get('threshold'))} ms"})
+        elif e.kind == EventKind.triage and p.get("investigation") and not p.get("clone_id"):
+            # never got a clone (no recipe / lab refused): a note on production, not an environment
+            out.append({**base, "kind": "observe", "actor": "math", "tool": "evidence.compare",
+                        "title": f"{p.get('hypothesis_id', '?')}: not investigated in a clone", "detail": e.summary})
         elif e.kind == EventKind.triage and p.get("investigation"):
             hid = p.get("hypothesis_id", "?")
-            clone_id = p.get("clone_id") or f"clone-{hid.lower()}"
+            clone_id = p["clone_id"]
             env = clones.setdefault(clone_id, f"clone-{hid.lower()}")
             idx = hypothesis_ids.index(hid) if hid in hypothesis_ids else len(clones) - 1
             investigator = f"investigator-{'ab'[idx % 2]}"
             label = next((h["title"] for h in hypotheses if h["id"] == hid), hid)
             recipe = p.get("recipe") or {}
-            out.append({**base, "kind": "clone", "at": max(0, base["at"] - 8), "environmentId": env, "actor": investigator,
-                        "title": f"A clean clone for {hid}", "phase": "Investigating in clones", "tool": "lab.create",
+            clone_fps = sorted(clone_windows.get(clone_id, []), key=lambda fp: fp.window_start)
+            # the investigation event is written once all investigators are done; the clone's own
+            # C1 windows (when persisted) say when it actually lived
+            born = at(clone_fps[0].window_start) - 10 if clone_fps else max(0, base["at"] - 8)
+            died = at(clone_fps[-1].window_end) + 2 if clone_fps else base["at"]
+            born, died = max(0, min(born, base["at"] - 8)), max(born + 8, min(died, base["at"]))
+            base = {**base, "at": died}
+            out.append({**base, "kind": "clone", "at": born, "environmentId": env, "actor": investigator,
+                        "title": f"A clean clone for {hid}", "phase": "Investigating in clones", "tool": "lab.create", "lifecycle": "starting",
                         "args": {"hypothesis": hid, "clone_id": clone_id},
                         "environment": {"label": f"Clone {hid}", "color": CLONE_COLORS[idx % len(CLONE_COLORS)], "hypothesisId": hid},
                         "detail": f"Built only from observable config; investigating: {label}."})
+            seq += 1
+            out.append({**base, "id": f"{e.event_id}-ready", "sequence": seq, "at": born + 1, "kind": "lifecycle",
+                        "environmentId": env, "actor": "adapter", "lifecycle": "ready", "tool": "lab.ready",
+                        "title": f"Clone {hid} is ready", "readings": _readings(clone_fps[0] if clone_fps else None, topology, breached=False),
+                        "detail": "The manager reported the clone healthy (C6 readiness probe) before any lab action."})
             if recipe:
                 seq += 1
-                out.append({**base, "id": f"{e.event_id}-inject", "sequence": seq, "at": max(0, base["at"] - 6),
+                out.append({**base, "id": f"{e.event_id}-inject", "sequence": seq, "at": born + 2,
                             "kind": "action", "environmentId": env, "actor": investigator, "targetId": target,
                             "title": f"Inject {recipe.get('action')} into the clone", "tool": "lab.apply",
                             "args": {**{k: v for k, v in (recipe.get("params") or {}).items()}, "ttl_s": recipe.get("ttl_s", 0)},
@@ -143,6 +159,9 @@ def scenario_from_incident(
                             "actor": "math", "tool": "suite.evaluate", "title": f"{check} check {'passed' if passed else 'failed'}",
                             "detail": e.summary, "result": observed,
                             "testResult": {"checkId": check, "passed": bool(passed), "expected": expected, "observed": observed}})
+            # the investigator destroys its clone on the way out; the event is written after cleanup
+            out.extend(_teardown(base, e.event_id, env, f"Clone {hid}", base["at"], seq + 1))
+            seq += 2
         elif e.kind == EventKind.triage and p.get("planner"):
             rows = p.get("candidates") or []
             out.append({**base, "kind": "observe", "title": "Planner ranked the candidate experiments", "phase": "Choosing the probe",
@@ -196,10 +215,16 @@ def scenario_from_incident(
             ev = p.get("evidence") or {}
             passed = p.get("status") == "passed"
             out.append({**base, "kind": "clone", "at": max(0, base["at"] - 60), "environmentId": env, "actor": "adapter",
-                        "title": "A fresh clone built from the patch", "phase": "Verifying the fix", "tool": "lab.create",
+                        "title": "A fresh clone built from the patch", "phase": "Verifying the fix", "tool": "lab.create", "lifecycle": "starting",
                         "args": {"patch_ref": str(p.get("patch_reference")), "clone_id": clone_id},
                         "environment": {"label": f"Verify · {p.get('patch_reference', '')[-24:]}", "color": "#5e7a6b", "hypothesisId": "patch"},
                         "detail": "orders-v2 built from the patch; all clone traffic routed to it before the replay."})
+            verify_fps = sorted(clone_windows.get(clone_id, []), key=lambda fp: fp.window_start)
+            seq += 1
+            out.append({**base, "id": f"{e.event_id}-ready", "sequence": seq, "at": max(0, base["at"] - 52), "kind": "lifecycle",
+                        "environmentId": env, "actor": "adapter", "lifecycle": "ready", "tool": "lab.ready",
+                        "title": "Patched clone is ready", "readings": _readings(verify_fps[0] if verify_fps else None, topology, breached=False),
+                        "detail": "orders-v2 built from the patch passed the readiness probe; the replay can start."})
             if recipe:
                 seq += 1
                 out.append({**base, "id": f"{e.event_id}-replay", "sequence": seq, "at": max(0, base["at"] - 50), "kind": "action",
@@ -215,7 +240,8 @@ def scenario_from_incident(
                         "testResult": {"checkId": "replay", "passed": passed, "expected": "clone SLO healthy after the replayed trigger ends", "observed": observed}})
             out.append({**base, "id": f"{e.event_id}-verdict", "sequence": seq + 1, "kind": "observe", "title": e.summary, "phase": phase,
                         "tool": "canary.judge", "result": observed})
-            seq += 1
+            out.extend(_teardown(base, e.event_id, env, "the verification clone", base["at"], seq + 2))
+            seq += 3
         elif e.kind in (EventKind.mitigation, EventKind.patch_opened, EventKind.canary_update, EventKind.refused,
                         EventKind.page_human, EventKind.report, EventKind.experiment_end):
             tool = {EventKind.mitigation: "orchestrator.mitigate", EventKind.patch_opened: "devin.session",
@@ -230,20 +256,47 @@ def scenario_from_incident(
             elif e.kind == EventKind.report:
                 result = f"diagnosis {p.get('diagnosis')} · verification {p.get('clone_verification')} · canary {p.get('canary_status')}"
             out.append({**base, "kind": "observe", "title": e.summary, "phase": phase, "tool": tool,
-                        **({"result": result} if result else {})})
+                        **({"result": result} if result else {}),
+                        **({"incident": "complete"} if e.kind == EventKind.report else {})})
 
     out.sort(key=lambda ev: (ev["at"], ev["sequence"]))
     # A run ends with a report, or with a page from stage 4/5 (no experiment, nothing reproduced,
     # verdict not confirmed). Pages in stages 6-8 are followed by more events (revise, report).
     last = events[-1]
     complete = last.kind == EventKind.report or (last.kind == EventKind.page_human and last.stage in (4, 5))
+    # A run that stopped writing (crashed, killed) is not "in progress" forever.
+    abandoned = not complete and now is not None and (now - last.ts) > timedelta(minutes=30)
+    complete = complete or abandoned
     duration = (out[-1]["at"] + 10) if out else 60
     if not complete and now is not None:
         duration = max(duration, at(now))  # the incident is still running: the slider ends at wall-clock now
+    verdict_ev = next((e for e in reversed(events) if e.kind == EventKind.verdict), None)
+    report_ev = next((e for e in reversed(events) if e.kind == EventKind.report), None)
+    patch_ev = next((e for e in reversed(events) if e.kind == EventKind.patch_opened), None)
+    verify_ev = next((e for e in reversed(events) if e.kind == EventKind.canary_update and e.stage == 6), None)
+    rp = (report_ev.payload if report_ev else {}) or {}
+    report = {
+        "outcome": report_ev.summary if report_ev else (
+            "paged" if events[-1].kind == EventKind.page_human else "abandoned (no further events)" if abandoned else "in progress"),
+        "diagnosis": (verdict_ev.payload or {}).get("diagnosis") if verdict_ev else None,
+        "confirmed": bool((verdict_ev.payload or {}).get("confirmed")) if verdict_ev else False,
+        "verdictAt": at(verdict_ev.ts) if verdict_ev else None,
+        "patch": (patch_ev.payload or {}).get("reference") if patch_ev else None,
+        "patchProvider": (patch_ev.payload or {}).get("provider") if patch_ev else None,
+        "patchRevision": (patch_ev.payload or {}).get("revision", 0) if patch_ev else None,
+        "verification": rp.get("clone_verification") or ((verify_ev.payload or {}).get("status") if verify_ev else None),
+        "canary": rp.get("canary_status"),
+        "mitigationHeld": rp.get("mitigation_held"),
+        "productionActions": sum(1 for e in events if e.kind == EventKind.action_apply),
+        "pages": sum(1 for e in events if e.kind == EventKind.page_human),
+        "startedAt": events[0].ts.isoformat(),
+        "endedAt": events[-1].ts.isoformat(),
+    }
     return {
         "id": incident_id,
         "live": True,
         "complete": complete,
+        "report": report,
         "now": at(now) if now is not None else duration,
         "name": f"Incident {incident_id}",
         "subtitle": "Live incident · real audit log",
@@ -260,6 +313,20 @@ def scenario_from_incident(
 
 
 # ---- helpers ----------------------------------------------------------------------------------
+
+def _teardown(base: dict[str, Any], event_id: str, env: str, label: str, at: int, seq: int) -> list[dict[str, Any]]:
+    """Two UI events for a clone's recorded removal: `destroying` (the manager tears the project
+    down; the UI fades it over ~3 s) then `archive` (gone; its evidence stays in the trace)."""
+    return [
+        {**base, "id": f"{event_id}-destroy", "sequence": seq, "at": at, "kind": "lifecycle", "environmentId": env,
+         "actor": "adapter", "lifecycle": "destroying", "tool": "lab.destroy.request",
+         "title": f"Removing {label}", "detail": "The clone lab tears the clone project down; its observations and test results are retained."},
+        {**base, "id": f"{event_id}-archive", "sequence": seq + 1, "at": at + 3, "kind": "archive", "environmentId": env,
+         "actor": "adapter", "tool": "lab.destroy", "title": f"{label} archived; evidence retained",
+         "incident": "cleanup",  # only the report closes a real incident; more clones/probes may follow
+         "detail": "No clone state is merged into production."},
+    ]
+
 
 def _topology(windows: list[Fingerprint]) -> dict[str, Any]:
     services: set[str] = set()

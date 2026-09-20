@@ -15,6 +15,7 @@ from faultline_brain.agent_builder import (
     _NoRedirect,
 )
 from faultline_brain.elastic_investigation import (
+    AGENT_ID,
     EVIDENCE_CONTEXT_INSTRUCTIONS,
     INFERENCE_ID,
     INVESTIGATOR_AGENT_INSTRUCTIONS,
@@ -183,6 +184,89 @@ def test_transport_failures_are_sanitized():
     assert URL not in str(exc.value) and KEY not in str(exc.value)
 
 
+MARKER_URL = "https://kibana-marker.example.com"
+MARKER_KEY = "MARKER-KEY-9f8e7d"
+
+
+@pytest.mark.parametrize("code,category", [
+    (401, "authentication"),
+    (403, "authorization"),
+    (429, "rate_limited"),
+    (503, "server_error"),
+])
+def test_http_failures_report_category_status_and_failure_provenance(code, category):
+    calls = []
+    events = []
+
+    def request(body):
+        calls.append(body)
+        raise urllib.error.HTTPError(MARKER_URL, code, "marker secret body", {}, None)
+
+    client = AgentBuilderClient(MARKER_URL, MARKER_KEY, role="triage", request=request, provenance_sink=events.append)
+    with pytest.raises(AgentBuilderError) as exc:
+        client.create(model="m", messages=[{"role": "user", "content": "marker prompt"}], response_format={})
+
+    assert len(calls) == 1
+    assert exc.value.category == category
+    assert exc.value.http_status == code
+    assert exc.value.diagnostic() == {"category": category, "http_status": code}
+    assert events == [{
+        "provider": "agent_builder",
+        "role": "triage",
+        "agent_id": "faultline-triage",
+        "inference_id": INFERENCE_ID,
+        "status": "request_failed",
+        "error": {"category": category, "http_status": code},
+    }]
+    rendered = str(exc.value) + json.dumps(events)
+    assert MARKER_URL not in rendered and MARKER_KEY not in rendered
+    assert "marker secret body" not in rendered and "marker prompt" not in rendered
+
+
+@pytest.mark.parametrize("error,category", [
+    (TimeoutError("marker timed out"), "timeout"),
+    (urllib.error.URLError(TimeoutError("marker timed out")), "timeout"),
+    (urllib.error.URLError("marker connection refused"), "connection"),
+    (OSError("marker socket closed"), "connection"),
+    (RuntimeError("marker weird transport"), "transport"),
+])
+def test_transport_error_categories_are_sanitized(error, category):
+    calls = []
+    events = []
+
+    def request(body):
+        calls.append(body)
+        raise error
+
+    client = AgentBuilderClient(MARKER_URL, MARKER_KEY, role="triage", request=request, provenance_sink=events.append)
+    with pytest.raises(AgentBuilderError) as exc:
+        client.create(model="m", messages=[], response_format={})
+
+    assert len(calls) == 1
+    assert exc.value.category == category
+    assert exc.value.http_status is None
+    assert events[0]["status"] == "request_failed"
+    assert events[0]["error"] == {"category": category}
+    rendered = str(exc.value) + json.dumps(events)
+    assert "marker" not in rendered
+    assert MARKER_KEY not in rendered and MARKER_URL not in rendered
+
+
+def test_invalid_response_reports_invalid_response_category():
+    events = []
+    client = AgentBuilderClient(
+        MARKER_URL, MARKER_KEY, role="triage", provenance_sink=events.append,
+        request=lambda body: {"status": "completed"},
+    )
+    with pytest.raises(AgentBuilderError) as exc:
+        client.create(model="m", messages=[], response_format={})
+
+    assert exc.value.diagnostic() == {"category": "invalid_response"}
+    assert events[0]["status"] == "request_failed"
+    assert events[0]["error"] == {"category": "invalid_response"}
+    assert MARKER_KEY not in json.dumps(events)
+
+
 def test_from_env_reads_only_the_builder_key(monkeypatch):
     monkeypatch.setenv("KIBANA_URL", URL)
     monkeypatch.setenv("ELASTIC_AGENT_BUILDER_API_KEY", KEY)
@@ -224,6 +308,8 @@ def test_report_role_uses_explanation_agent_id_and_report_instructions():
     )
     client.create(model="m", messages=[], response_format={})
 
+    assert ROLE_AGENT_IDS["report"] == "faultline-report"
+    assert ROLE_AGENT_IDS["report"] != AGENT_ID
     assert bodies[0]["agent_id"] == ROLE_AGENT_IDS["report"]
     assert bodies[0]["configuration_overrides"]["instructions"] == (
         REPORT_AGENT_INSTRUCTIONS + "\n" + STRUCTURED_OUTPUT_INSTRUCTIONS
@@ -341,6 +427,7 @@ def test_deploy_script_dry_run_is_offline_by_default(monkeypatch, capsys):
     for argv in (
         ["deploy", "--role", "triage"],
         ["deploy", "--role", "investigator", "--dry-run"],
+        ["deploy", "--role", "report"],
         ["deploy"],
     ):
         monkeypatch.setattr("sys.argv", argv)
@@ -348,9 +435,11 @@ def test_deploy_script_dry_run_is_offline_by_default(monkeypatch, capsys):
         out = capsys.readouterr().out
         definition = json.loads(out)["agent"]
         assert calls == []
-        if "triage" in argv or "investigator" in argv:
+        if "triage" in argv or "investigator" in argv or "report" in argv:
             assert definition["configuration"]["tools"] == []
             assert definition["configuration"]["enable_elastic_capabilities"] is False
+            if "report" in argv:
+                assert definition["id"] == "faultline-report"
         else:
             assert definition["id"] == "faultline-investigation"
 
@@ -359,6 +448,7 @@ def test_proposal_agent_definitions_are_tool_free():
     for role, instructions in (
         ("triage", TRIAGE_AGENT_INSTRUCTIONS),
         ("investigator", INVESTIGATOR_AGENT_INSTRUCTIONS),
+        ("report", REPORT_AGENT_INSTRUCTIONS),
     ):
         definition = proposal_agent_definition(role)
         assert definition["id"] == ROLE_AGENT_IDS[role]

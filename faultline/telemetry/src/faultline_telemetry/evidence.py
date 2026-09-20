@@ -45,11 +45,18 @@ def _fingerprint(document: dict) -> Fingerprint:
     return Fingerprint.model_validate({k: v for k, v in document.items() if k in Fingerprint.model_fields})
 
 
-def _window(hit: dict, fingerprint: Fingerprint) -> dict:
-    if not all(math.isfinite(v) for v in fingerprint.metrics().values()):
-        raise ValueError("nonfinite evidence metrics")
+def validate_observed_fingerprint(fingerprint: Fingerprint) -> None:
+    for metric, value in fingerprint.metrics().items():
+        if not math.isfinite(value) or value < 0:
+            raise ValueError("nonphysical evidence metric")
+        if metric.endswith((".error_rate", ".timeout_rate", ".pool_busy_ratio")) and value > 1:
+            raise ValueError("evidence rate outside zero to one")
     if not all(math.isfinite(s.threshold) and math.isfinite(s.value) for s in fingerprint.slos):
         raise ValueError("nonfinite SLO evidence")
+
+
+def _window(hit: dict, fingerprint: Fingerprint) -> dict:
+    validate_observed_fingerprint(fingerprint)
     return {
         "reference": _reference(hit, "c1"),
         "window_start": fingerprint.window_start.isoformat(),
@@ -160,6 +167,7 @@ class ElasticsearchEvidenceReader:
         scope = {"start": _utc(start), "end": _utc(before), "excluded_incident_id": incident_id,
                  "environment": "production", "candidate_limit": HISTORY_LIMIT}
         try:
+            validate_observed_fingerprint(fingerprint)
             hits = self._hits(FINGERPRINT_INDEX, [production_filter(),
                 {"exists": {"field": "incident_id"}},
                 {"range": {"window_start": {"gte": scope["start"]}}},

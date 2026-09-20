@@ -29,6 +29,7 @@ from faultline_brain.elastic_investigation import (
     INFERENCE_ID,
     INVESTIGATOR_AGENT_INSTRUCTIONS,
     OWNER2_TOOL_IDS,
+    REPORT_AGENT_INSTRUCTIONS,
     ROLE_AGENT_IDS,
     TRIAGE_AGENT_INSTRUCTIONS,
     agent_definition,
@@ -41,6 +42,7 @@ from faultline_brain.elastic_investigation import (
 PROPOSAL_INSTRUCTIONS = {
     "triage": TRIAGE_AGENT_INSTRUCTIONS,
     "investigator": INVESTIGATOR_AGENT_INSTRUCTIONS,
+    "report": REPORT_AGENT_INSTRUCTIONS,
 }
 
 
@@ -83,7 +85,7 @@ def assert_proposal_boundary(definition: dict[str, Any], role: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--role", choices=("explanation", "triage", "investigator"), default="explanation")
+    parser.add_argument("--role", choices=("explanation", "triage", "investigator", "report"), default="explanation")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true")
     mode.add_argument("--apply", action="store_true")

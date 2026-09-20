@@ -34,7 +34,16 @@ _MAX_CONVERSATION_ID_CHARS = 256
 
 
 class AgentBuilderError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, category: str = 'invalid_response', http_status: int | None = None):
+        super().__init__(message)
+        self.category = category
+        self.http_status = http_status
+
+    def diagnostic(self) -> dict:
+        result = {'category': self.category}
+        if self.http_status is not None:
+            result['http_status'] = self.http_status
+        return result
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -44,25 +53,25 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def _validated_origin(kibana_url: str) -> str:
     if not isinstance(kibana_url, str) or not kibana_url.strip():
-        raise AgentBuilderError("a Kibana URL is required")
+        raise AgentBuilderError("a Kibana URL is required", category="configuration")
     try:
         parts = urllib.parse.urlsplit(kibana_url.strip())
         port = parts.port
     except ValueError:
-        raise AgentBuilderError("invalid Kibana URL") from None
+        raise AgentBuilderError("invalid Kibana URL", category="configuration") from None
     if parts.scheme != "https" or not parts.hostname:
-        raise AgentBuilderError("Kibana URL must be an https origin")
+        raise AgentBuilderError("Kibana URL must be an https origin", category="configuration")
     if parts.username or parts.password or parts.query or parts.fragment:
-        raise AgentBuilderError("Kibana URL must not contain credentials, query or fragment")
+        raise AgentBuilderError("Kibana URL must not contain credentials, query or fragment", category="configuration")
     if any(ord(c) < 0x21 or ord(c) == 0x7F for c in kibana_url.strip()):
-        raise AgentBuilderError("invalid Kibana URL")
+        raise AgentBuilderError("invalid Kibana URL", category="configuration")
     path = parts.path.rstrip("/")
     if path and re.fullmatch(r"/s/[A-Za-z0-9_-]+", path) is None:
-        raise AgentBuilderError("Kibana URL path must be empty or /s/<space-id>")
+        raise AgentBuilderError("Kibana URL path must be empty or /s/<space-id>", category="configuration")
     try:
         host = parts.hostname.encode("idna").decode("ascii")
     except (UnicodeError, ValueError):
-        raise AgentBuilderError("invalid Kibana URL") from None
+        raise AgentBuilderError("invalid Kibana URL", category="configuration") from None
     if ":" in host:
         host = f"[{host}]"
     netloc = host if port is None else f"{host}:{port}"
@@ -83,13 +92,13 @@ class AgentBuilderClient:
         context: dict | None = None,
     ):
         if role not in ROLE_AGENT_IDS:
-            raise AgentBuilderError("unknown Agent Builder proposal role")
+            raise AgentBuilderError("unknown Agent Builder proposal role", category="configuration")
         if not isinstance(api_key, str) or not api_key or api_key != api_key.strip() or "\n" in api_key or "\r" in api_key:
-            raise AgentBuilderError("an Agent Builder API key is required")
+            raise AgentBuilderError("an Agent Builder API key is required", category="configuration")
         if not isinstance(inference_id, str) or not _SAFE_IDENTIFIER.fullmatch(inference_id):
-            raise AgentBuilderError("invalid Agent Builder inference id")
+            raise AgentBuilderError("invalid Agent Builder inference id", category="configuration")
         if not isinstance(timeout_s, (int, float)) or not math.isfinite(timeout_s) or timeout_s <= 0:
-            raise AgentBuilderError("timeout_s must be finite and positive")
+            raise AgentBuilderError("timeout_s must be finite and positive", category="configuration")
         self._origin = _validated_origin(kibana_url)
         self._api_key = api_key
         self._role = role
@@ -104,7 +113,7 @@ class AgentBuilderClient:
             try:
                 self._context = json.loads(json.dumps(context, allow_nan=False))
             except (TypeError, ValueError):
-                raise AgentBuilderError("context is not JSON serializable") from None
+                raise AgentBuilderError("context is not JSON serializable", category="configuration") from None
         self.chat = SimpleNamespace(completions=self)
 
     @classmethod
@@ -150,14 +159,21 @@ class AgentBuilderClient:
             },
         }
         try:
-            payload = self._request(body)
-        except AgentBuilderError:
+            payload = self._perform(body)
+            message = self._message(payload)
+        except AgentBuilderError as exc:
+            if self._provenance_sink is not None:
+                self._provenance_sink(
+                    {
+                        "provider": "agent_builder",
+                        "role": self._role,
+                        "agent_id": self._agent_id,
+                        "inference_id": self._inference_id,
+                        "status": "request_failed",
+                        "error": exc.diagnostic(),
+                    }
+                )
             raise
-        except Exception as exc:
-            raise AgentBuilderError(
-                f"agent builder request failed: {type(exc).__name__}"
-            ) from None
-        message = self._message(payload)
         if self._provenance_sink is not None:
             self._provenance_sink(
                 {
@@ -173,6 +189,44 @@ class AgentBuilderClient:
             choices=[SimpleNamespace(message=SimpleNamespace(content=message))],
             usage=None,
         )
+
+    def _perform(self, body: dict) -> dict:
+        try:
+            return self._request(body)
+        except AgentBuilderError:
+            raise
+        except urllib.error.HTTPError as exc:
+            category = {
+                401: "authentication",
+                403: "authorization",
+                408: "timeout",
+                429: "rate_limited",
+            }.get(exc.code)
+            if category is None:
+                category = "server_error" if exc.code >= 500 else "http_error"
+            raise AgentBuilderError(
+                f"agent builder request failed ({category}, HTTP {exc.code})",
+                category=category,
+                http_status=exc.code,
+            ) from None
+        except TimeoutError:
+            raise AgentBuilderError(
+                "agent builder request failed (timeout)", category="timeout"
+            ) from None
+        except urllib.error.URLError as exc:
+            category = "timeout" if isinstance(exc.reason, TimeoutError) else "connection"
+            raise AgentBuilderError(
+                f"agent builder request failed ({category})", category=category
+            ) from None
+        except OSError:
+            raise AgentBuilderError(
+                "agent builder request failed (connection)", category="connection"
+            ) from None
+        except Exception as exc:
+            raise AgentBuilderError(
+                f"agent builder request failed (transport: {type(exc).__name__})",
+                category="transport",
+            ) from None
 
     def _post(self, body: dict) -> dict:
         request = urllib.request.Request(
@@ -191,7 +245,7 @@ class AgentBuilderClient:
         with opener.open(request, timeout=self._timeout_s) as response:
             raw = response.read(_MAX_RESPONSE_BYTES + 1)
         if len(raw) > _MAX_RESPONSE_BYTES:
-            raise AgentBuilderError("agent builder response exceeded the size bound")
+            raise AgentBuilderError("agent builder response exceeded the size bound", category="response_too_large")
         try:
             return json.loads(raw)
         except ValueError:

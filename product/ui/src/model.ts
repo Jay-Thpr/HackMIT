@@ -1,5 +1,7 @@
 export type NodeKind = 'service' | 'datastore' | 'queue' | 'external'
 export type Health = 'healthy' | 'degraded' | 'unknown'
+export type EnvironmentLifecycle = 'unknown' | 'starting' | 'ready' | 'investigating' | 'destroying'
+export type IncidentLifecycle = 'monitoring' | 'detected' | 'starting' | 'investigating' | 'confirming' | 'cleanup' | 'complete'
 export type Position = [number, number, number]
 
 export interface Entity {
@@ -36,6 +38,9 @@ export interface Environment {
   color: string
   hypothesisId?: string
   createdAt: number
+  lifecycle: EnvironmentLifecycle
+  lifecycleAt: number
+  level: number
   nodes: Record<string, NodeReading>
 }
 
@@ -43,13 +48,15 @@ export interface WorkspaceEvent {
   id: string
   sequence: number
   at: number
-  kind: 'baseline' | 'detect' | 'reason' | 'clone' | 'action' | 'observe' | 'undo' | 'verdict' | 'archive'
+  kind: 'baseline' | 'detect' | 'reason' | 'clone' | 'lifecycle' | 'action' | 'observe' | 'undo' | 'verdict' | 'archive'
   actor: 'model' | 'math' | 'adapter' | 'investigator-a' | 'investigator-b' | 'orchestrator'
   environmentId: string
   title: string
   detail: string
   targetId?: string
   phase?: string
+  lifecycle?: EnvironmentLifecycle
+  incident?: IncidentLifecycle  // live scenarios state the incident phase explicitly (e.g. the report event)
   causeId?: string
   tool?: string
   args?: Record<string, string | number>
@@ -70,6 +77,22 @@ export interface Scenario {
   live?: boolean  // built from a real audit log by the Product API, not a scripted example
   complete?: boolean  // live only: the run has written its report (false while it is still happening)
   now?: number  // live only: wall-clock position on the replay axis when the API built this
+  report?: {  // live only: what the audit log recorded for stages 5-8
+    outcome: string
+    diagnosis: string | null
+    confirmed: boolean
+    verdictAt: number | null
+    patch: string | null
+    patchProvider: string | null
+    patchRevision: number | null
+    verification: string | null
+    canary: string | null
+    mitigationHeld: string | null
+    productionActions: number
+    pages: number
+    startedAt: string
+    endedAt: string
+  }
   name: string
   subtitle: string
   incident: string
@@ -99,6 +122,8 @@ export interface WorkspaceState {
   environments: Environment[]
   actions: ActiveAction[]
   phase: string
+  lifecycle: IncidentLifecycle
+  cleanup: 'not-started' | 'in-progress' | 'complete'
   verdict?: string
   diagnosis?: string
   confirmed?: boolean
@@ -143,21 +168,36 @@ export function diagnosisSummary(scenario: Scenario, workspace: WorkspaceState):
 }
 
 export function replay(scenario: Scenario, time: number): WorkspaceState {
-  const environments: Environment[] = [{ id: 'production', label: 'Production', color: '#806747', createdAt: 0, nodes: structuredClone(scenario.baseline) }]
+  const environments: Environment[] = [{ id: 'production', label: 'Production', color: '#806747', createdAt: 0, lifecycle: 'ready', lifecycleAt: 0, level: 0, nodes: structuredClone(scenario.baseline) }]
   const actions: ActiveAction[] = []
   let phase = 'Monitoring'
+  let lifecycle: IncidentLifecycle = 'monitoring'
+  let cleanup: WorkspaceState['cleanup'] = 'not-started'
+  let nextLevel = 1
   let verdict: string | undefined
   let diagnosis: string | undefined
   let confirmed: boolean | undefined
   for (const event of visibleEvents(scenario, time)) {
     if (event.phase) phase = event.phase
+    if (event.incident) lifecycle = event.incident
+    if (event.kind === 'detect') lifecycle = 'detected'
     if (event.kind === 'clone' && event.environment && !environments.some(env => env.id === event.environmentId)) {
-      environments.push({ id: event.environmentId, ...event.environment, createdAt: event.at, nodes: structuredClone(scenario.baseline) })
+      environments.push({ id: event.environmentId, ...event.environment, createdAt: event.at, lifecycle: event.lifecycle ?? (scenario.live ? 'unknown' : 'starting'), lifecycleAt: event.at, level: nextLevel++, nodes: Object.fromEntries(scenario.topology.nodes.map(node => [node.id, { health: 'unknown' }])) })
+      if (lifecycle === 'monitoring' || lifecycle === 'detected') lifecycle = 'starting'
+      else if (cleanup !== 'not-started') { lifecycle = 'starting'; cleanup = 'in-progress' }  // a later clone (e.g. patch verification) after an earlier cleanup
     }
     const environment = environments.find(env => env.id === event.environmentId)
     if (environment && event.readings) environment.nodes = { ...environment.nodes, ...structuredClone(event.readings) }
+    if (environment && event.lifecycle) {
+      environment.lifecycle = event.lifecycle
+      environment.lifecycleAt = event.at
+      if (event.lifecycle === 'destroying') { lifecycle = 'cleanup'; cleanup = 'in-progress' }
+    }
     if (event.kind === 'action' && event.action) {
       actions.push({ ...event.action, start: event.at, environmentId: event.environmentId, targetId: event.targetId, status: 'active' })
+      if (environment && environment.id !== 'production') { environment.lifecycle = 'investigating'; environment.lifecycleAt = event.at }
+      if (event.environmentId === 'production') lifecycle = 'confirming'  // real runs destroy the investigation clones before probing production
+      else if (cleanup === 'not-started' || lifecycle === 'starting') lifecycle = 'investigating'
     }
     if (event.kind === 'undo') {
       const action = actions.find(item => item.id === event.undoId && item.environmentId === event.environmentId)
@@ -170,13 +210,25 @@ export function replay(scenario: Scenario, time: number): WorkspaceState {
     }
     if (event.kind === 'archive') {
       const index = environments.findIndex(env => env.id === event.environmentId)
-      if (index > 0) environments.splice(index, 1)
+      if (index > 0) {
+        environments.splice(index, 1)
+        cleanup = environments.length === 1 ? 'complete' : 'in-progress'
+        lifecycle = cleanup === 'complete' ? 'complete' : 'cleanup'
+      }
     }
   }
   for (const action of actions) {
     if (action.status !== 'reverted' && time >= action.start + action.ttl) action.status = 'awaiting-reversion'
   }
-  return { environments, actions, phase, verdict, diagnosis, confirmed }
+  return { environments, actions, phase, lifecycle, cleanup, verdict, diagnosis, confirmed }
+}
+
+export const environmentLifecycleLabel: Record<EnvironmentLifecycle, string> = { unknown: 'Readiness not recorded', starting: 'Starting', ready: 'Ready', investigating: 'Investigating', destroying: 'Removing' }
+
+export function environmentPresence(environment: Environment, cursor: number, reducedMotion = false): number {
+  if (environment.id === 'production' || reducedMotion) return 1
+  const progress = Math.max(0, Math.min(1, environment.lifecycle === 'destroying' ? 1 - (cursor - environment.lifecycleAt) / 3 : cursor - environment.createdAt))
+  return progress * progress * (3 - 2 * progress)
 }
 
 export function metricLabel(value: number | undefined, unit: string): string {
