@@ -122,7 +122,10 @@ class PredictionEvidence:
 
     @property
     def predicts(self) -> bool:
-        return self.measured_expectations > 0 and self.matched_expectations == self.measured_expectations
+        return (
+            self.measured_expectations > 0
+            and self.matched_expectations >= ceil(0.75 * self.measured_expectations)
+        )
 
 
 @dataclass(frozen=True)

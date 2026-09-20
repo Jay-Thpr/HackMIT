@@ -51,7 +51,11 @@ the healthy baseline once the injected condition is sustaining itself. For a
 transient trigger set observe_after_s > ttl_s (the incident must outlast the
 trigger); for a persistent cause set observe_after_s around 15. Learn from the
 history: if a previous attempt did not reproduce, change the mechanism or magnitude
-your hypothesis would predict, never repeat identical params. Set stop=true only
+your hypothesis would predict, never repeat identical params, and prefer switching
+to a different action over re-parameterizing one that already failed. Prefer the
+smallest intervention (params and ttl_s) your hypothesis predicts will recreate the
+fingerprint; an oversized trigger creates damage your hypothesis did not predict.
+Set stop=true only
 when no catalog action can express this hypothesis. Use only the supplied metric
 keys and action ids. You do not know the true cause; measurement decides."""
 
@@ -434,8 +438,20 @@ class AgenticCloneInvestigator:
                 )
                 self._lab.undo(handle)
                 handle = None
-                self._wait(proposal.observe_after_s or 10)
+                # an ignited metastable failure needs time to drain after the cause is gone;
+                # keep sampling for ~2 minutes before calling it unrecovered
+                self._wait(max(proposal.observe_after_s, 45))
                 recovery = similarity(healthy_reference, self._observe(clone))
+                for _ in range(3):
+                    if recovery.matches:
+                        break
+                    self._wait(30)
+                    recovery = similarity(healthy_reference, self._observe(clone))
+                if not recovery.matches:
+                    # a self-sustaining failure outlives its trigger by definition; recovery
+                    # then means the lab's verified-healthy reset can still bring it back
+                    self._lab.reset(clone.clone_id)
+                    recovery = similarity(healthy_reference, self._observe(clone))
                 recovery_evidence = RecoveryEvidence(clone.clone_id, recovery, recovery.matches)
                 probe_evidence: PredictionEvidence | None = None
                 if triage is not None or production_probe is not None or run_probe is not None:

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
-import { metricLabel, replay, type Scenario } from '../model'
+import { isConfirmedUndo, metricLabel, replay, type Scenario } from '../model'
 
 export function MetricChart({ scenario, cursor, environmentId, nodeId, compact = false }: { scenario: Scenario; cursor: number; environmentId: string; nodeId: string; compact?: boolean }) {
   const container = useRef<HTMLDivElement>(null)
@@ -43,7 +43,7 @@ export function MetricChart({ scenario, cursor, environmentId, nodeId, compact =
         const ctx = plot.ctx
         const events = scenario.events.filter(event => event.at <= cursorRef.current && event.environmentId === environmentId)
         for (const action of events.filter(event => event.kind === 'action' && event.action)) {
-          const release = events.find(event => event.kind === 'undo' && event.undoId === action.action!.id)
+          const release = events.find(event => isConfirmedUndo(event) && event.at >= action.at && event.undoId === action.action!.id)
           const start = plot.valToPos(action.at, 'x', true)
           const end = plot.valToPos(release?.at ?? cursorRef.current, 'x', true)
           ctx.save()

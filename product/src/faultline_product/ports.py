@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
+from math import ceil
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -114,7 +115,10 @@ class HypothesisInvestigation:
         return (
             self.reproduced
             and self.recovered
-            and (self.prediction_total is None or self.prediction_matches == self.prediction_total)
+            and (
+                self.prediction_total is None
+                or self.prediction_matches >= ceil(0.75 * self.prediction_total)
+            )
         )
 
 

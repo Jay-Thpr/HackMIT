@@ -41,7 +41,7 @@ export function ExperimentLab({ scenario, workspace }: { scenario: Scenario; wor
 
 export function ReplayLibrary({ scenario }: { scenario: Scenario }) {
   const { cursor, seek, set } = useWorkspace()
-  const verdict = visibleEvents(scenario, cursor).find(event => event.kind === 'verdict')
+  const verdict = visibleEvents(scenario, cursor).filter(event => event.kind === 'verdict' && event.environmentId === 'production').at(-1)
   return <div className="replay-view">
     <section className="panel replay-hero"><span className="overline">INCIDENT MEMORY</span><h2>Review an investigation.</h2><p>Replay the incident to see what the agent changed, what happened next, and how it reached a conclusion.</p><span className="quiet-badge">Design preview · no saved live incidents</span></section>
     <section className="panel replay-row"><div className="replay-icon"><Layers3 size={23} /></div><div><span className="overline">ILLUSTRATIVE REPLAY · {scenario.incident}</span><h3>{scenario.incidentTitle}</h3><p>{scenario.name} · {scenario.duration}s simulated timeline · {scenario.events.length} scripted steps</p></div><button className="secondary-button" onClick={() => { seek(0); set({ view: 'investigation', playing: true }) }}><Play size={14} />Play from the start</button></section>

@@ -1,3 +1,15 @@
+"""Build the Elasticsearch client from environment variables.
+
+``FAULTLINE_ELASTICSEARCH_URL`` / ``FAULTLINE_ELASTICSEARCH_API_KEY`` configure
+the authoritative primary (unset URL → ``None``, matching the "leave unset to
+skip ES persistence" convention in .env.example). When an Observability project
+is also configured — ``FAULTLINE_OBSERVABILITY_ELASTICSEARCH_URL`` and its API
+key, or the equivalent ``FAULTLINE_ELASTICSEARCH_MIRROR_*`` pair — writes are
+additionally delivered to that project as a display mirror, while reads stay on
+the primary. Incomplete mirror configuration is reported and leaves the primary
+alone rather than queueing evidence that could never be delivered.
+"""
+
 import logging
 import os
 from collections.abc import Mapping

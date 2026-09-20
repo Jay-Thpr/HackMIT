@@ -21,6 +21,7 @@ from faultline_brain import (
     CloneInvestigator,
     CloneProbe,
     LabExperiment,
+    SeedInvestigator,
 )
 from faultline_contracts import WINDOW_S, Experiment, Fingerprint, LeverError, TriageResult, utcnow
 from faultline_contracts.clone import CloneInfo, CloneLab, CloneSpec, LabError
@@ -280,6 +281,22 @@ class LabInvestigation(Investigation):
                 hypothesis, spec, production_incident, healthy,
                 triage=triage, production_probe=production_probe, run_probe=run_probe,
             )
+            if result.evidence is None and not isinstance(self._agent, SeedInvestigator):
+                # the agent exhausted its budget without reproducing; fall back to the
+                # seeded baseline recipe in a fresh clone so the hypothesis still gets
+                # a measured answer
+                fallback = AgenticCloneInvestigator(
+                    _CleanupTolerantLab(self._lab), observe, SeedInvestigator(),
+                    budget=1, wait=self._sleep,
+                ).investigate(
+                    hypothesis, spec, production_incident, healthy,
+                    triage=triage, production_probe=production_probe, run_probe=run_probe,
+                )
+                fallback.attempts = result.attempts + fallback.attempts
+                if fallback.evidence is not None or result.clone_id is None:
+                    result = fallback
+                else:
+                    result.attempts = fallback.attempts
         except (LabError, LeverError, TelemetryUnavailable, httpx.HTTPError, RuntimeError, ValueError) as exc:
             return HypothesisInvestigation(
                 hypothesis.id, next(iter(sources), None), None, False, False, None, None,
@@ -377,15 +394,20 @@ class LabInvestigation(Investigation):
         t_healthy_end = self._clock()
         healthy_baseline = source.series(t_healthy_end - timedelta(seconds=4 * WINDOW_S), t_healthy_end)
 
-        cause = self._lab.apply(clone.clone_id, recipe["action"], recipe["params"], recipe["ttl_s"])
-        # Let a transient trigger end and the incident sustain itself; a persistent cause is
-        # already sustaining, so don't sleep out its whole (possibly long) ttl.
-        self._sleep(min(recipe["ttl_s"], 30) + self._settle_s)
+        # Bound the re-injected cause to ~30s: a transient trigger must expire before the
+        # lever probe (the incident sustains itself if the hypothesis is right), and a
+        # persistent cause either ignited a self-sustaining failure by then or the probe
+        # measures the lever against a clone still inside its window.
+        cause_ttl = min(recipe["ttl_s"], 30)
+        cause = self._lab.apply(clone.clone_id, recipe["action"], recipe["params"], cause_ttl)
+        self._sleep(cause_ttl + self._settle_s)  # let the trigger end and the incident sustain itself
         t_incident_end = self._clock()
         incident_baseline = source.series(t_incident_end - timedelta(seconds=4 * WINDOW_S), t_incident_end)
 
-        handle = levers.apply(probe.lever_id, probe.params, probe.hold_s + 30)
-        self._sleep(probe.hold_s)
+        handle = levers.apply(probe.lever_id, probe.params, probe.hold_s + 45)
+        # a clone storm needs ~10s to drain after the lever engages; hold a little longer so
+        # the during windows measure the lever's sustained effect, not the drain transient
+        self._sleep(probe.hold_s + 15)
         t_release = self._clock()
         levers.undo(handle)
         self._sleep(self._probe_watch_s)

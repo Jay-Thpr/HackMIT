@@ -27,14 +27,14 @@ class HttpElasticsearchClient:
         base_url: str,
         api_key: str | None = None,
         client: httpx.Client | None = None,
-        *,
-        name: str = "primary",
+        name: str | None = None,
     ):
         self.name = name
         self.base_url = base_url.rstrip("/")
         self._client = client or httpx.Client(base_url=self.base_url, timeout=10.0)
         if api_key:
             self._client.headers["Authorization"] = f"ApiKey {api_key}"
+        self.name = name
 
     def index(self, *, index: str, document: dict[str, Any]) -> Any:
         response = self._client.put(f"/{index}/_doc/{document_id(index, document)}", json=document)

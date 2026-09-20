@@ -23,8 +23,7 @@ from .tokens import IncidentTokenComparison, compare_incident_tokens, fingerprin
 
 __all__ = [
     "ElasticsearchAuditSink", "ElasticsearchFingerprintStore", "ElasticsearchTelemetryAnalytics", "FINGERPRINT_INDEX", "FingerprintRecord", "HttpElasticsearchClient", "HttpSandboxStats",
-    "PollingTelemetrySource", "TelemetrySettings", "ambiguity_rows", "ensure_index_templates", "export_ambiguity_window", "fingerprint_from_stats",
+    "MirroredElasticsearchClient", "PollingTelemetrySource", "TelemetrySettings", "ambiguity_rows", "client_from_env", "ensure_index_templates", "export_ambiguity_window", "fingerprint_from_stats",
     "fingerprint_similarity", "incident_timeline", "load_repo_dotenv", "ReproductionSimilarity", "SimilarIncident",
     "IncidentTokenComparison", "compare_incident_tokens", "fingerprint_prompt_payload", "token_count",
-    "MirroredElasticsearchClient", "client_from_env",
 ]

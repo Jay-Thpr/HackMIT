@@ -68,6 +68,39 @@ describe('deterministic simulated replay', () => {
     expect(replay({ ...scenarios[0], events }, 2).verdict).toBe('second')
   })
 
+  it.each([['H_meta', true], ['H_db', true], ['H_db', false], ['none_of_the_above', false]] as const)('replays the measured diagnosis %s with confirmation %s', (diagnosis, confirmed) => {
+    const event: WorkspaceEvent = { id: 'verdict', sequence: 1, at: 20, kind: 'verdict', actor: 'math', environmentId: 'production', title: 'Measured result', detail: '', diagnosis, confirmed }
+    const scenario = { ...scenarios[0], live: true, events: [event] }
+    expect(replay(scenario, 19).diagnosis).toBeUndefined()
+    expect(replay(scenario, 20)).toMatchObject({ diagnosis, confirmed })
+    const unconfirmed = { ...event, id: 'later', at: 30, diagnosis: 'none_of_the_above', confirmed: false }
+    expect(replay({ ...scenario, events: [event, unconfirmed] }, 30)).toMatchObject({ diagnosis: 'none_of_the_above', confirmed: false })
+    expect(replay(scenario, 19).confirmed).toBeUndefined()
+  })
+
+  it('does not infer confirmation from a legacy title or a model-authored verdict', () => {
+    const event: WorkspaceEvent = { id: 'verdict', sequence: 1, at: 20, kind: 'verdict', actor: 'math', environmentId: 'production', title: 'H_meta confirmed', detail: '' }
+    expect(replay({ ...scenarios[0], events: [event] }, 20).confirmed).toBe(false)
+    expect(replay({ ...scenarios[0], events: [{ ...event, actor: 'model', diagnosis: 'H_db', confirmed: true }] }, 20).confirmed).not.toBe(true)
+  })
+
+  it.each(['active', 'undone', 'expired', 'unknown', undefined] as const)('preserves release status %s and awaits confirmation at TTL', (undoStatus) => {
+    const apply: WorkspaceEvent = { id: 'apply', sequence: 1, at: 1, kind: 'action', actor: 'adapter', environmentId: 'production', title: 'Apply', detail: '', action: { id: 'ttl', label: 'test', ttl: 10 } }
+    const undo: WorkspaceEvent = { id: 'undo', sequence: 2, at: 5, kind: 'undo', actor: 'adapter', environmentId: 'production', title: 'Release', detail: '', undoId: 'ttl', undoStatus }
+    const scenario = { ...scenarios[0], live: true, events: [apply, undo] }
+    const released = undoStatus === 'undone' || undoStatus === 'expired'
+    expect(replay(scenario, 4).actions[0].status).toBe('active')
+    expect(replay(scenario, 5).actions[0].status).toBe(released ? 'reverted' : undoStatus === 'active' ? 'release-failed' : 'awaiting-reversion')
+    expect(replay(scenario, 12).actions[0].status).toBe(released ? 'reverted' : 'awaiting-reversion')
+    expect(replay({ ...scenario, events: [...scenario.events, { ...undo, id: 'verified', sequence: 3, at: 13, undoStatus: 'undone' }] }, 13).actions[0].status).toBe('reverted')
+  })
+
+  it('never releases an action in another environment with the same id', () => {
+    const apply: WorkspaceEvent = { id: 'apply', sequence: 1, at: 1, kind: 'action', actor: 'adapter', environmentId: 'production', title: 'Apply', detail: '', action: { id: 'shared', label: 'test', ttl: 10 } }
+    const undo: WorkspaceEvent = { id: 'undo', sequence: 2, at: 5, kind: 'undo', actor: 'adapter', environmentId: 'clone-a', title: 'Release', detail: '', undoId: 'shared', undoStatus: 'undone' }
+    expect(replay({ ...scenarios[0], events: [apply, undo] }, 5).actions[0].status).toBe('active')
+  })
+
   it('uses the same model for a queue-based, cyclic architecture', () => {
     const state = replay(scenarios[1], 47)
     expect(state.environments).toHaveLength(3)
