@@ -4,6 +4,9 @@ bounded retry policy:
 * retries are capped at min(max_retries, ORDERS_RETRY_HARD_CAP) per request;
 * every retry waits an exponential backoff with full jitter (ORDERS_BACKOFF_BASE_MS,
   ORDERS_BACKOFF_MAX_MS) so failed attempts are not replayed as a synchronous burst;
+* the whole request runs under ORDERS_REQUEST_DEADLINE_MS: a retry is only started if it can
+  still finish before the deadline, and its timeout is clipped to the time left, so a
+  checkout never takes longer than the deadline however many attempts it makes;
 * a process-wide retry budget (token bucket refilled by first attempts at
   ORDERS_RETRY_BUDGET_RATIO tokens each) bounds retry traffic to a fraction of real traffic,
   so a slow Payments/DB cannot amplify load into a self-sustaining retry storm.
@@ -37,13 +40,15 @@ PAYMENTS_URL = os.environ.get("PAYMENTS_URL", "http://envoy:8081/pay")
 DEFAULT_MAX_RETRIES = int(os.environ.get("ORDERS_MAX_RETRIES", "3"))
 ATTEMPT_TIMEOUT_S = float(os.environ.get("ORDERS_ATTEMPT_TIMEOUT_MS", "500")) / 1000.0
 RETRY_HARD_CAP = int(os.environ.get("ORDERS_RETRY_HARD_CAP", "2"))
-BACKOFF_BASE_S = float(os.environ.get("ORDERS_BACKOFF_BASE_MS", "100")) / 1000.0
-BACKOFF_MAX_S = float(os.environ.get("ORDERS_BACKOFF_MAX_MS", "1000")) / 1000.0
+BACKOFF_BASE_S = float(os.environ.get("ORDERS_BACKOFF_BASE_MS", "25")) / 1000.0
+BACKOFF_MAX_S = float(os.environ.get("ORDERS_BACKOFF_MAX_MS", "200")) / 1000.0
+REQUEST_DEADLINE_S = float(os.environ.get("ORDERS_REQUEST_DEADLINE_MS", "900")) / 1000.0
+MIN_ATTEMPT_S = float(os.environ.get("ORDERS_MIN_ATTEMPT_MS", "100")) / 1000.0
 RETRY_BUDGET_RATIO = float(os.environ.get("ORDERS_RETRY_BUDGET_RATIO", "0.2"))
 RETRY_BUDGET_MAX = float(os.environ.get("ORDERS_RETRY_BUDGET_MAX", "20"))
 
 stats = Stats("orders", counters=("requests", "attempts", "retries", "ok", "errors", "attempt_timeouts", "attempt_errors",
-                                  "retries_budget_denied"),
+                                  "retries_budget_denied", "retries_deadline_denied"),
               hists=("request", "attempt", "backoff"))
 _override: dict[str, Any] = {"max_retries": None, "timeout_s": None, "expires": 0.0}
 _session: aiohttp.ClientSession | None = None
@@ -112,11 +117,11 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
-async def _attempt(order_id: str) -> tuple[bool, str]:
+async def _attempt(order_id: str, timeout_s: float) -> tuple[bool, str]:
     t0 = time.monotonic()
     try:
         async with _session.post(PAYMENTS_URL, json={"order_id": order_id, "amount_cents": 1000},
-                                 timeout=aiohttp.ClientTimeout(total=attempt_timeout_s())) as r:
+                                 timeout=aiohttp.ClientTimeout(total=timeout_s)) as r:
             await r.read()
             ok = r.status == 200
             outcome = "ok" if ok else f"status {r.status}"
@@ -136,6 +141,7 @@ async def checkout():
     stats.inc("requests")
     budget.deposit()
     _in_flight += 1
+    deadline = t0 + REQUEST_DEADLINE_S
     try:
         attempt = 0
         while True:
@@ -143,7 +149,8 @@ async def checkout():
             stats.inc("attempts")
             if attempt > 1:
                 stats.inc("retries")
-            ok, outcome = await _attempt(order_id)
+            timeout_s = attempt_timeout_s() if attempt == 1 else min(attempt_timeout_s(), deadline - time.monotonic())
+            ok, outcome = await _attempt(order_id, timeout_s)
             if ok:
                 stats.inc("ok")
                 return {"order_id": order_id, "attempts": attempt, "version": VERSION}
@@ -151,7 +158,7 @@ async def checkout():
             if outcome == "timeout":
                 stats.inc("attempt_timeouts")
                 rlog.log(logging.WARNING, "timeout", "payments call timed out after %dms (attempt %d of %d)",
-                         attempt_timeout_s() * 1000, attempt, limit)
+                         timeout_s * 1000, attempt, limit)
             else:
                 stats.inc("attempt_errors")
                 rlog.log(logging.WARNING, "error", "payments call failed: %s (attempt %d of %d)",
@@ -160,12 +167,17 @@ async def checkout():
                 stats.inc("errors")
                 rlog.log(logging.ERROR, "failed", "checkout failed: payments unavailable after %d attempts", attempt)
                 return JSONResponse({"error": "payments unavailable", "attempts": attempt}, status_code=503)
+            delay = backoff_s(attempt)
+            if time.monotonic() + delay + MIN_ATTEMPT_S > deadline:
+                stats.inc("errors")
+                stats.inc("retries_deadline_denied")
+                rlog.log(logging.ERROR, "deadline", "checkout failed: no time left to retry after %d attempt(s)", attempt)
+                return JSONResponse({"error": "payments unavailable", "attempts": attempt}, status_code=503)
             if not budget.try_spend():
                 stats.inc("errors")
                 stats.inc("retries_budget_denied")
                 rlog.log(logging.ERROR, "budget", "checkout failed: retry budget exhausted after %d attempt(s)", attempt)
                 return JSONResponse({"error": "payments unavailable", "attempts": attempt}, status_code=503)
-            delay = backoff_s(attempt)
             stats.observe("backoff", delay * 1000)
             await asyncio.sleep(delay)
     finally:
