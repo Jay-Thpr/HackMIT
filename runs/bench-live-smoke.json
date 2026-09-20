@@ -1,0 +1,107 @@
+{
+  "schema": "faultline-bench-live/1",
+  "started_at": "2026-09-20T02:18:20.837625+00:00",
+  "finished_at": "2026-09-20T02:26:41.458612+00:00",
+  "plan": {
+    "worlds": [
+      "storm",
+      "degraded"
+    ],
+    "per_world": 10,
+    "cap": 2,
+    "arms": [
+      "active"
+    ],
+    "baseline_s": 130,
+    "cli_timeout_s": 420,
+    "openai_model": "gpt-4.1",
+    "fault_url": "http://127.0.0.1:9900",
+    "control_url": "http://127.0.0.1:9901"
+  },
+  "centroid_training": {
+    "H_db": 3,
+    "H_meta": 47
+  },
+  "runs": [
+    {
+      "case": 0,
+      "world": "storm",
+      "params": {
+        "delay_ms": 600,
+        "duration_s": 15
+      },
+      "rps": 60,
+      "arm": "active",
+      "incident_id": "bench-storm-0-021820",
+      "expected": "H_meta",
+      "diagnosis": "no_incident",
+      "correct": false,
+      "unscored": false,
+      "unscored_reason": null,
+      "verdict": {
+        "diagnosis": null,
+        "confirmed": null,
+        "experiments": [],
+        "actions": 0
+      },
+      "tokens": null,
+      "wall_s": 320.2268039160408,
+      "started_at": "2026-09-20T02:18:20.837871+00:00",
+      "audit_path": "/Users/jt/Desktop/HackMIT/integration/runs/audit-bench-storm-0-021820.jsonl",
+      "llm_outputs": null,
+      "error": null,
+      "loop_checks_failed": 3
+    },
+    {
+      "case": 1,
+      "world": "degraded",
+      "params": {
+        "capacity_qps": 30
+      },
+      "rps": 60,
+      "arm": "active",
+      "incident_id": "bench-degraded-1-022341",
+      "expected": "H_db",
+      "diagnosis": "no_incident",
+      "correct": false,
+      "unscored": false,
+      "unscored_reason": null,
+      "verdict": {
+        "diagnosis": null,
+        "confirmed": null,
+        "experiments": [],
+        "actions": 0
+      },
+      "tokens": null,
+      "wall_s": 180.39846287481487,
+      "started_at": "2026-09-20T02:23:41.057589+00:00",
+      "audit_path": "/Users/jt/Desktop/HackMIT/integration/runs/audit-bench-degraded-1-022341.jsonl",
+      "llm_outputs": null,
+      "error": null,
+      "loop_checks_failed": 4
+    }
+  ],
+  "accuracy": {
+    "active": {
+      "correct": 0,
+      "n": 2,
+      "accuracy": 0.0,
+      "unscored": 0
+    }
+  },
+  "by_world": {
+    "active": {
+      "degraded": {
+        "correct": 0,
+        "n": 1,
+        "unscored": 0
+      },
+      "storm": {
+        "correct": 0,
+        "n": 1,
+        "unscored": 0
+      }
+    }
+  },
+  "aborted": null
+}

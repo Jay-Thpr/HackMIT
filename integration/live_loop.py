@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -76,15 +77,17 @@ class LiveLoop:
                    json.dumps({k: v["active"] for k, v in lv.items()}))
 
     # -- one world -------------------------------------------------------------------------------
-    def run_world(self, name: str, start_watch: str) -> None:
-        spec = WORLDS[name]
+    def run_world(self, name: str, start_watch: str, *, spec: dict | None = None, incident: str | None = None) -> Path:
+        spec = spec or WORLDS[name]
         self.step = f"{name}"
         stamp = datetime.now(timezone.utc).strftime("%H%M%S")
-        incident = f"live-{name}-{stamp}"
+        incident = incident or f"live-{name}-{stamp}"
         audit_path = RUNS / f"audit-{incident}.jsonl"
         cli_log = RUNS / f"cli-{incident}.log"
         print(f"\n=== {name}: incident {incident}; watch starts {start_watch} injection", flush=True)
         self.reset("pre")
+        if spec.get("prepare"):
+            spec["prepare"](self)
 
         proc: subprocess.Popen | None = None
 
@@ -96,8 +99,9 @@ class LiveLoop:
             if self.lab_url:
                 cmd += ["--lab-url", self.lab_url, "--max-clones", str(self.max_clones),
                         "--investigate-budget", str(self.investigate_budget)]
+            env = {**os.environ, **spec.get("env", {})}
             log = open(cli_log, "w")
-            p = subprocess.Popen(cmd, cwd=PRODUCT, stdout=log, stderr=subprocess.STDOUT, text=True)
+            p = subprocess.Popen(cmd, cwd=PRODUCT, stdout=log, stderr=subprocess.STDOUT, text=True, env=env)
             print(f"  started: {' '.join(cmd[2:])}  (log {cli_log.name})", flush=True)
             return p
 
@@ -111,7 +115,7 @@ class LiveLoop:
                        f"exit={proc.poll()}")
         st = spec["inject"](self.fc)
         inject_at = datetime.now(timezone.utc)
-        self.check(f"C5 inject -> world={spec['world'].value}", st.world == spec["world"] and st.active, st.model_dump_json())
+        self.check(f"C5 inject -> world={spec['world'].value}", st.world == spec["world"] and (st.active or not spec.get("expect_active", True)), st.model_dump_json())
         span = self.phase(spec["develop_s"], "incident develops")
         self.check("incident visible on /stats", is_incident(self.s.tail(span, 10)), fmt(self.s.tail(span, 10)))
         if start_watch == "after":
@@ -140,6 +144,7 @@ class LiveLoop:
             self.check("storm: system healthy after Faultline (mitigation or healed loop)", is_healthy(after), fmt(after))
         self.reset("post")
         self.check("post-reset: healthy", is_healthy(self.s.tail(self.phase(10, "post reset"), 8)))
+        return audit_path
 
     def check_audit(self, incident: str, path: Path, inject_at: datetime, spec: dict) -> None:
         if not path.exists():
