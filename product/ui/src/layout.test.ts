@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import ELK from 'elkjs/lib/elk.bundled.js'
 import { deriveTopology } from './model'
-import { layoutGraph } from './layout'
+import { ASPECT_MAX, ASPECT_MIN, layoutGraph, MIN_SEPARATION } from './layout'
 import { scenarios } from './scenarios'
 
 const engine = new ELK()
@@ -66,4 +66,27 @@ describe('the 19-node partitioned topology', () => {
       }
     }
   })
+})
+
+// Every arc now has its own silhouette (5 to 19 nodes), so the bounds established for the
+// 19-node case have to hold for all of them. Small graphs are the likelier failure: a handful
+// of nodes in two tiers can easily land outside the aspect band.
+describe('every scenario topology', () => {
+  for (const scenario of scenarios) {
+    it(`${scenario.id}: stays inside the aspect band and keeps nodes a node-width apart`, async () => {
+      const layout = await layoutGraph(scenario.topology, engine)
+      const ratio = layout.width / layout.height
+      expect(ratio, `${scenario.id} aspect ${ratio.toFixed(3)}`).toBeGreaterThanOrEqual(ASPECT_MIN)
+      expect(ratio, `${scenario.id} aspect ${ratio.toFixed(3)}`).toBeLessThanOrEqual(ASPECT_MAX)
+      const ids = Object.keys(layout.positions)
+      expect(ids).toHaveLength(scenario.topology.nodes.length)
+      for (let i = 0; i < ids.length; i++) {
+        for (let j = i + 1; j < ids.length; j++) {
+          const [ax, , az] = layout.positions[ids[i]]
+          const [bx, , bz] = layout.positions[ids[j]]
+          expect(Math.hypot(ax - bx, az - bz), `${scenario.id}: ${ids[i]} vs ${ids[j]}`).toBeGreaterThanOrEqual(MIN_SEPARATION - 1e-9)
+        }
+      }
+    })
+  }
 })

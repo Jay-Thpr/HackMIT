@@ -1,6 +1,7 @@
 import type { NodeReading, Scenario } from '../model'
 import { confirmSeparating, exhaustHypotheses, noIncident } from './builders'
 import { existingTopology } from './topologies'
+import { checkoutWithReplica, edgeCheckout, fulfilmentQueue, shardedReads } from './shapes'
 import type { ArcScenario, CloneTrack } from './types'
 
 type ExistingScenario = Omit<Scenario, 'events'>
@@ -18,8 +19,8 @@ function report(id: string, diagnosis: string | null, confirmed: boolean, produc
   }
 }
 
-function base(source: ExistingScenario, values: Pick<ArcScenario, 'id' | 'name' | 'subtitle' | 'incident' | 'incidentTitle' | 'targetId' | 'entryId' | 'policyId' | 'duration' | 'hypotheses'> & { report: NonNullable<Scenario['report']> }): ArcScenario {
-  return { ...values, ...existingTopology(source), live: true, complete: true, now: values.duration }
+function base(source: Pick<Scenario, 'topology' | 'baseline'>, values: Pick<ArcScenario, 'id' | 'name' | 'subtitle' | 'incident' | 'incidentTitle' | 'targetId' | 'entryId' | 'policyId' | 'duration' | 'hypotheses'> & { report: NonNullable<Scenario['report']> }): ArcScenario {
+  return { ...values, ...source, live: true, complete: true, now: values.duration }
 }
 
 function track(values: Omit<CloneTrack, 'color'> & { color?: string }): CloneTrack {
@@ -27,7 +28,7 @@ function track(values: Omit<CloneTrack, 'color'> & { color?: string }): CloneTra
 }
 
 function stormSevere(commerce: ExistingScenario): Scenario {
-  const scenario = base(commerce, {
+  const scenario = base(existingTopology(commerce), {
     id: 'storm-severe', name: 'Severe retry storm', subtitle: 'Elastic resolves first; Faultline confirms', incident: 'FL-101',
     incidentTitle: 'Checkout retries are saturating the request path', targetId: 'orders-api', entryId: 'gateway', policyId: 'orders-api', duration: 100,
     hypotheses: [
@@ -53,8 +54,8 @@ function stormSevere(commerce: ExistingScenario): Scenario {
   return { ...scenario, events }
 }
 
-function ambiguousPair(commerce: ExistingScenario): Scenario {
-  const scenario = base(commerce, {
+function ambiguousPair(): Scenario {
+  const scenario = base(checkoutWithReplica, {
     id: 'ambiguous-pair', name: 'Degraded DB with elevated retries', subtitle: 'The release window breaks the tie', incident: 'FL-102',
     incidentTitle: 'Checkout latency and retries rise together', targetId: 'primary-db', entryId: 'gateway', policyId: 'orders-api', duration: 100,
     hypotheses: [
@@ -81,7 +82,7 @@ function ambiguousPair(commerce: ExistingScenario): Scenario {
 }
 
 function tenantConfined(platform: ExistingScenario): Scenario {
-  const scenario = base(platform, {
+  const scenario = base(existingTopology(platform), {
     id: 'tenant-confined', name: 'Tenant-confined worker starvation', subtitle: 'A scoped clone probe corrects correlated blame', incident: 'FL-103',
     incidentTitle: 'Tenants c and d are falling behind', targetId: 'worker-2', entryId: 'gateway', policyId: 'worker-2', duration: 100,
     hypotheses: [
@@ -107,8 +108,8 @@ function tenantConfined(platform: ExistingScenario): Scenario {
   return { ...scenario, events }
 }
 
-function badDeploy(platform: ExistingScenario): Scenario {
-  const scenario = base(platform, {
+function badDeploy(): Scenario {
+  const scenario = base(fulfilmentQueue, {
     id: 'bad-deploy', name: 'Config regression after deploy', subtitle: 'Clone-only restart establishes causality', incident: 'FL-104',
     incidentTitle: 'Outbox throughput drops after worker-v42', targetId: 'worker-2', entryId: 'gateway', policyId: 'worker-2', duration: 100,
     hypotheses: [
@@ -134,8 +135,8 @@ function badDeploy(platform: ExistingScenario): Scenario {
   return { ...scenario, events }
 }
 
-function benignSpike(commerce: ExistingScenario): Scenario {
-  const scenario = base(commerce, {
+function benignSpike(): Scenario {
+  const scenario = base(edgeCheckout, {
     id: 'benign-spike', name: 'Benign traffic spike', subtitle: 'The sustained gate prevents a false incident', incident: 'FL-105',
     incidentTitle: 'Checkout traffic spikes briefly', targetId: 'gateway', entryId: 'gateway', policyId: 'orders-api', duration: 32,
     hypotheses: [{ id: 'no_incident', title: 'Transient traffic spike', description: 'The service remains inside its sustained noise-adjusted envelope.', prediction: 'The breach clears without intervention.', color: '#4b5d67' }],
@@ -151,8 +152,8 @@ function benignSpike(commerce: ExistingScenario): Scenario {
   return { ...scenario, events }
 }
 
-function hotKey(platform: ExistingScenario): Scenario {
-  const scenario = base(platform, {
+function hotKey(): Scenario {
+  const scenario = base(shardedReads, {
     id: 'hot-key', name: 'Hot shard key', subtitle: 'A stated limit: the cause cannot enter the clone', incident: 'FL-106',
     incidentTitle: 'One shard path is overloaded without a visible cause', targetId: 'shard-1', entryId: 'gateway', policyId: 'worker-2', duration: 76,
     hypotheses: [
@@ -171,5 +172,5 @@ function hotKey(platform: ExistingScenario): Scenario {
 }
 
 export function buildArcs(commerce: ExistingScenario, platform: ExistingScenario): Scenario[] {
-  return [stormSevere(commerce), ambiguousPair(commerce), tenantConfined(platform), badDeploy(platform), benignSpike(commerce), hotKey(platform)]
+  return [stormSevere(commerce), ambiguousPair(), tenantConfined(platform), badDeploy(), benignSpike(), hotKey()]
 }
