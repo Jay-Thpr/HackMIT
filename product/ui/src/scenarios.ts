@@ -5,8 +5,14 @@ const degraded = (latency: number, qps: number): NodeReading => ({ health: 'degr
 
 function eventsFor(scenario: Omit<Scenario, 'events'>): WorkspaceEvent[] {
   const { targetId: target, entryId: entry, policyId: policy, baseline, id } = scenario
-  const queue = id === 'pipeline'
-  const incident = { [target]: degraded(1240, 312), [policy]: degraded(1680, 312), [entry]: degraded(1820, 80) }
+  const queue = scenario.topology.nodes.find(node => node.id === target)?.kind === 'queue'
+  // Keep whatever resource evidence a node carries (consumer lag, replica lag, queue age) visible
+  // while it is degraded, so the inspector does not lose those rows mid-incident.
+  const strained = (nodeId: string, reading: NodeReading): NodeReading => {
+    const metrics = scenario.incidentMetrics?.[nodeId] ?? baseline[nodeId]?.resourceMetrics
+    return metrics ? { ...reading, resourceMetrics: metrics } : reading
+  }
+  const incident = { [target]: strained(target, degraded(1240, 312)), [policy]: strained(policy, degraded(1680, 312)), [entry]: strained(entry, degraded(1820, 80)) }
   const make = (at: number, kind: WorkspaceEvent['kind'], title: string, extra: Partial<WorkspaceEvent> = {}): WorkspaceEvent => ({
     id: `${id}-${at}-${kind}`, sequence: at, at, kind, title, actor: 'orchestrator', environmentId: 'production', detail: '', ...(kind === 'undo' ? { undoStatus: 'undone' as const } : {}), ...extra,
   })
@@ -89,4 +95,74 @@ const pipeline: Omit<Scenario, 'events'> = {
   ],
 }
 
-export const scenarios: Scenario[] = [commerce, pipeline].map(scenario => ({ ...scenario, events: eventsFor(scenario) }))
+
+// A partitioned, replicated fulfilment platform: the shape of the advanced sandbox
+// (Kafka brokers, tenant-sharded Postgres with streaming replicas, a consumer group of
+// workers behind a transactional outbox). Scripted for illustration - no live telemetry
+// is connected, and the readings below are examples rather than measurements.
+const platform: Omit<Scenario, 'events'> = {
+  id: 'platform', name: 'Fulfilment platform', subtitle: 'Partitioned, replicated architecture',
+  incident: 'FL-026', incidentTitle: 'Order fulfilment is falling behind',
+  targetId: 'kafka-1', entryId: 'gateway', policyId: 'worker-2', duration: 112,
+  topology: deriveTopology({
+    services: {
+      gateway: {}, 'checkout-api': {}, 'inventory-api': {}, 'outbox-relay': {},
+      'worker-1': {}, 'worker-2': {}, 'worker-3': {}, reconciler: {},
+      // Brokers, shards and replicas report their own resource statistics, so they are
+      // instrumented rather than merely observed. payments-provider stays third-party.
+      'kafka-0': {}, 'kafka-1': {}, 'kafka-2': {},
+      'shard-0': {}, 'shard-1': {}, 'shard-2': {},
+      'shard-0-replica': {}, 'shard-1-replica': {}, 'shard-2-replica': {}, redis: {},
+    },
+    edges: [
+      { src: 'gateway', dst: 'checkout-api' }, { src: 'gateway', dst: 'inventory-api' },
+      { src: 'checkout-api', dst: 'redis' }, { src: 'inventory-api', dst: 'redis' },
+      { src: 'checkout-api', dst: 'shard-0' }, { src: 'checkout-api', dst: 'shard-1' }, { src: 'checkout-api', dst: 'shard-2' },
+      { src: 'inventory-api', dst: 'shard-1' },
+      { src: 'shard-0', dst: 'shard-0-replica' }, { src: 'shard-1', dst: 'shard-1-replica' }, { src: 'shard-2', dst: 'shard-2-replica' },
+      { src: 'outbox-relay', dst: 'shard-0' }, { src: 'outbox-relay', dst: 'shard-1' }, { src: 'outbox-relay', dst: 'shard-2' },
+      { src: 'outbox-relay', dst: 'kafka-0' }, { src: 'outbox-relay', dst: 'kafka-1' }, { src: 'outbox-relay', dst: 'kafka-2' },
+      { src: 'kafka-0', dst: 'worker-1' }, { src: 'kafka-1', dst: 'worker-2' }, { src: 'kafka-2', dst: 'worker-3' },
+      { src: 'worker-1', dst: 'shard-0' }, { src: 'worker-2', dst: 'shard-1' }, { src: 'worker-3', dst: 'shard-2' },
+      { src: 'worker-1', dst: 'payments-provider' }, { src: 'worker-2', dst: 'payments-provider' }, { src: 'worker-3', dst: 'payments-provider' },
+      { src: 'reconciler', dst: 'shard-0-replica' }, { src: 'reconciler', dst: 'shard-1-replica' }, { src: 'reconciler', dst: 'shard-2-replica' },
+    ],
+  }, {
+    'checkout-api': { instances: 2 },
+    redis: { kind: 'datastore' },
+    'kafka-0': { kind: 'queue', label: 'kafka-0 - orders p0,p3' },
+    'kafka-1': { kind: 'queue', label: 'kafka-1 - orders p1,p4' },
+    'kafka-2': { kind: 'queue', label: 'kafka-2 - orders p2,p5' },
+    'shard-0': { kind: 'datastore', label: 'shard-0 - tenants a,b' },
+    'shard-1': { kind: 'datastore', label: 'shard-1 - tenants c,d' },
+    'shard-2': { kind: 'datastore', label: 'shard-2 - tenants e,f' },
+    'shard-0-replica': { kind: 'datastore' }, 'shard-1-replica': { kind: 'datastore' }, 'shard-2-replica': { kind: 'datastore' },
+  }),
+  baseline: {
+    gateway: healthy(46, 120), 'checkout-api': healthy(38, 78), 'inventory-api': healthy(21, 42),
+    redis: { ...healthy(2, 120), utilization: 22 },
+    'outbox-relay': { ...healthy(12, 64), resourceMetrics: { outbox_age_ms: 180 } },
+    'kafka-0': { ...healthy(9, 21), utilization: 34, resourceMetrics: { consumer_lag_messages: 12 } },
+    'kafka-1': { ...healthy(9, 22), utilization: 36, resourceMetrics: { consumer_lag_messages: 14 } },
+    'kafka-2': { ...healthy(9, 21), utilization: 33, resourceMetrics: { consumer_lag_messages: 11 } },
+    'worker-1': { ...healthy(34, 21), resourceMetrics: { oldest_pending_ms: 240 } },
+    'worker-2': { ...healthy(35, 22), resourceMetrics: { oldest_pending_ms: 260 } },
+    'worker-3': { ...healthy(33, 21), resourceMetrics: { oldest_pending_ms: 230 } },
+    'shard-0': { ...healthy(14, 40), utilization: 44 }, 'shard-1': { ...healthy(16, 52), utilization: 51 }, 'shard-2': { ...healthy(14, 39), utilization: 43 },
+    'shard-0-replica': { ...healthy(11, 40), utilization: 30, resourceMetrics: { replica_lag_bytes: 4096 } },
+    'shard-1-replica': { ...healthy(12, 52), utilization: 34, resourceMetrics: { replica_lag_bytes: 5120 } },
+    'shard-2-replica': { ...healthy(11, 39), utilization: 29, resourceMetrics: { replica_lag_bytes: 3584 } },
+    reconciler: healthy(8, 6), 'payments-provider': { health: 'unknown' },
+  },
+  incidentMetrics: {
+    'kafka-1': { consumer_lag_messages: 8420 },
+    'worker-2': { oldest_pending_ms: 41000 },
+    'outbox-relay': { outbox_age_ms: 9800 },
+  },
+  hypotheses: [
+    { id: 'A', title: 'Self-sustaining redelivery', description: 'Failed fulfilments may be redelivered on the same partition faster than the consumer group can drain them, keeping the partition saturated after the original slowdown ended.', prediction: 'Cap redelivery -> partition lag drains -> stays drained after release.', color: '#957548' },
+    { id: 'B', title: 'Constrained consumer capacity', description: 'The consumer group assigned to that partition may simply have less capacity than the ordinary arrival rate, independently of retries.', prediction: 'Cap redelivery -> arrivals fall -> lag remains high or returns.', color: '#716b60' },
+  ],
+}
+
+export const scenarios: Scenario[] = [commerce, pipeline, platform].map(scenario => ({ ...scenario, events: eventsFor(scenario) }))

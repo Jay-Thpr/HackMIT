@@ -110,9 +110,15 @@ test('the incident report opens by itself when playback reaches the end', async 
   await expect(page.locator('.map-canvas canvas')).toBeVisible()
   await seekTo(page, 100)
   await page.getByRole('button', { name: 'Resume demo', exact: true }).click()
-  await expect(page.locator('dialog[open] #dialog-title')).toHaveText('Self-sustaining overload confirmed', { timeout: 15000 })
-  await expect(page.locator('dialog[open] .report-winner')).toContainText('Clone A')
-  await expect(page.locator('dialog[open] .report-dialog-facts')).toContainText('Clone A, then production')
+  const report = page.locator('dialog.report-sheet[open]')
+  await expect(report.locator('#dialog-title')).toHaveText('Self-sustaining overload confirmed', { timeout: 15000 })
+  await expect(report.locator('.report-winner')).toContainText('Clone A')
+  await expect(report.locator('.report-dialog-facts')).toContainText('Clone A, then production')
+  const bounds = await report.boundingBox()
+  const viewport = page.viewportSize()!
+  expect(bounds).not.toBeNull()
+  expect(Math.abs(bounds!.x + bounds!.width - viewport.width)).toBeLessThanOrEqual(1)
+  expect(bounds!.height).toBe(viewport.height)
   await page.getByRole('button', { name: 'Stay in the workspace', exact: true }).click()
   await expect(page.locator('dialog[open]')).toHaveCount(0)
   await expect(page.getByRole('region', { name: 'Incident lifecycle' })).toHaveAttribute('data-phase', 'complete')
@@ -486,12 +492,34 @@ test('shared dark palette stays readable across pages', async ({ page }) => {
   const { default: AxeBuilder } = await import('@axe-core/playwright')
   await page.goto('/')
   await seekTo(page, 47)
-  for (const name of ['Why this incident?', 'Observability', 'Clone experiments', 'Incident replay']) {
+  for (const name of ['Why this incident?', 'Observability', 'Clone experiments', 'Incident replay', 'Evidence lineage']) {
     await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name, exact: true }).click()
     await page.screenshot({path:`test-results/palette-${name.replace(/[^a-z]/gi,'')}.png`,fullPage:true})
     const result = await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa']).analyze()
     expect.soft(result.violations.map(v => ({id:v.id, nodes:v.nodes.map(n=>n.target)}))).toEqual([])
   }
+})
+
+test('evidence lineage aligns its attribution and keeps the pipeline on the dark surface', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Evidence lineage', exact: true }).click()
+  const kicker = await page.locator('.elastic-kicker').evaluate(element => {
+    const attribution = element.querySelector('.elastic-attribution')!.getBoundingClientRect()
+    const label = element.querySelector('.overline')!.getBoundingClientRect()
+    return { gap: Math.round(label.left - attribution.right), centerDelta: Math.round(Math.abs((attribution.top + attribution.bottom) / 2 - (label.top + label.bottom) / 2)) }
+  })
+  expect(kicker.gap).toBeGreaterThanOrEqual(12)
+  expect(kicker.centerDelta).toBeLessThanOrEqual(1)
+  const stageStyles = await page.locator('.elastic-stage').first().evaluate(element => {
+    const stage = getComputedStyle(element)
+    const heading = getComputedStyle(element.querySelector('h3')!)
+    const body = getComputedStyle(element.querySelector('p')!)
+    return { background: stage.backgroundColor, heading: heading.color, body: body.color }
+  })
+  expect(stageStyles).toEqual({ background: 'rgb(41, 48, 41)', heading: 'rgb(238, 239, 233)', body: 'rgb(194, 201, 188)' })
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await expect(page.locator('.elastic-stage')).toHaveCount(5)
 })
 
 test('agent marker opens its purpose and current work', async ({page}) => {

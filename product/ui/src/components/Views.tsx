@@ -194,8 +194,10 @@ export function ElasticLineage() {
   const selectedSurface = querySurfaces[surface]
   return <div className="elastic-lineage-view">
     <section className="elastic-intro">
-      <div className="elastic-attribution"><img src="https://www.elastic.co/favicon.ico" alt="Elastic" /><span>Built with Elastic</span></div>
-      <span className="overline">THE EVIDENCE LINEAGE</span>
+      <div className="elastic-kicker">
+        <div className="elastic-attribution"><img src="https://www.elastic.co/favicon.ico" alt="" /><span>Built with Elastic</span></div>
+        <span className="overline">THE EVIDENCE LINEAGE</span>
+      </div>
       <h2>From noisy telemetry to a decision you can inspect.</h2>
       <p>Elastic is the evidence layer: it keeps the raw signal, the incident record, and the bounded retrieval path connected. Faultline’s judge still decides from measured change.</p>
     </section>

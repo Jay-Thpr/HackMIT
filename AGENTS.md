@@ -109,7 +109,28 @@ Isolated dedicated lab (do NOT reuse the shared :9910 manager or `faultline-sand
 
 Harness (lead-owned): `uv run python integration/fast_demo.py --patch-context <snapshot> --lab-url http://127.0.0.1:19910 --env-file <path>` (drives `faultline prepared-watch` internally). Local UI evidence: `faultline ui --fingerprints-log <path>` selects `JsonlFingerprintStore` instead of Elasticsearch — explicit, never mixed.
 
-## Advanced distributed stack (offline, NOT launched — Docker 7.7GiB is a hard blocker)
+## Advanced distributed stack — LAUNCHED and verified live (2026-09-20)
+
+The "Docker 7.7GiB is a hard blocker" note below was wrong: the machine has **64 GiB** and 7.7 GiB was just the Docker Desktop default allocation. Raised to 23.7 GiB, the 12 GiB preflight passes and `up --execute` brings the whole stack up in about four minutes.
+
+Running now: 3 Kafka brokers, 3 Postgres shards each with a streaming replica, 2 API replicas, relay, 3 workers, redis, loadgen, control — 18 pods. Reach the in-cluster control service from the host with
+`kubectl --kubeconfig .faultline/advanced/kubeconfig --context kind-faultline-advanced -n faultline-advanced port-forward service/control 19921:8000`; bearer token is the `control-token` key of the `advanced-secrets` secret. `/snapshot` yields 10 services, 18 resources (6 Kafka partitions, 3 shard replicas, 6 tenants, 3 workers), 16 edges, 79 C1 metrics.
+
+**`integration/advanced_faults.py`** is the missing C5 half: host-side, hidden from Faultline (which only ever reads `/snapshot` and `/catalog`), with `status`, `replica-lag`, `worker-starve`, `reset`. Measured, and all fully reversible:
+
+| Injected cause | Tenant backlog | Replica lag | User impact |
+|---|---|---|---|
+| `worker-starve --millicores 20` | 44 outstanding, oldest 41 s | none | severe, confined to that worker's tenants |
+| `replica-lag` | none | 645 KB and climbing | **none** |
+| shard-primary CPU throttle to 20m | none | none | **none** — 12 rps is far below DB capacity |
+
+So worker starvation is the only cause that currently produces a user-visible incident, and the three are **not** mutually ambiguous: their signatures are disjoint, so telemetry alone separates them. A genuinely ambiguous pair needs the workload raised until DB capacity matters, or a second cause on the same consumer path.
+
+**`product/adapters/advanced.py`** provides `AdvancedTelemetrySource` (polls `/snapshot`, converts via Owner 2's `fingerprint_from_distributed`, SLOs per tenant on `outstanding` > 15 and `oldest_pending_ms` > 5000) and `AdvancedLeverAdapter` (C3 over `/catalog` + `/actions`). Note the control service reports **every** lever as 100 % blast radius, which the orchestrator refuses outright; the adapter derives honest radii from each lever's own scoping-parameter cardinality (tenant/partition 16.7 %, shard/worker 33.3 %).
+
+Still unfinished for a workspace-tab incident: `LiveBrain` takes its candidate `Experiment` list from the caller, and no advanced candidates exist — they must target the specific affected tenant/worker, which is the "case-driver" work. CLI flags to select these adapters are also not wired.
+
+## Advanced distributed stack (original note — superseded above)
 
 `cd sandbox && uv run --group advanced python -m advanced.cli plan|up|status|build` — `up`/`build` are dry-run unless `--execute`; private kubeconfig `.faultline/advanced/kubeconfig`, context `kind-faultline-advanced`, kind binary `.faultline/bin/kind` (v0.27.0, checksum-verified). Clone lab manager `sandbox/advanced/lab.py` binds 127.0.0.1:19920, requires the main cluster + `docker info` MemTotal ≥ 12GiB preflight, namespaces `faultline-advanced-clone-<8hex>` only, tokens in `.faultline/advanced/credentials/<clone_id>.token` (0600, never in C6 payloads). Control service `advanced/control.py` (Bearer `CONTROL_TOKEN`, HMAC compare) serves the C3 catalog + clone-only `/lab/actions`.
 

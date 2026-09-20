@@ -114,6 +114,9 @@ export interface Scenario {
   testCases?: { id: string; groupId: 'baseline' | 'reproduction' | 'probe' | 'release'; name: string; description: string }[]
   topology: Topology
   baseline: Record<string, NodeReading>
+  // Resource evidence to show on a node while it is degraded, when the incident value
+  // differs from the healthy baseline (consumer lag climbing, replicas falling behind).
+  incidentMetrics?: Record<string, Record<string, number>>
   hypotheses: { id: string; title: string; description: string; prediction: string; color: string }[]
   // Read-only Elasticsearch retrieval context. These labels never participate
   // in the current incident's verdict.
