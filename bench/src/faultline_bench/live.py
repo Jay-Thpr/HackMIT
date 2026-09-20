@@ -67,14 +67,24 @@ EXPECTED = {
 }
 
 # Strongest combos first so capped/short runs draw the proven-to-ignite end.
+#
+# The storm grid is restricted to the region at or above the one combo the
+# sandbox vouches for: 800 ms / 20 s @ 80 rps, re-measured 2026-09-20 as a clean
+# 0/5 baseline, 5/5 breached during the trigger and 13/13 still breached over the
+# 65 s after it stopped (peak retry_ratio 4.11 -- the storm sustaining itself).
+# 600 ms / 15 s @ 60 rps is known not to ignite (error_rate 0.09, retry_ratio 1.0),
+# and a storm case that never ignites costs ~6.5 min of the active arm to produce
+# an unscored row. Every combo kept here is at least as strong as the verified one
+# in all three dimensions; the dropped corner can be re-measured with a C5-only
+# ignition sweep and added back.
 GRID = {
-    "storm": dict(delay_ms=(1000, 800, 600), duration_s=(30, 20, 15)),
+    "storm": dict(delay_ms=(1000, 800), duration_s=(30, 20)),
     "degraded": dict(capacity_qps=(30, 40, 50)),
     "cpu": dict(cpus=(0.1, 0.2)),
     "no_fault": dict(),
 }
 
-RPS = (100, 80, 60)
+RPS = (100, 80)
 
 ARMS = ("active", "passive", "centroid", "llm_only", "random")
 

@@ -15,6 +15,8 @@ from faultline_contracts.fingerprint import Fingerprint, SloStatus
 
 from faultline_bench.live import (
     EXPECTED,
+    GRID,
+    RPS,
     LiveCase,
     LiveWorld,
     BenchRuntime,
@@ -161,11 +163,16 @@ def test_build_plan_interleaves_and_covers_the_grid():
     by_world = {w: [c for c in cases if c.world == w] for w in EXPECTED}
     assert all(len(v) == 10 for v in by_world.values())
     storm = by_world["storm"]
-    assert all(c.params["delay_ms"] in {600, 800, 1000} for c in storm)
-    assert all(c.params["duration_s"] in {15, 20, 30} for c in storm)
-    assert all(c.rps in {60, 80, 100} for c in storm)
+    # Derived from the grid rather than hardcoded: the storm region is re-tuned
+    # whenever an ignition sweep rules a corner in or out.
+    assert all(c.params["delay_ms"] in set(GRID["storm"]["delay_ms"]) for c in storm)
+    assert all(c.params["duration_s"] in set(GRID["storm"]["duration_s"]) for c in storm)
+    assert all(c.rps in set(RPS) for c in storm)
     assert all(c.develop_s == c.params["duration_s"] + 10 for c in storm)
-    assert len({tuple(sorted(c.params.items())) + (("rps", c.rps),) for c in storm}) == 10
+    storm_combos = len(GRID["storm"]["delay_ms"]) * len(GRID["storm"]["duration_s"]) * len(RPS)
+    assert len({tuple(sorted(c.params.items())) + (("rps", c.rps),) for c in storm}) == min(
+        10, storm_combos
+    )
     for world in ("degraded", "cpu", "no_fault"):
         assert all(c.develop_s == 5 for c in by_world[world])
     assert all(c.expected == EXPECTED[c.world] for c in cases)
