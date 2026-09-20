@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { replay, type Scenario } from './model'
 import { scenarios as synthetic } from './scenarios'
 
-export type View = 'explanation' | 'investigation' | 'observability' | 'experiments' | 'replay'
+export type View = 'explanation' | 'investigation' | 'observability' | 'experiments' | 'replay' | 'elastic'
 
 interface UIState {
   scenarios: Scenario[]
