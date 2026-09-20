@@ -135,6 +135,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="lab-action proposals each clone investigator agent may try per hypothesis",
     )
     watch.add_argument(
+        "--investigate-agent",
+        choices=("llm", "seed"),
+        default="llm",
+        help="who proposes the clone lab actions: the OpenAI investigator agent (default when "
+        "OPENAI_API_KEY is set) or the seeded per-hypothesis recipes (deterministic)",
+    )
+    watch.add_argument(
         "--investigate-gate",
         action="store_true",
         help="drop hypotheses that fail to reproduce in a clone before the production probe",
@@ -532,7 +539,7 @@ def _investigation(args, writer=None, *, proposal_client=None, provider_sink=Non
         api_key = os.environ.get("OPENAI_API_KEY")
         model = getattr(args, "openai_model", DEFAULT_MODEL)
         direct_agent = None
-        if api_key:
+        if api_key and getattr(args, "investigate_agent", "llm") == "llm":
             try:
                 from openai import OpenAI
             except ImportError as exc:
@@ -544,7 +551,11 @@ def _investigation(args, writer=None, *, proposal_client=None, provider_sink=Non
                 from faultline_brain import InvestigatorAgent
 
                 direct_agent = InvestigatorAgent(OpenAI(api_key=api_key), model=model)
-        if proposal_client is not None:
+        if getattr(args, "investigate_agent", "llm") == "seed":
+            from faultline_brain import SeedInvestigator
+
+            agent = SeedInvestigator()  # deterministic per-hypothesis recipes; no LLM proposals
+        elif proposal_client is not None:
             from faultline_brain import InvestigatorAgent
             from faultline_brain.agent_builder import FallbackInvestigatorAgent
 

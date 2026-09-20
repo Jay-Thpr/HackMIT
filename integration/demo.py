@@ -129,6 +129,8 @@ def main() -> int:
     ap.add_argument("--no-lab", action="store_true", help="skip clone investigators and clone verification")
     ap.add_argument("--no-es", action="store_true", help="do not persist to Elasticsearch")
     ap.add_argument("--max-clones", type=int, default=1)
+    ap.add_argument("--agentic-investigators", action="store_true",
+                    help="let the OpenAI investigator agent choose the clone lab actions (default: seeded recipes, deterministic)")
     ap.add_argument("--timeout-s", type=int, default=1500, help="give up waiting for Faultline after this long")
     ap.add_argument("--reset-after", action="store_true", help="C5 reset once the report is out (rehearsal loops)")
     args = ap.parse_args()
@@ -156,7 +158,7 @@ def main() -> int:
     say("  components: "
         f"mode={args.mode} · "
         f"triage={'OpenAI' if openai_on else 'fixture fallback'} · "
-        f"clones={'lab :9910' if lab_on else 'off'} · "
+        f"clones={('lab :9910 · ' + ('agentic' if args.agentic_investigators else 'seeded recipes')) if lab_on else 'off'} · "
         f"patch={patch_via} · "
         f"elastic={'on' if es_url else 'off'}")
     if args.mode == "diagnose" and not github_on and not args.no_github:
@@ -175,7 +177,7 @@ def main() -> int:
            "--incident", incident, "--telemetry", "sandbox", "--levers", "sandbox", "--brain", "live",
            "--detect-timeout", str(args.baseline_s + 240), "--max-clones", str(args.max_clones)]
     if lab_on:
-        cmd += ["--lab-url", LAB_URL]
+        cmd += ["--lab-url", LAB_URL, "--investigate-agent", "llm" if args.agentic_investigators else "seed"]
     if devin_on:
         cmd += ["--devin"]
     if github_on:

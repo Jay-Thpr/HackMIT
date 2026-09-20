@@ -335,3 +335,14 @@ def test_max_clones_choices_match_lab_capacity():
     for good in ("1", "2", "3"):
         assert parser.parse_args(["watch", "--max-clones", good]).max_clones == int(good)
     assert parser.parse_args(["watch"]).max_clones == 1
+
+
+def test_investigate_agent_flag_selects_seeded_recipes(monkeypatch):
+    from faultline_product import cli
+    from faultline_brain import SeedInvestigator
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    args = cli.build_parser().parse_args(["watch", "--telemetry", "sandbox", "--levers", "sandbox", "--brain", "live",
+                                          "--lab-url", "http://lab.invalid:9910", "--investigate-agent", "seed"])
+    investigation = cli._investigation(args)
+    assert isinstance(investigation._agent, SeedInvestigator)
