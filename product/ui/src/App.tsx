@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { Activity, ArrowDownRight, ArrowRight, Box, ChevronDown, ChevronRight, CircleHelp, Compass, Focus, GitBranch, Layers3, LayoutDashboard, ListFilter, Maximize2, MousePointer2, Network, Pause, Play, Plus, ShieldCheck, Sparkles, Waves } from 'lucide-react'
+import { Activity, ArrowDownRight, ArrowRight, Box, ChevronDown, ChevronRight, CircleHelp, Compass, Focus, GitBranch, Layers3, LayoutDashboard, ListFilter, Maximize2, MousePointer2, Network, Pause, Play, ShieldCheck, Sparkles, Waves } from 'lucide-react'
 import { followIncident, loadLiveScenarios } from './live'
 import { environmentLifecycleLabel, environmentOutcomeLabel, replay, timeLabel, visibleEvents, type IncidentLifecycle } from './model'
 import { useWorkspace, type View } from './store'
@@ -13,8 +13,8 @@ import { Dialogs } from './components/Dialogs'
 
 const TopologyScene = lazy(() => import('./components/TopologyScene'))
 const navigation: { view: View; label: string; icon: typeof Activity }[] = [
-  { view: 'observability', label: 'Observability', icon: LayoutDashboard },
   { view: 'investigation', label: 'Agent workspace', icon: Network },
+  { view: 'observability', label: 'Observability', icon: LayoutDashboard },
   { view: 'replay', label: 'Incident replay', icon: Layers3 },
   { view: 'elastic', label: 'Evidence lineage', icon: GitBranch },
 ]
@@ -68,6 +68,7 @@ export default function App() {
   }
 
   useEffect(() => { void loadLiveScenarios() }, [])
+  useEffect(() => { set({ dialog: 'guide' }) }, [])
   // The report opens by itself when the investigation reaches its end while it is being watched
   // (playback or a live incident streaming in) — not when someone merely seeks to the end.
   const wasComplete = useRef(workspace.lifecycle === 'complete')
@@ -115,13 +116,13 @@ export default function App() {
       <nav aria-label="Main navigation">{navigation.map(item => <button key={item.view} aria-label={item.label} className={`nav-item ${view === item.view ? 'active' : ''}`} onClick={() => set({ view: item.view, explanationOpen: false })} aria-current={view === item.view ? 'page' : undefined}><item.icon size={17} strokeWidth={1.65} /><span>{item.label}</span></button>)}</nav>
       <div className="sidebar-rule" /><span className="nav-group-label">GUARDRAILS</span>
       <button className="nav-item" aria-label="Safety & approvals" onClick={() => set({ dialog: 'safety' })}><ShieldCheck size={17} strokeWidth={1.65} /><span>Safety & approvals</span><span className="approval-dot" /></button>
-      <div className="sidebar-bottom"><span className="preview-indicator"><i />DESIGN PREVIEW</span><p>A safe space to investigate.</p><button className="sidebar-help" onClick={() => set({ dialog: 'safety' })}><CircleHelp size={15} />About this prototype<ArrowRight size={13} /></button><div className="profile"><span className="profile-avatar">FL</span><div><strong>Local workspace</strong><small>No live connection</small></div><span className="offline-dot" /></div></div>
+      <div className="sidebar-bottom"><span className="preview-indicator"><i />DESIGN PREVIEW</span><p>A safe space to investigate.</p><button className="sidebar-help" onClick={() => set({ dialog: 'guide' })}><CircleHelp size={15} />Judge guide<ArrowRight size={13} /></button><div className="profile"><span className="profile-avatar">FL</span><div><strong>Local workspace</strong><small>No live connection</small></div><span className="offline-dot" /></div></div>
     </aside>
 
     <div className="main-shell">
       <header className="topbar"><div className="breadcrumb"><span>Workspace</span><ChevronRight size={12} /><strong>{navigation.find(item => item.view === view)?.label}</strong></div><div className="topbar-actions"><span className="demo-badge"><i />{scenario.live ? (scenario.complete ? 'Live incident' : 'Live incident · in progress') : 'Simulated data'}</span>{scenario.live && <a className="pause-all" href={`/api/incidents/${encodeURIComponent(scenario.id)}/evidence.json`} download>Export evidence</a>}<span className="topbar-divider" /><button className="pause-all" onClick={() => set({ playing: false })} disabled={!playing}><Pause size={13} />Pause simulation</button></div></header>
       <main id="main-content">
-        <section className="workspace-header"><div><div className="workspace-brief"><span className="case-id">{scenario.incident}</span><span className="case-state" data-lifecycle={workspace.lifecycle}><i />{workspace.phase}</span></div><h1>{view === 'investigation' ? (workspace.lifecycle === 'monitoring' ? 'Healthy reference system' : workspace.verdict ?? scenario.incidentTitle) : title.title}</h1>{view !== 'investigation' && <p>{title.subtitle}</p>}</div><div className="workspace-header-actions">{view === 'investigation' && <button className="primary-button" onClick={toggleDemo}>{playing ? <Pause size={14} /> : <Play size={14} />}{playbackLabel}</button>}<button className="secondary-button" onClick={() => set({ dialog: 'experiment' })}><Plus size={15} />Draft experiment</button></div></section>
+        <section className="workspace-header"><div><div className="workspace-brief"><span className="case-id">{scenario.incident}</span><span className="case-state" data-lifecycle={workspace.lifecycle}><i />{workspace.phase}</span></div><h1>{view === 'investigation' ? (workspace.lifecycle === 'monitoring' ? 'Healthy reference system' : workspace.verdict ?? scenario.incidentTitle) : title.title}</h1>{view !== 'investigation' && <p>{title.subtitle}</p>}</div>{view === 'investigation' && <div className="workspace-header-actions"><button className="primary-button" onClick={toggleDemo}>{playing ? <Pause size={14} /> : <Play size={14} />}{playbackLabel}</button></div>}</section>
         <div className="context-bar"><div className="scenario-context"><Box size={15} /><select aria-label="Example architecture" value={scenarioId} onChange={event => { setScenario(event.target.value); setEntitySearch('') }}>{scenarios.map(item => <option value={item.id} key={item.id}>{item.name}</option>)}</select><span className="context-separator" /><span className="context-type">{scenario.subtitle}</span></div><div className="environment-context"><span>Environment</span><select aria-label="Selected environment" value={environment.id} onChange={event => focus(event.target.value)}>{workspace.environments.map(env => <option key={env.id} value={env.id}>{env.label}</option>)}</select></div></div>
 
         <section className="workspace-facts" aria-label="Current investigation facts"><span><Waves size={13} />Signal <strong className={reading?.health === 'degraded' ? 'metric-warning' : ''}>{reading?.latency === undefined ? 'Not collected' : `${new Intl.NumberFormat('en-US').format(reading.latency)} ms`}</strong> <span className="fact-muted">at {targetName}</span></span><span><Sparkles size={13} />Question <strong>{questionLabel}</strong></span><span><GitBranch size={13} />Clones <strong>{workspace.environments.length - 1}</strong> <span className="fact-muted">isolated environments</span></span><span><ShieldCheck size={13} />Safety <strong>{workspace.actions.filter(action => action.environmentId === 'production').length} / 5</strong> actions <span className="fact-muted">{activeActions.some(action => action.environmentId === 'production') ? '· TTL bounded' : '· No active intervention'}</span></span></section>

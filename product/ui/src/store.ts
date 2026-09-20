@@ -24,7 +24,7 @@ interface UIState {
   reducedMotion: boolean
   focusRevision: number
   explanationOpen: boolean
-  dialog: 'experiment' | 'safety' | 'report' | null
+  dialog: 'experiment' | 'safety' | 'report' | 'guide' | null
   setScenario: (id: string) => void
   addScenarios: (items: Scenario[], select?: string) => void
   updateScenario: (item: Scenario) => void

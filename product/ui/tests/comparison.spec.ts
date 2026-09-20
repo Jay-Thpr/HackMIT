@@ -1,7 +1,14 @@
 import { expect, test, type Page } from '@playwright/test'
 
-async function loadExample(page: Page) {
+async function openComparison(page: Page) {
   await page.goto('/?compare')
+  const guide = page.getByRole('dialog', { name: 'What each workspace tab does' })
+  await expect(guide).toBeVisible()
+  await guide.getByRole('button', { name: 'Close dialog' }).click()
+}
+
+async function loadExample(page: Page) {
+  await openComparison(page)
   await expect(page.getByRole('heading', { name: 'Compare responders' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'No comparison recording loaded' })).toBeVisible()
   await page.getByRole('button', { name: 'Load illustrative example' }).click()
@@ -17,7 +24,7 @@ async function seek(page: Page, value: number) {
 }
 
 test('comparison view opens via ?compare with setup description and no silent synthetic fallback', async ({ page }) => {
-  await page.goto('/?compare')
+  await openComparison(page)
   await expect(page.getByText('Recorded comparison', { exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'No comparison recording loaded' })).toBeVisible()
   await expect(page.getByText(/cmp-\*\.json/)).toBeVisible()
@@ -94,7 +101,7 @@ test('event selection shows details; arm switching keeps one shared cursor', asy
 })
 
 test('file upload accepts valid recordings, rejects invalid ones, and renders supplied results verbatim', async ({ page }) => {
-  await page.goto('/?compare')
+  await openComparison(page)
   const metrics = {
     diagnosis: 'H_db', correct: true, detection_s: 45, first_correct_s: 95, recovery_s: 100,
     recovery_status: 'recovered', failed_checkouts_estimate: 1234.5, successful_checkouts_estimate: 6789,

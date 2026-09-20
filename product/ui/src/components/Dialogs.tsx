@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowRight, Check, FileText, GitBranch, LockKeyhole, ShieldCheck, X } from 'lucide-react'
+import { ArrowRight, Check, FileText, GitBranch, Layers3, LayoutDashboard, LockKeyhole, Network, ShieldCheck, X } from 'lucide-react'
 import { visibleEvents, type Scenario, type WorkspaceState } from '../model'
-import { useWorkspace } from '../store'
+import { useWorkspace, type View } from '../store'
+
+const guideTabs: { view: View; title: string; description: string; icon: typeof LayoutDashboard }[] = [
+  { view: 'investigation', title: 'Agent workspace', description: 'Play the incident timeline, inspect the 3D system, and watch agents test causes in isolated clones.', icon: Network },
+  { view: 'observability', title: 'Observability', description: 'Check service health, latency, errors, and dependency context before entering an investigation.', icon: LayoutDashboard },
+  { view: 'replay', title: 'Incident replay', description: 'Choose a recorded investigation, replay it from the beginning, and review its final report.', icon: Layers3 },
+  { view: 'elastic', title: 'Evidence lineage', description: 'See how OpenTelemetry signals, Elastic evidence, bounded retrieval, and the decision record connect.', icon: GitBranch },
+]
 
 export function Dialogs({ scenario, workspace }: { scenario: Scenario; workspace: WorkspaceState }) {
   const { dialog, cursor, set } = useWorkspace()
@@ -15,8 +22,9 @@ export function Dialogs({ scenario, workspace }: { scenario: Scenario; workspace
     else element.current?.close()
   }, [dialog, scenario.id, hypothesesAvailable])
   const close = () => set({ dialog: null })
-  return <dialog ref={element} className={`workspace-dialog ${dialog === 'report' ? 'report-sheet' : ''}`} onCancel={close} onClose={close} aria-labelledby="dialog-title" onClick={event => { if (event.target === element.current) { const bounds = element.current!.getBoundingClientRect(); if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) close() } }}>
-    <div className="dialog-header"><span className="overline">{dialog === 'experiment' ? 'LOCAL DRAFT' : dialog === 'report' ? 'INCIDENT REPORT' : 'SAFETY & APPROVALS'}</span><button className="icon-button" aria-label="Close dialog" onClick={close}><X size={18} /></button></div>
+  const dialogLabel = dialog === 'experiment' ? 'LOCAL DRAFT' : dialog === 'report' ? 'INCIDENT REPORT' : dialog === 'guide' ? 'JUDGE GUIDE' : 'SAFETY & APPROVALS'
+  return <dialog ref={element} className={`workspace-dialog ${dialog === 'report' ? 'report-sheet' : ''} ${dialog === 'guide' ? 'judge-guide' : ''}`} onCancel={close} onClose={close} aria-labelledby="dialog-title" onClick={event => { if (event.target === element.current) { const bounds = element.current!.getBoundingClientRect(); if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) close() } }}>
+    <div className="dialog-header"><span className="overline">{dialogLabel}</span><button className="icon-button" aria-label="Close dialog" onClick={close}><X size={18} /></button></div>
     {dialog === 'experiment' ? <form key={scenario.id} onChange={() => setSaved(false)} onSubmit={event => { event.preventDefault(); setSaved(true) }}>
       <h2 id="dialog-title">Draft an experiment</h2><p className="dialog-subtitle">Describe a possible cause and the response that would test it. Validation checks required fields and the time limit, not whether the experiment is safe or correct.</p>
       <label>Hypothesis to test{hypothesesAvailable ? <select required value={hypothesisId} onChange={event => { setHypothesisId(event.target.value); setPrediction(scenario.hypotheses.find(item => item.id === event.target.value)!.prediction) }}>{scenario.hypotheses.map(hypothesis => <option key={hypothesis.id} value={hypothesis.id}>{hypothesis.title}</option>)}</select> : <input required value={hypothesisId} onChange={event => setHypothesisId(event.target.value)} placeholder="Describe a possible cause" aria-describedby="draft-hypothesis-help" />}</label>
@@ -28,7 +36,7 @@ export function Dialogs({ scenario, workspace }: { scenario: Scenario; workspace
       <div className="dialog-notice"><LockKeyhole size={16} /><span>Draft only. Validation does not save the plan, create a clone, or run a test.</span></div>
       <button className="primary-button full-width" type="submit">{saved ? <><Check size={15} />Draft validated locally</> : <>Validate draft <ArrowRight size={15} /></>}</button>
       {saved && <p className="form-success" role="status">Required fields and time limit are valid. Nothing was saved or executed. Editing a field clears this validation.</p>}
-    </form> : dialog === 'report' ? <IncidentReport scenario={scenario} workspace={workspace} close={close} /> : <>
+    </form> : dialog === 'report' ? <IncidentReport scenario={scenario} workspace={workspace} close={close} /> : dialog === 'guide' ? <JudgeGuide close={close} /> : <>
       <h2 id="dialog-title">Autonomy with boundaries.</h2><p className="dialog-subtitle">A design preview of execution boundaries. No live permissions or approvals are connected.</p>
       <div className="safety-tier"><ShieldCheck size={17} /><div><strong>Proposed automatic tier</strong><p>Telemetry reads and bounded, reversible interventions.</p></div></div>
       <div className="safety-tier"><GitBranch size={17} /><div><strong>Canary-gated</strong><p>Code changes require replay verification and a measured rollout.</p></div></div>
@@ -37,6 +45,24 @@ export function Dialogs({ scenario, workspace }: { scenario: Scenario; workspace
       <div className="dialog-notice"><LockKeyhole size={16} /><span>“Pause simulation” stops only this UI’s playback. It is not a production kill switch and does not undo infrastructure actions.</span></div>
     </>}
   </dialog>
+}
+
+function JudgeGuide({ close }: { close: () => void }) {
+  const { set } = useWorkspace()
+  const open = (view: View) => { close(); set({ view, explanationOpen: false }) }
+  return <div className="judge-guide-content">
+    <h2 id="dialog-title">What each workspace tab does</h2>
+    <p className="dialog-subtitle">Faultline turns incident telemetry into an inspectable investigation. Use these four views to follow the complete story.</p>
+    <ol className="judge-guide-tabs" aria-label="Workspace tab guide">
+      {guideTabs.map(({ view, title, description, icon: Icon }, index) => <li key={view}>
+        <span className="judge-guide-number">0{index + 1}</span>
+        <Icon size={19} strokeWidth={1.6} />
+        <div><h3>{title}</h3><p>{description}</p></div>
+        <button className="text-button" aria-label={`Open ${title}`} onClick={() => open(view)}>Open <ArrowRight size={13} /></button>
+      </li>)}
+    </ol>
+    <button className="primary-button full-width" onClick={() => open('investigation')}>Start in Agent workspace <ArrowRight size={15} /></button>
+  </div>
 }
 
 
