@@ -349,7 +349,18 @@ export default function TopologyScene({ layout, workspace, scenario, fallback }:
   const spatial = useMemo(() => spatialLayout(layout), [layout])
   useEffect(() => { const update = () => setVisible(!document.hidden); document.addEventListener('visibilitychange', update); return () => document.removeEventListener('visibilitychange', update) }, [])
   const animate = playing && !reducedMotion && visible
-  return <SceneBoundary fallback={fallback}><Canvas dpr={[1, 1.5]} camera={{ position: [12, 15, 28], fov: 40, near: 0.1, far: 200 }} frameloop={visible ? animate ? 'always' : 'demand' : 'never'} fallback={fallback} gl={{ antialias: true, powerPreference: 'low-power' }}>
+  // Clicking empty space closes the entity inspector. A camera drag also ends in a click, so a
+  // "miss" only counts when the pointer barely moved between press and release.
+  const press = useRef<{ x: number; y: number } | null>(null)
+  const onPointerMissed = (event: MouseEvent) => {
+    if (!(event.target instanceof HTMLCanvasElement)) return  // clicks on overlays (node buttons, labels, markers) are not empty space
+    const moved = press.current ? Math.hypot(event.clientX - press.current.x, event.clientY - press.current.y) : 0
+    press.current = null
+    if (moved > 6) return
+    const state = useWorkspace.getState()
+    if (state.selectedNode || state.selectedAgent || state.selectedSuiteCheck) state.set({ selectedNode: undefined, selectedAgent: undefined, selectedSuiteCheck: undefined, selectedEvent: undefined })
+  }
+  return <SceneBoundary fallback={fallback}><Canvas dpr={[1, 1.5]} camera={{ position: [12, 15, 28], fov: 40, near: 0.1, far: 200 }} frameloop={visible ? animate ? 'always' : 'demand' : 'never'} fallback={fallback} gl={{ antialias: true, powerPreference: 'low-power' }} onPointerDown={event => { press.current = { x: event.clientX, y: event.clientY } }} onPointerMissed={onPointerMissed}>
     <color attach="background" args={['#252a27']} />
     <ambientLight intensity={1.1} />
     <directionalLight position={[-6, 12, 9]} intensity={2.5} />

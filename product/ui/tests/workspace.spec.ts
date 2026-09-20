@@ -584,3 +584,22 @@ for (const undoStatus of ['active', 'unknown', 'undone', 'expired'] as const) {
     await expect(facts).not.toContainText('Release failed')
   })
 }
+
+test('clicking empty space in the scene closes the entity inspector; a camera drag does not', async ({ page }) => {
+  await page.goto('/')
+  await seekTo(page, 47)
+  await expect(page.locator('.map-canvas canvas')).toBeVisible()
+  await page.getByRole('button', { name: 'Inspect primary-db in Production', exact: true }).click()
+  await expect(page.locator('.inspector')).toHaveCount(1)
+  const canvas = page.locator('.map-canvas canvas')
+  const box = (await canvas.boundingBox())!
+  // a drag (orbit) ends in a click too, but must not close the inspector
+  await page.mouse.move(box.x + 40, box.y + 40)
+  await page.mouse.down()
+  await page.mouse.move(box.x + 140, box.y + 90, { steps: 8 })
+  await page.mouse.up()
+  await expect(page.locator('.inspector')).toHaveCount(1)
+  // a plain click on blank space closes it
+  await page.mouse.click(box.x + 30, box.y + box.height - 30)
+  await expect(page.locator('.inspector')).toHaveCount(0)
+})
