@@ -1,14 +1,16 @@
-"""Orders: POST /checkout calls Payments (through Envoy) with a per-attempt timeout and
-retries immediately on timeout/error, up to max_retries times (default 3 -> 4 attempts).
+"""Orders: POST /checkout calls Payments (through Envoy) with a per-attempt timeout and a
+bounded retry policy: at most max_retries retries (default 1 -> 2 attempts, hard-capped at
+ORDERS_RETRY_HARD_CAP), exponential backoff with full jitter between attempts, and a
+process-wide retry budget (retries may not exceed ORDERS_RETRY_BUDGET_RATIO of requests).
 
-This retry loop is the code a durable fix (backoff + jitter, retry budget, circuit breaker)
-would patch. The retry_cap lever sets a runtime override of max_retries with a ttl; Orders
-drops the override by itself when the ttl expires.
+The retry_cap lever sets a runtime override of max_retries with a ttl; Orders drops the
+override by itself when the ttl expires. The override can only lower the effective cap.
 """
 
 import asyncio
 import logging
 import os
+import random
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -27,14 +29,24 @@ rlog = RateLimitedLog(log)
 
 VERSION = os.environ.get("SERVICE_VERSION", "v1")
 PAYMENTS_URL = os.environ.get("PAYMENTS_URL", "http://envoy:8081/pay")
-DEFAULT_MAX_RETRIES = int(os.environ.get("ORDERS_MAX_RETRIES", "3"))
+RETRY_HARD_CAP = int(os.environ.get("ORDERS_RETRY_HARD_CAP", "3"))
+DEFAULT_MAX_RETRIES = min(int(os.environ.get("ORDERS_MAX_RETRIES", "1")), RETRY_HARD_CAP)
 ATTEMPT_TIMEOUT_S = float(os.environ.get("ORDERS_ATTEMPT_TIMEOUT_MS", "500")) / 1000.0
+BACKOFF_BASE_S = float(os.environ.get("ORDERS_BACKOFF_BASE_MS", "50")) / 1000.0
+BACKOFF_MAX_S = float(os.environ.get("ORDERS_BACKOFF_MAX_MS", "1000")) / 1000.0
+# Retry budget: a token bucket credited RETRY_BUDGET_RATIO per request, debited 1 per retry.
+# Steady-state retries are therefore bounded to ~10% of request volume; the burst lets a
+# handful of unlucky requests retry when traffic is otherwise healthy.
+RETRY_BUDGET_RATIO = float(os.environ.get("ORDERS_RETRY_BUDGET_RATIO", "0.1"))
+RETRY_BUDGET_BURST = float(os.environ.get("ORDERS_RETRY_BUDGET_BURST", "10"))
 
-stats = Stats("orders", counters=("requests", "attempts", "retries", "ok", "errors", "attempt_timeouts", "attempt_errors"),
-              hists=("request", "attempt"))
+stats = Stats("orders", counters=("requests", "attempts", "retries", "ok", "errors", "attempt_timeouts", "attempt_errors",
+                                  "retry_budget_exhausted"),
+              hists=("request", "attempt", "backoff"))
 _override: dict[str, Any] = {"max_retries": None, "timeout_s": None, "expires": 0.0}
 _session: aiohttp.ClientSession | None = None
 _in_flight = 0
+_retry_tokens = RETRY_BUDGET_BURST
 
 
 def _override_live() -> bool:
@@ -49,8 +61,26 @@ def _override_live() -> bool:
 
 def max_retries() -> int:
     if _override_live() and _override["max_retries"] is not None:
-        return _override["max_retries"]
+        return min(_override["max_retries"], RETRY_HARD_CAP)
     return DEFAULT_MAX_RETRIES
+
+
+def _budget_credit() -> None:
+    global _retry_tokens
+    _retry_tokens = min(RETRY_BUDGET_BURST, _retry_tokens + RETRY_BUDGET_RATIO)
+
+
+def _budget_take() -> bool:
+    global _retry_tokens
+    if _retry_tokens < 1.0:
+        return False
+    _retry_tokens -= 1.0
+    return True
+
+
+def backoff_s(retry_no: int) -> float:
+    """Full-jitter exponential backoff: uniform in [0, min(max, base * 2**(retry_no-1))]."""
+    return random.uniform(0.0, min(BACKOFF_MAX_S, BACKOFF_BASE_S * (2 ** (retry_no - 1))))
 
 
 def attempt_timeout_s() -> float:
@@ -92,6 +122,7 @@ async def checkout():
     t0 = time.monotonic()
     order_id = uuid.uuid4().hex
     stats.inc("requests")
+    _budget_credit()
     _in_flight += 1
     try:
         attempt = 0
@@ -107,7 +138,7 @@ async def checkout():
             limit = max_retries() + 1  # re-read each time: a new cap applies to in-flight requests
             if outcome == "timeout":
                 stats.inc("attempt_timeouts")
-                rlog.log(logging.WARNING, "timeout", "payments call timed out after %dms, retrying (attempt %d of %d)",
+                rlog.log(logging.WARNING, "timeout", "payments call timed out after %dms (attempt %d of %d)",
                          attempt_timeout_s() * 1000, attempt, limit)
             else:
                 stats.inc("attempt_errors")
@@ -117,6 +148,14 @@ async def checkout():
                 stats.inc("errors")
                 rlog.log(logging.ERROR, "failed", "checkout failed: payments unavailable after %d attempts", attempt)
                 return JSONResponse({"error": "payments unavailable", "attempts": attempt}, status_code=503)
+            if not _budget_take():
+                stats.inc("retry_budget_exhausted")
+                stats.inc("errors")
+                rlog.log(logging.ERROR, "budget", "checkout failed: retry budget exhausted after %d attempt(s)", attempt)
+                return JSONResponse({"error": "payments unavailable", "attempts": attempt}, status_code=503)
+            delay = backoff_s(attempt)
+            stats.observe("backoff", delay * 1000)
+            await asyncio.sleep(delay)
     finally:
         _in_flight -= 1
         stats.observe("request", (time.monotonic() - t0) * 1000)
@@ -125,7 +164,8 @@ async def checkout():
 @app.get("/stats")
 async def get_stats():
     stats.gauges.update(max_retries=max_retries(), attempt_timeout_ms=attempt_timeout_s() * 1000,
-                        in_flight=_in_flight, version=VERSION)
+                        in_flight=_in_flight, version=VERSION, retry_hard_cap=RETRY_HARD_CAP,
+                        retry_budget_tokens=round(_retry_tokens, 3), backoff_base_ms=BACKOFF_BASE_S * 1000)
     return stats.snapshot()
 
 
