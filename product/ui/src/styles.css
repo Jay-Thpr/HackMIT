@@ -100,6 +100,8 @@ input,textarea,select{color:var(--ink)}
 .profile strong{font-size:10px;font-weight:550;display:block}
 .profile small{font-size:10px;color:#6e665c;margin-top:3px;display:block}
 .offline-dot{height:5px;width:5px;border-radius:50%;background:#6e665c;margin-left:auto}
+.live-dot{height:5px;width:5px;border-radius:50%;background:#7f9c6d;margin-left:auto}
+.preview-indicator[data-live] i{background:#7f9c6d}
 
 .main-shell{margin-left:215px;width:calc(100% - 215px);min-width:0}
 .topbar{height:60px;border-bottom:1px solid var(--border);background:#fffcf5;display:flex;align-items:center;justify-content:space-between;padding:0 30px;gap:16px}
@@ -1507,7 +1509,7 @@ main { padding: 22px 22px 0; }
 .replay-list { list-style:none; margin:0; padding:0; border-top:1px solid var(--border); }
 .replay-list li { display:flex; align-items:center; gap:10px; border-bottom:1px solid var(--border); }
 .replay-list li.is-selected { background:rgba(183,195,150,.08); }
-.replay-list-main { flex:1; display:grid; grid-template-columns:150px minmax(0,1fr) auto; gap:14px; align-items:center; padding:11px 10px; background:transparent; border:0; color:inherit; text-align:left; cursor:pointer; font:inherit; }
+.replay-list-main { flex:1; min-width:0; display:grid; grid-template-columns:150px minmax(0,1fr) auto; gap:14px; align-items:center; padding:11px 10px; background:transparent; border:0; color:inherit; text-align:left; cursor:pointer; font:inherit; }
 .replay-list-main:hover { background:rgba(255,255,255,.03); }
 .replay-list-id { font:12px var(--mono); color:var(--ink); }
 .replay-list-title { font-size:13px; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -1517,7 +1519,7 @@ main { padding: 22px 22px 0; }
 .replay-outcome.example { color:#aeb8d4; border-color:#7682a3; }
 .replay-outcome.mitigated { color:#edb18d; border-color:#edb18d; }
 .replay-outcome.escalated { color:#e0a0a0; border-color:#e0a0a0; }
-@media(max-width:800px) { .replay-list-main { grid-template-columns:1fr; gap:4px; } .replay-list-title { white-space:normal; } }
+@media(max-width:800px) { .replay-list-main { grid-template-columns:1fr; gap:4px; } .replay-list-title,.replay-list-meta { white-space:normal; }.replay-list-meta { flex-wrap:wrap; } }
 
 /* The incident rationale stays beside the workspace instead of becoming a separate page. */
 .app-shell .explanation-drawer { inset:0 0 0 auto; margin:0; width:min(680px,calc(100vw - 32px)); max-width:none; height:100dvh; max-height:none; overflow:auto; padding:0 30px 36px; background:#252b26; color:#eeefe9; border:0; border-left:1px solid #535c4e; box-shadow:-18px 0 55px rgba(10,14,11,.28); animation:explanation-drawer-enter .24s ease-out; }
@@ -1634,3 +1636,29 @@ main { padding: 22px 22px 0; }
   .judge-guide-tabs p { font-size:11px; line-height:1.45; }
   .judge-guide-tabs .text-button { grid-column:3; justify-self:start; }
 }
+/* The read-only responder's card. Appended after the shared dark palette block, so it uses
+   that palette directly rather than a light base with an override. Quieter than a hypothesis
+   card and visibly not an actor: dashed when it declined to name a cause. */
+.observer-card{border:1px solid #434b42;border-radius:4px;padding:14px 15px;margin-bottom:12px;background:#292f2a}
+.observer-card[data-abstained]{border-style:dashed}
+.observer-top{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:6px}
+.observer-state{font-family:var(--mono);font-size:10px;letter-spacing:.9px;text-transform:uppercase;color:#bac1b6}
+.observer-card h3{margin:0 0 6px;font-size:14px;line-height:1.35;color:#eeefe9}
+.observer-card p{margin:0 0 8px;font-size:12.5px;line-height:1.5;color:#bac1b6}
+.observer-card b{display:block;font-size:10px;letter-spacing:.9px;text-transform:uppercase;color:#bac1b6;margin-bottom:4px;font-weight:600}
+.observer-card ul{list-style:none;margin:0 0 8px;padding:0;display:flex;flex-wrap:wrap;gap:5px}
+.observer-card code{font-family:var(--mono);font-size:11px;background:#2f352f;border-radius:4px;padding:2px 5px;color:#d7dbd2}
+.observer-diagnosis,.observer-hypotheses,.observer-evidence,.observer-recommendation{margin-bottom:8px}
+.observer-footnote{font-family:var(--mono);font-size:10.5px;color:#bac1b6;margin:0}
+
+/* Which tenants a node serves, so confined blame is legible rather than inferred from a label. */
+.entity-tenants{margin-top:8px}
+.entity-tenants b{display:block;font-size:10px;letter-spacing:.9px;text-transform:uppercase;color:#bac1b6;margin-bottom:4px;font-weight:600}
+.entity-tenants ul{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:5px}
+.entity-tenants code{font-family:var(--mono);font-size:11px;background:#2f352f;border-radius:4px;padding:2px 6px;color:#d7dbd2}
+
+/* Why a run did not resolve, in the same sheet that reports a confirmation. Dashed for an
+   unresolved run so it is not mistaken for a result; solid for a correct no-incident. */
+.report-outcome{margin:0 0 16px;padding:12px 14px;border-radius:4px;font-size:13px;line-height:1.55;color:#bac1b6;border:1px dashed #6e6152;background:#2b2722}
+.report-outcome strong{color:#eeefe9;display:block;margin-bottom:3px}
+.report-outcome[data-outcome=no_incident]{border-style:solid;border-color:#4f5d46;background:#252b23}

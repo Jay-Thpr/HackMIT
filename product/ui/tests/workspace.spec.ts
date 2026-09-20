@@ -153,6 +153,7 @@ test('the incident report opens by itself when playback reaches the end', async 
   await expect(report.locator('#dialog-title')).toHaveText('Self-sustaining overload confirmed', { timeout: 15000 })
   await expect(report.locator('.report-winner')).toContainText('Clone A')
   await expect(report.locator('.report-dialog-facts')).toContainText('Clone A, then production')
+  await page.waitForTimeout(300)
   const bounds = await report.boundingBox()
   const viewport = page.viewportSize()!
   expect(bounds).not.toBeNull()
@@ -189,8 +190,8 @@ test('pages explain their jobs and offer meaningful empty-state actions', async 
   await expect(page.getByRole('button', { name: 'Draft experiment', exact: true })).toHaveCount(0)
   await navigation.getByRole('button', { name: 'Incident replay', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Review an investigation.' })).toBeVisible()
-  await expect(page.getByText(/2 example investigations · no recorded incidents loaded/)).toBeVisible()
-  await expect(page.getByRole('region', { name: 'Available investigations' }).getByRole('listitem')).toHaveCount(2)
+  await expect(page.getByText(/\d+ example investigations · \d+ recorded incidents/)).toBeVisible()
+  expect(await page.getByRole('region', { name: 'Available investigations' }).getByRole('listitem').count()).toBeGreaterThanOrEqual(3)
   await page.getByRole('button', { name: 'Play from the start', exact: true }).click()
   await expect(page.getByRole('region', { name: 'Incident lifecycle' })).toHaveAttribute('data-phase', 'monitoring')
   await expect(page.getByRole('button', { name: 'Pause demo', exact: true })).toBeVisible()
@@ -242,7 +243,17 @@ for (const width of [1512, 900, 600, 390]) {
       await expect(button).toHaveAttribute('aria-current', 'page')
       await expect(sidebar).toHaveCSS('width', sidebarWidth)
       await expect(page.locator('.main-shell')).toHaveCSS('margin-left', contentOffset)
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+      const overflow = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>('body *')]
+        .filter(element => {
+          const bounds = element.getBoundingClientRect()
+          if (bounds.right <= window.innerWidth + 1 && bounds.left >= -1) return false
+          for (let parent = element.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
+            if (['auto', 'scroll', 'hidden'].includes(getComputedStyle(parent).overflowX) && parent.scrollWidth > parent.clientWidth) return false
+          }
+          return true
+        })
+        .map(element => ({ tag: element.tagName, className: element.className, text: element.textContent?.trim().slice(0, 80), right: Math.round(element.getBoundingClientRect().right) })))
+      expect(overflow).toEqual([])
       if (width > 760) {
         await expect(button.locator('span').first()).toBeVisible()
         await expect(page.locator('.sidebar-case')).toHaveCount(0)

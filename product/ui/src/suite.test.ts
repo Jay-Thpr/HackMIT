@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { scenarios } from './scenarios'
+import { uniformTimelineScenarios } from './scenarios'
 import { suiteChecks } from './suite'
 describe('recorded clone checks', () => {
-  for (const scenario of scenarios) it(`${scenario.id}: progresses only after results and rewinds`, () => {
+  for (const scenario of uniformTimelineScenarios) it(`${scenario.id}: progresses only after results and rewinds`, () => {
     const states = (time: number) => suiteChecks(scenario, 'clone-a', time).map(check => check.state)
     expect(states(24)).toEqual(['running', 'queued', 'queued', 'queued'])
     expect(states(35)).toEqual(['passed', 'running', 'queued', 'queued'])
@@ -15,7 +15,7 @@ describe('recorded clone checks', () => {
 })
 
 it('keeps 1000 cases in four groups and never marks a partial group passed', () => {
-  const scenario = structuredClone(scenarios[0])
+  const scenario = structuredClone(uniformTimelineScenarios[0])
   scenario.testCases = Array.from({ length: 1000 }, (_, i) => ({ id: `test-${i}`, groupId: (['baseline','reproduction','probe','release'] as const)[i % 4], name: `Test ${i}`, description: 'Synthetic scale check' }))
   scenario.events.push(...scenario.testCases.slice(0,500).map((test,i) => ({ id: `result-${i}`, sequence: i, at: 50, kind: 'observe' as const, actor: 'math' as const, environmentId: 'clone-a', title: 'Result', detail: '', testResult: { checkId: test.groupId, caseId: test.id, passed: true, expected: 'Match', observed: 'Matched' } })))
   const groups = suiteChecks(scenario,'clone-a',50)

@@ -7,7 +7,7 @@ import { suiteChecks } from '../suite'
 import { deriveNodeRecovery } from '../recovery'
 import { useWorkspace } from '../store'
 
-const actorLabel: Record<WorkspaceEvent['actor'], string> = { model: 'Model proposal', math: 'Measured evaluation', adapter: 'Tool execution', 'investigator-a': 'Investigator A', 'investigator-b': 'Investigator B', orchestrator: 'Orchestrator' }
+const actorLabel: Record<WorkspaceEvent['actor'], string> = { model: 'Model proposal', math: 'Measured evaluation', adapter: 'Tool execution', 'investigator-a': 'Investigator A', 'investigator-b': 'Investigator B', orchestrator: 'Orchestrator', elastic: 'Read-only telemetry responder' }
 
 function TraceStep({ event, selected, onSelect, live }: { event: WorkspaceEvent; selected: boolean; onSelect: () => void; live?: boolean }) {
   return <div className={`trace-step ${selected ? 'expanded' : ''}`}>
@@ -40,6 +40,11 @@ export function Inspector({ scenario, workspace, environment }: { scenario: Scen
   const reading = node && environment.nodes[node.id]
   const filtered = events.filter(event => (selectedNode ? event.environmentId === environment.id : selectedSuiteCheck ? event.environmentId === selectedSuiteCheck.environmentId : filter === 'all' || event.environmentId === filter) && (!selectedNode || event.targetId === selectedNode))
   const createdClones = events.filter(event => event.kind === 'clone')
+  // The read-only responder's own position at this cursor, so both walkthroughs are visible
+  // in one panel rather than needing a second view.
+  const observerConclusion = events.filter(event => event.actor === 'elastic' && (event.kind === 'reason' || event.kind === 'verdict')).at(-1)
+  const observerRead = events.filter(event => event.actor === 'elastic' && event.kind === 'observe').at(-1)
+  const observerActions = workspace.actions.filter(action => action.environmentId === workspace.observer?.environmentId).length
   const latest = filtered.at(-1)
   const latestReading = events.filter(event => event.environmentId === environment.id && node && event.readings?.[node.id]).at(-1)
   const hadIssue = Boolean(node && events.some(event => event.environmentId === environment.id && event.readings?.[node.id]?.health === 'degraded'))
@@ -51,10 +56,10 @@ export function Inspector({ scenario, workspace, environment }: { scenario: Scen
       <p>{agent ? `${environment.label} · Working on ${node.label}` : `${environment.label} · ${node.kind} · ${node.instrumented ? 'Instrumented' : 'Observed dependency'}`}</p>
       {!agent && <><div className="entity-metrics"><span>p99 latency<b>{metricLabel(reading?.latency, 'ms')}</b></span><span>Issued load<b>{metricLabel(reading?.qps, 'qps')}</b></span>
         {Object.entries(reading?.resourceMetrics ?? {}).map(([name, value]) => <span key={name}>{name}<b>{metricLabel(value, resourceUnit(name))}</b></span>)}</div>
-      <div className="entity-health"><i className={`health-dot ${reading?.health ?? 'unknown'}`} />{reading?.health ?? 'unknown'}<span>Instances: {node.instances ?? 'not collected'}</span></div></>}
+      <div className="entity-health"><i className={`health-dot ${reading?.health ?? 'unknown'}`} />{reading?.health ?? 'unknown'}<span>Instances: {node.instances ?? 'not collected'}</span></div>{node.tenants?.length ? <div className="entity-tenants"><b>Tenants served</b><ul>{node.tenants.map(tenant => <li key={tenant}><code>{tenant}</code></li>)}</ul></div> : null}</>}
     </div>}
 
-    {suiteCheck && <div className="selected-entity"><div><strong>{environment.label} · Test suite</strong><button className="icon-button" aria-label="Close test inspector" onClick={() => set({ selectedSuiteCheck: undefined })}><X size={15} /></button></div><p>Simulated tests</p></div>}
+    {suiteCheck && <div className="selected-entity"><div><strong>{environment.label} · Test suite</strong><button className="icon-button" aria-label="Close test inspector" onClick={() => set({ selectedSuiteCheck: undefined })}><X size={15} /></button></div><p>{scenario.live ? 'Recorded test suite' : 'Simulated tests'}</p></div>}
     <div className="tab-bar" role="tablist" aria-label="Investigation details">
       <button role="tab" aria-selected={traceTab === 'evidence'} onClick={() => set({ traceTab: 'evidence' })}>Evidence</button>
       <button role="tab" aria-selected={traceTab === 'trace'} onClick={() => set({ traceTab: 'trace' })}>Decision trace <span>{events.length}</span></button>
@@ -67,6 +72,16 @@ export function Inspector({ scenario, workspace, environment }: { scenario: Scen
       {node && <section className={`issue-summary ${reading?.health === 'degraded' ? 'is-degraded' : recovery === 'recovering' ? 'is-recovering' : ''}`} aria-label="Issue details"><span>System status</span><h3>{reading?.health === 'degraded' ? 'Elevated latency and errors' : reading?.health === 'unknown' || !reading ? 'No measurements available' : recovery === 'recovering' ? 'Recovering · confirmation pending' : hadIssue ? 'Recovery confirmed' : 'Operating normally'}</h3><p>{reading?.health === 'degraded' ? 'Latency and errors are up. The agent is checking what is keeping the system overloaded.' : latestReading?.detail ?? 'No issues were recorded for this system at this point in the replay.'}</p><dl className="issue-facts"><div><dt>Errors</dt><dd>{metricLabel(reading?.errorRate, '%')}</dd></div><div><dt>Baseline latency</dt><dd>{metricLabel(scenario.baseline[node.id]?.latency, 'ms')}</dd></div>{activeActions.map(action => <div key={action.id}><dt>{action.label}</dt><dd>{action.status === 'awaiting-reversion' ? 'Awaiting confirmed reversion' : `${action.status === 'release-failed' ? 'Release failed · ' : ''}${Math.max(0, Math.ceil(action.start + action.ttl - cursor))}s TTL`}</dd></div>)}</dl></section>}
     {node && !agent && <div className="node-agent-activity"><span>Agent activity here</span><strong>{latest?.title ?? 'No activity yet'}</strong><p>{latest?.detail ?? 'The agent has not worked on this system yet.'}</p>{latest && <small>{actorLabel[latest.actor]} · {timeLabel(latest.at)} · {environment.label}</small>}</div>}
       {traceTab === 'evidence' ? <>
+        {workspace.observer && <article className="observer-card" aria-label="Read-only responder conclusion" data-abstained={workspace.observer.abstained || undefined}>
+          <div className="observer-top"><span className="overline">READ-ONLY RESPONDER</span><span className="observer-state">{workspace.observer.abstained ? 'Declined to name a cause' : observerConclusion ? 'Concluded' : 'Reading telemetry'}</span></div>
+          <h3>{observerConclusion?.title ?? observerRead?.title ?? 'Reading the recorded windows'}</h3>
+          {observerConclusion?.detail && <p>{observerConclusion.detail}</p>}
+          {!workspace.observer.abstained && workspace.observer.diagnosis && <div className="observer-diagnosis"><b>Diagnosis</b><code>{workspace.observer.diagnosis}</code></div>}
+          {observerConclusion?.hypotheses?.length ? <div className="observer-hypotheses"><b>Explanations it kept</b><ul>{observerConclusion.hypotheses.map(item => <li key={item}><code>{item}</code></li>)}</ul></div> : null}
+          {observerConclusion?.evidence?.length ? <div className="observer-evidence"><b>Evidence · metric keys</b><ul>{observerConclusion.evidence.map(key => <li key={key}><code>{key}</code></li>)}</ul></div> : null}
+          {observerConclusion?.recommendation && <div className="observer-recommendation"><b>Recommends</b><p>{observerConclusion.recommendation}</p></div>}
+          <p className="observer-footnote">{observerActions} actions applied. This responder reads telemetry; it does not test the system.</p>
+        </article>}
         <div className="evidence-intro"><span className="overline">{cursor < 18 ? 'OBSERVATION' : 'WORKING HYPOTHESES'}</span><p>{cursor < 12 ? 'First, record how the system behaves when it is healthy.' : workspace.verdict ? diagnosisSummary(scenario, workspace) : 'Possible causes still need to be tested against the measurements.'}</p></div>
         {cursor >= 18 && scenario.hypotheses.map(hypothesis => {
           const clone = createdClones.find(event => event.environment?.hypothesisId === hypothesis.id)
@@ -90,6 +105,6 @@ export function Inspector({ scenario, workspace, environment }: { scenario: Scen
         {filtered.map(event => <TraceStep key={event.id} live={scenario.live} event={event} selected={event.id === (filtered.some(item => item.id === selectedEvent) ? selectedEvent : latest?.id)} onSelect={() => { if (event.targetId && workspace.environments.some(env => env.id === event.environmentId)) inspect(event.targetId, event.environmentId); set({ selectedEvent: event.id }) }} />)}
       </>}
     </div>
-    <div className="inspector-footer"><Clock3 size={12} /><span>Viewing evidence through {timeLabel(cursor)}</span><span>SIMULATED</span></div>
+    <div className="inspector-footer"><Clock3 size={12} /><span>Viewing evidence through {timeLabel(cursor)}</span><span>{scenario.live ? 'RECORDED' : 'SIMULATED'}</span></div>
   </aside>
 }

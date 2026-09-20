@@ -26,7 +26,7 @@ export async function loadLiveScenarios(base = '/api'): Promise<Scenario[]> {
       const res = await fetch(`${base}/incidents/${encodeURIComponent(id)}/scenario`)
       return res.ok ? ((await res.json()) as Scenario) : null
     }))
-    const scenarios = loaded.filter((item): item is Scenario => item !== null)
+    const scenarios = loaded.filter((item): item is Scenario => item !== null).map(item => ({ ...item, source: 'api' as const }))
     useWorkspace.getState().addScenarios(scenarios, wanted === true ? scenarios[0]?.id : wanted ?? undefined)
     return scenarios
   } catch {

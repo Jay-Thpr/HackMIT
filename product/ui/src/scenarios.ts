@@ -1,4 +1,5 @@
 import { deriveTopology, type NodeReading, type Scenario, type WorkspaceEvent } from './model'
+import { buildArcs } from './arcs'
 
 const healthy = (latency: number, qps: number): NodeReading => ({ health: 'healthy', latency, qps, errorRate: 0.1, retryRatio: 1 })
 const degraded = (latency: number, qps: number): NodeReading => ({ health: 'degraded', latency, qps, errorRate: 18.4, retryRatio: 3.9, utilization: 98 })
@@ -133,10 +134,11 @@ const platform: Omit<Scenario, 'events'> = {
     'kafka-0': { kind: 'queue', label: 'kafka-0 - orders p0,p3' },
     'kafka-1': { kind: 'queue', label: 'kafka-1 - orders p1,p4' },
     'kafka-2': { kind: 'queue', label: 'kafka-2 - orders p2,p5' },
-    'shard-0': { kind: 'datastore', label: 'shard-0 - tenants a,b' },
-    'shard-1': { kind: 'datastore', label: 'shard-1 - tenants c,d' },
-    'shard-2': { kind: 'datastore', label: 'shard-2 - tenants e,f' },
+    'shard-0': { kind: 'datastore', label: 'shard-0 - tenants a,b', tenants: ['a', 'b'] },
+    'shard-1': { kind: 'datastore', label: 'shard-1 - tenants c,d', tenants: ['c', 'd'] },
+    'shard-2': { kind: 'datastore', label: 'shard-2 - tenants e,f', tenants: ['e', 'f'] },
     'shard-0-replica': { kind: 'datastore' }, 'shard-1-replica': { kind: 'datastore' }, 'shard-2-replica': { kind: 'datastore' },
+    'worker-1': { tenants: ['a', 'b'] }, 'worker-2': { tenants: ['c', 'd'] }, 'worker-3': { tenants: ['e', 'f'] },
   }),
   baseline: {
     gateway: healthy(46, 120), 'checkout-api': healthy(38, 78), 'inventory-api': healthy(21, 42),
@@ -165,4 +167,14 @@ const platform: Omit<Scenario, 'events'> = {
   ],
 }
 
-export const scenarios: Scenario[] = [commerce, pipeline, platform].map(scenario => ({ ...scenario, events: eventsFor(scenario) }))
+const arcs = buildArcs(commerce, platform)
+
+/** The three scripted examples built by `eventsFor`. They all share one clone timeline:
+ *  detect at 12, clones at 24/30, production probe at 72, verdict at 96, archived by 108.
+ *  The six recorded arcs deliberately do not - `benign-spike` never detects and creates no
+ *  clone, `hot-key` never confirms - so tests that assert the shared timeline iterate this
+ *  list, and the arcs are covered by `arcs/arcs.test.ts`. */
+export const uniformTimelineScenarios: Scenario[] = [commerce, pipeline, platform]
+  .map(scenario => ({ ...scenario, events: eventsFor(scenario) }))
+
+export const scenarios: Scenario[] = [...uniformTimelineScenarios, ...arcs]
