@@ -55,9 +55,12 @@ export interface WorkspaceEvent {
   args?: Record<string, string | number>
   prediction?: string
   result?: string
+  diagnosis?: string
+  confirmed?: boolean
   action?: { id: string; label: string; ttl: number }
   testResult?: { caseId?: string; checkId: string; passed: boolean; expected: string; observed: string }
   undoId?: string
+  undoStatus?: 'active' | 'undone' | 'expired' | 'unknown'
   environment?: { label: string; color: string; hypothesisId: string }
   readings?: Record<string, NodeReading>
 }
@@ -65,6 +68,8 @@ export interface WorkspaceEvent {
 export interface Scenario {
   id: string
   live?: boolean  // built from a real audit log by the Product API, not a scripted example
+  complete?: boolean  // live only: the run has written its report (false while it is still happening)
+  now?: number  // live only: wall-clock position on the replay axis when the API built this
   name: string
   subtitle: string
   incident: string
@@ -87,7 +92,7 @@ export interface ActiveAction {
   targetId?: string
   start: number
   ttl: number
-  status: 'active' | 'awaiting-reversion' | 'reverted'
+  status: 'active' | 'release-failed' | 'awaiting-reversion' | 'reverted'
 }
 
 export interface WorkspaceState {
@@ -95,6 +100,8 @@ export interface WorkspaceState {
   actions: ActiveAction[]
   phase: string
   verdict?: string
+  diagnosis?: string
+  confirmed?: boolean
 }
 
 export function deriveTopology(input: {
@@ -120,11 +127,28 @@ export function visibleEvents(scenario: Scenario, time: number): WorkspaceEvent[
   return scenario.events.filter(event => event.at <= time).sort((a, b) => a.at - b.at || a.sequence - b.sequence)
 }
 
+export function isConfirmedUndo(event: WorkspaceEvent): boolean {
+  return event.kind === 'undo' && (event.undoStatus === 'undone' || event.undoStatus === 'expired')
+}
+
+export function isConfirmedVerdict(event: WorkspaceEvent): boolean {
+  return event.kind === 'verdict' && event.actor === 'math' && event.confirmed === true && Boolean(event.diagnosis) && event.diagnosis !== 'none_of_the_above'
+}
+
+export function diagnosisSummary(scenario: Scenario, workspace: WorkspaceState): string {
+  if (!workspace.verdict) return 'The cause is not confirmed yet.'
+  if (!workspace.confirmed) return 'No cause confirmed.'
+  const hypothesis = scenario.hypotheses.find(item => item.id === workspace.diagnosis)
+  return `Confirmed cause: ${hypothesis?.title ?? workspace.diagnosis}.`
+}
+
 export function replay(scenario: Scenario, time: number): WorkspaceState {
   const environments: Environment[] = [{ id: 'production', label: 'Production', color: '#806747', createdAt: 0, nodes: structuredClone(scenario.baseline) }]
   const actions: ActiveAction[] = []
   let phase = 'Monitoring'
   let verdict: string | undefined
+  let diagnosis: string | undefined
+  let confirmed: boolean | undefined
   for (const event of visibleEvents(scenario, time)) {
     if (event.phase) phase = event.phase
     if (event.kind === 'clone' && event.environment && !environments.some(env => env.id === event.environmentId)) {
@@ -136,19 +160,23 @@ export function replay(scenario: Scenario, time: number): WorkspaceState {
       actions.push({ ...event.action, start: event.at, environmentId: event.environmentId, targetId: event.targetId, status: 'active' })
     }
     if (event.kind === 'undo') {
-      const action = actions.find(item => item.id === event.undoId)
-      if (action) action.status = 'reverted'
+      const action = actions.find(item => item.id === event.undoId && item.environmentId === event.environmentId)
+      if (action) action.status = isConfirmedUndo(event) ? 'reverted' : event.undoStatus === 'active' ? 'release-failed' : 'awaiting-reversion'
     }
-    if (event.kind === 'verdict' && event.environmentId === 'production') verdict = event.title
+    if (event.kind === 'verdict' && event.environmentId === 'production') {
+      verdict = event.title
+      diagnosis = event.diagnosis
+      confirmed = isConfirmedVerdict(event)
+    }
     if (event.kind === 'archive') {
       const index = environments.findIndex(env => env.id === event.environmentId)
       if (index > 0) environments.splice(index, 1)
     }
   }
   for (const action of actions) {
-    if (action.status === 'active' && time >= action.start + action.ttl) action.status = 'awaiting-reversion'
+    if (action.status !== 'reverted' && time >= action.start + action.ttl) action.status = 'awaiting-reversion'
   }
-  return { environments, actions, phase, verdict }
+  return { environments, actions, phase, verdict, diagnosis, confirmed }
 }
 
 export function metricLabel(value: number | undefined, unit: string): string {

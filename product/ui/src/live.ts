@@ -17,15 +17,48 @@ export async function loadLiveScenarios(base = '/api'): Promise<Scenario[]> {
     const index = await fetch(`${base}/incidents`)
     if (!index.ok) return []
     const incidents: { id: string }[] = await index.json()
-    const loaded = await Promise.all(incidents.slice(0, 12).map(async ({ id }) => {
+    const wanted = requestedIncident()
+    const ids = incidents.map(item => item.id)
+    // `?incident=<id>` may name an incident that has not written its first audit event yet
+    // (watch is still waiting for the breach): follow it anyway and let the stream fill it in.
+    if (typeof wanted === 'string' && !ids.includes(wanted)) ids.unshift(wanted)
+    const loaded = await Promise.all(ids.slice(0, 12).map(async id => {
       const res = await fetch(`${base}/incidents/${encodeURIComponent(id)}/scenario`)
       return res.ok ? ((await res.json()) as Scenario) : null
     }))
     const scenarios = loaded.filter((item): item is Scenario => item !== null)
-    const wanted = requestedIncident()
     useWorkspace.getState().addScenarios(scenarios, wanted === true ? scenarios[0]?.id : wanted ?? undefined)
+    const target = wanted === true ? scenarios[0]?.id : wanted
+    if (target) followIncident(target, base)
     return scenarios
   } catch {
     return []
   }
+}
+
+let source: EventSource | null = null
+
+/** Follow one incident as it happens: the API re-sends the whole Scenario each time the audit log
+ *  grows (Server-Sent Events) until the report is written. Idempotent per incident. */
+export function followIncident(id: string, base = '/api'): void {
+  const state = useWorkspace.getState()
+  if (state.streaming === id || typeof EventSource === 'undefined') return
+  const current = state.scenarios.find(item => item.id === id)
+  if (current && current.live && current.complete) return
+  source?.close()
+  source = new EventSource(`${base}/incidents/${encodeURIComponent(id)}/stream`)
+  useWorkspace.setState({ streaming: id })
+  source.addEventListener('scenario', event => {
+    const scenario = JSON.parse((event as MessageEvent).data) as Scenario
+    const store = useWorkspace.getState()
+    const isNew = !store.scenarios.some(item => item.id === scenario.id)
+    store.updateScenario(scenario)
+    if (isNew) {  // first frame of an incident that did not exist when the page loaded: show it, at "now"
+      useWorkspace.getState().setScenario(scenario.id)
+      useWorkspace.getState().seek(scenario.duration)
+    }
+  })
+  const stop = () => { source?.close(); source = null; useWorkspace.setState({ streaming: null }) }
+  source.addEventListener('done', stop)
+  source.onerror = () => { if (source?.readyState === EventSource.CLOSED) stop() }
 }

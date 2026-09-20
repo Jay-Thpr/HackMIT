@@ -63,6 +63,7 @@ def scenario_from_incident(
     events: list[AuditEvent],
     windows: list[Fingerprint] | None = None,
     clone_windows: dict[str, list[Fingerprint]] | None = None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """Build the UI Scenario for one incident. ``windows`` are production C1 windows for the
     incident (any span); ``clone_windows`` map clone_id -> that clone's windows. Both optional:
@@ -169,9 +170,12 @@ def scenario_from_incident(
                         "readings": _readings(fp, topology), "detail": f"Production lever (C3) with a {ttl}s TTL and a registered undo."})
         elif e.kind == EventKind.action_undo:
             fp = _window_at(windows, e.ts + timedelta(seconds=15))
-            out.append({**base, "kind": "undo", "title": e.summary, "tool": "levers.undo", "undoId": p.get("action_id", e.event_id),
-                        "targetId": policy if p.get("lever_id") == "retry_cap" else target,
-                        "readings": _readings(fp, topology), "detail": f"Release of {action_labels.get(p.get('action_id'), p.get('lever_id'))}; status {p.get('status')}."})
+            action_id = e.action_id or p.get("action_id") or e.event_id
+            status = p.get("status") or "unknown"
+            title = e.summary if status in ("undone", "expired") else f"Release of {p.get('lever_id')} not confirmed"
+            out.append({**base, "kind": "undo", "title": title, "tool": "levers.undo", "undoId": action_id,
+                        "undoStatus": status, "targetId": policy if p.get("lever_id") == "retry_cap" else target,
+                        "readings": _readings(fp, topology), "detail": f"Release of {action_labels.get(action_id, p.get('lever_id'))}; status {status}."})
         elif e.kind == EventKind.verdict:
             obs = p.get("observations") or []
             seen, rows = set(), []
@@ -182,7 +186,8 @@ def scenario_from_incident(
                 seen.add(key)
                 rows.append(f"{o.get('metric')} {o.get('phase')}: {_fmt(o.get('baseline'))} → {_fmt(o.get('measured'))} (z {_fmt(o.get('z'))}, {o.get('direction')})")
             out.append({**base, "kind": "verdict", "title": e.summary, "phase": "Confirmed" if p.get("confirmed") else "Not confirmed",
-                        "targetId": target, "tool": "judge.confirm", "actor": "math", "detail": e.summary, "result": "; ".join(rows)})
+                        "diagnosis": p.get("diagnosis"), "confirmed": p.get("confirmed") is True,
+                        "targetId": target, "tool": "judge.confirm", "detail": e.summary, "result": "; ".join(rows)})
         elif e.kind == EventKind.canary_update and p.get("clone_id"):
             # patch verification ran in its own clean clone: show it as an environment with its replay
             clone_id = p["clone_id"]
@@ -228,15 +233,22 @@ def scenario_from_incident(
                         **({"result": result} if result else {})})
 
     out.sort(key=lambda ev: (ev["at"], ev["sequence"]))
+    # A run ends with a report, or with a page from stage 4/5 (no experiment, nothing reproduced,
+    # verdict not confirmed). Pages in stages 6-8 are followed by more events (revise, report).
+    last = events[-1]
+    complete = last.kind == EventKind.report or (last.kind == EventKind.page_human and last.stage in (4, 5))
     duration = (out[-1]["at"] + 10) if out else 60
-    diagnosis = next((e.payload.get("diagnosis") for e in reversed(events) if e.kind == EventKind.verdict), None)
+    if not complete and now is not None:
+        duration = max(duration, at(now))  # the incident is still running: the slider ends at wall-clock now
     return {
         "id": incident_id,
         "live": True,
+        "complete": complete,
+        "now": at(now) if now is not None else duration,
         "name": f"Incident {incident_id}",
         "subtitle": "Live incident · real audit log",
         "incident": detect.summary,
-        "incidentTitle": f"{detect.summary}" + (f" → {diagnosis}" if diagnosis else ""),
+        "incidentTitle": detect.summary,
         "targetId": target, "entryId": entry, "policyId": policy,
         "duration": duration,
         "testCases": TEST_CASES,

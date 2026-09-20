@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { Activity, ArrowDownRight, ArrowRight, Box, ChevronDown, ChevronRight, CircleHelp, Compass, FlaskConical, Focus, GitBranch, Layers3, LayoutDashboard, ListFilter, Maximize2, MousePointer2, Network, Pause, Play, Plus, ShieldCheck, Sparkles, Waves } from 'lucide-react'
-import { loadLiveScenarios } from './live'
+import { followIncident, loadLiveScenarios } from './live'
 import { replay, timeLabel, visibleEvents } from './model'
 import { useWorkspace, type View } from './store'
 import { useLayout } from './use-layout'
@@ -52,6 +52,7 @@ export default function App() {
   const phaseNumber = phases.indexOf(workspace.phase) + 1
 
   useEffect(() => { void loadLiveScenarios() }, [])
+  useEffect(() => { if (scenario.live && !scenario.complete) followIncident(scenario.id) }, [scenario.id, scenario.live, scenario.complete])
 
   useEffect(() => {
     let last = performance.now()
@@ -93,7 +94,7 @@ export default function App() {
     </aside>
 
     <div className="main-shell">
-      <header className="topbar"><div className="breadcrumb"><span>Workspace</span><ChevronRight size={12} /><strong>{navigation.find(item => item.view === view)?.label}</strong></div><div className="topbar-actions"><span className="demo-badge"><i />{scenario.live ? 'Live incident' : 'Simulated data'}</span><span className="topbar-divider" /><button className="pause-all" onClick={() => set({ playing: false })} disabled={!playing}><Pause size={13} />Pause simulation</button></div></header>
+      <header className="topbar"><div className="breadcrumb"><span>Workspace</span><ChevronRight size={12} /><strong>{navigation.find(item => item.view === view)?.label}</strong></div><div className="topbar-actions"><span className="demo-badge"><i />{scenario.live ? (scenario.complete ? 'Live incident' : 'Live incident · in progress') : 'Simulated data'}</span><span className="topbar-divider" /><button className="pause-all" onClick={() => set({ playing: false })} disabled={!playing}><Pause size={13} />Pause simulation</button></div></header>
       <main id="main-content">
         <section className="workspace-header"><div><div className="workspace-brief"><span className="case-id">{scenario.incident}</span><span className="case-state"><i />{workspace.phase}</span></div><h1>{view === 'investigation' ? (cursor < 12 ? 'Establishing a healthy reference' : workspace.verdict ?? scenario.incidentTitle) : title.title}</h1>{view !== 'investigation' && <p>{title.subtitle}</p>}</div><div className="workspace-header-actions">{view === 'investigation' && <button className="primary-button" onClick={() => { ui.togglePlay(); set({ follow: true }) }}>{playing ? <Pause size={14} /> : <Play size={14} />}{playing ? 'Pause investigation' : 'Follow investigation'}</button>}<button className="secondary-button" onClick={() => set({ dialog: 'experiment' })}><Plus size={15} />New experiment</button></div></section>
         <div className="context-bar"><div className="scenario-context"><Box size={15} /><select aria-label="Example architecture" value={scenarioId} onChange={event => { setScenario(event.target.value); setEntitySearch('') }}>{scenarios.map(item => <option value={item.id} key={item.id}>{item.name}</option>)}</select><span className="context-separator" /><span className="context-type">{scenario.subtitle}</span></div><div className="environment-context"><span>Environment</span><select aria-label="Selected environment" value={environment.id} onChange={event => focus(event.target.value)}>{workspace.environments.map(env => <option key={env.id} value={env.id}>{env.label}</option>)}</select></div></div>

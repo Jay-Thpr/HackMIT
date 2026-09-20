@@ -25,7 +25,11 @@ cd .. && uv run faultline ui --port 8010 \
   --extra-audit-log ../integration/runs/audit-demo-storm-2.jsonl   # any extra C4 JSONL files
 ```
 
-Open http://127.0.0.1:8010/?live (newest incident) or `/?incident=<id>`. Real incidents are listed
+Open http://127.0.0.1:8010/?live (newest incident) or `/?incident=<id>`. An incident that is still
+running streams in as it happens (Server-Sent Events from `/api/incidents/<id>/stream`; the badge reads
+"Live incident · in progress" and a viewer at the end of the replay is carried forward). For the demo,
+open `/?incident=<the id you will pass to demo.py>` before starting the run — the page picks the incident
+up at its first audit event and follows it to the report with no reload. Real incidents are listed
 first in the architecture selector and marked **Live incident**; the two synthetic examples stay
 available and remain the default without a query string. In `npm run dev`, `/api` is proxied to
 :8010, so the same URLs work on 4173. Translation from audit events to this view model lives in

@@ -25,6 +25,14 @@ Audit event envelope (C4, `faultline_contracts.AuditEvent`):
 `actor` is the split the PRD asks the UI to show: **`llm` = reasoning panel, `math` = measured-evidence
 panel**, `adapter` = actions, `orchestrator` = control flow. Don't rely on order within one `ts`.
 
+## Ready-made: the Product API and the live stream
+
+`faultline ui` (see `product/README.md`) already does the translation described below:
+`GET /api/incidents/{id}/scenario` returns the UI's `Scenario` for a recorded incident, and
+`GET /api/incidents/{id}/stream` re-sends it as Server-Sent Events (`event: scenario`) every time the
+audit log grows, ending with `event: done` at the report. `product/src/faultline_product/ui_scenario.py`
+is the mapping; `product/ui/src/live.ts` consumes it.
+
 ## Panel → events
 
 ### Timeline / status strip
