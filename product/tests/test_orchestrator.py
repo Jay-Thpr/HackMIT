@@ -476,3 +476,76 @@ def test_resume_ignores_expired_and_already_released_levers(tmp_path):
                                 bundle.telemetry, FixtureBrain(bundle.triage, bundle.experiment, bundle.verdict), clock, clock.sleep, 5)
     assert orchestrator.resume("expired") == 1
     assert not any(e.kind == EventKind.action_undo for e in audit.query("expired"))
+
+
+class RecordingPatches(FixtureDevinAdapter):
+    def __init__(self):
+        self.evidence = []
+
+    def revise(self, incident_id, patch, evidence):
+        self.evidence.append(evidence)
+        return super().revise(incident_id, patch, evidence)
+
+
+def test_canary_regression_sends_measured_numbers_and_z_scores_to_the_author(tmp_path):
+    import json
+
+    bundle = load_fixture("storm")
+    orchestrator, audit, _ = _orchestrator(tmp_path, telemetry=BreachedTelemetry(bundle.telemetry))
+    patches = RecordingPatches()
+    orchestrator._patches = patches
+
+    result = orchestrator.run("evidence", bundle.experiment_start)
+
+    assert result.canary.status.value == "regressed"
+    assert result.canary.evidence["breached_windows"] == 1 and result.canary.evidence["checkout_slo_threshold_ms"] == 1000
+    assert result.canary.evidence["gateway_p99_ms_max"] > 1000
+    text = patches.evidence[0]
+    assert text.startswith("production canary regressed: checkout SLO breached")
+    measured = json.loads(text.splitlines()[1].split("canary: ", 1)[1])
+    assert measured == result.canary.evidence
+    diagnosis_line = next(line for line in text.splitlines() if line.startswith("diagnosis H_meta"))
+    rows = json.loads(diagnosis_line.split("observations: ", 1)[1])
+    assert rows and {"experiment", "phase", "metric", "baseline", "measured", "sigma", "z", "direction"} <= set(rows[0])
+    refused = next(e for e in audit.query("evidence") if e.stage == Stage.canary and e.kind == EventKind.refused)
+    assert refused.payload["evidence"] == result.canary.evidence
+
+
+class StubSimilar:
+    def __init__(self, ranked=None, error=None):
+        self.ranked, self.error, self.calls = ranked or [], error, []
+
+    def find(self, fingerprint, *, exclude_incident_id, limit):
+        self.calls.append((exclude_incident_id, limit))
+        if self.error:
+            raise self.error
+        return self.ranked
+
+
+def test_triage_records_similar_past_incidents_with_their_recorded_diagnosis(tmp_path):
+    output = []
+    orchestrator, audit, bundle = _orchestrator(tmp_path, output=output)
+    orchestrator.run("past-1", bundle.experiment_start)  # a real earlier incident with an H_meta verdict
+    orchestrator._actions = 0
+    orchestrator._similar = StubSimilar([("past-1", 0.93), ("unknown-9", 0.4)])
+
+    orchestrator.run("current", bundle.experiment_start)
+
+    triage = next(e for e in audit.query("current") if e.stage == Stage.triage and e.kind == EventKind.triage)
+    assert triage.payload["similar_incidents"] == [
+        {"incident_id": "past-1", "score": 0.93, "diagnosis": "H_meta", "confirmed": True},
+        {"incident_id": "unknown-9", "score": 0.4, "diagnosis": None, "confirmed": None},
+    ]
+    assert orchestrator._similar.calls == [("current", 3)]
+    assert "[triage] looks like past-1 (0.93, was H_meta), unknown-9 (0.40)" in output
+
+
+def test_similar_incident_search_failure_never_blocks_triage(tmp_path):
+    output = []
+    orchestrator, audit, bundle = _orchestrator(tmp_path, output=output)
+    orchestrator._similar = StubSimilar(error=ConnectionError("es down"))
+    result = orchestrator.run("lonely", bundle.experiment_start)
+    assert result.diagnosis == "H_meta"
+    triage = next(e for e in audit.query("lonely") if e.stage == Stage.triage and e.kind == EventKind.triage)
+    assert triage.payload["similar_incidents"] == []
+    assert "[triage] similar-incident search unavailable (ConnectionError)" in output

@@ -46,6 +46,7 @@ class CanaryResult:
     status: CanaryStatus
     detail: str
     target: CanaryTarget | None = None
+    evidence: dict | None = None  # measured numbers behind the decision (for the audit log and the patch author)
 
 
 @runtime_checkable
@@ -134,6 +135,14 @@ class Investigation(Protocol):
         healthy_reference: list[Fingerprint],
         production_probe: Experiment,
     ) -> list[HypothesisInvestigation]: ...
+
+
+@runtime_checkable
+class SimilarIncidentFinder(Protocol):
+    """Rank past production incidents by C1 similarity to the current breach (Owner 2's
+    Elasticsearch analytics behind it). Returns (incident_id, score) pairs, best first."""
+
+    def find(self, fingerprint: Fingerprint, *, exclude_incident_id: str, limit: int) -> list[tuple[str, float]]: ...
 
 
 @runtime_checkable

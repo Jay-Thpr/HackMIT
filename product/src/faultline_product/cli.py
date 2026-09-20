@@ -12,6 +12,7 @@ from faultline_contracts import JsonlSink, LeverError, utcnow
 from faultline_telemetry import (
     ElasticsearchAuditSink,
     ElasticsearchFingerprintStore,
+    ElasticsearchTelemetryAnalytics,
     client_from_env,
     ensure_index_templates,
     load_repo_dotenv,
@@ -19,6 +20,7 @@ from faultline_telemetry import (
 
 from .adapters import (
     CommandPager,
+    ElasticSimilarIncidents,
     PagingAuditSink,
     TeeAuditSink,
     WebhookPager,
@@ -297,6 +299,7 @@ def main(argv: list[str] | None = None) -> int:
             max_revisions=getattr(args, "max_revisions", 1),
             investigation=_investigation(args, writer),
             investigation_gate=getattr(args, "investigate_gate", False),
+            similar=ElasticSimilarIncidents(ElasticsearchTelemetryAnalytics(es_client)) if es_client else None,
             renderer=renderer,
             telemetry=telemetry,
             brain=brain,

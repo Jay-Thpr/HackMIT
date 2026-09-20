@@ -46,6 +46,10 @@ and `payload.triage` = the full `TriageResult` (C2, `faultline_contracts.triage`
 `predictions[] {hypothesis_id, experiment_id, during[] {metric, direction}, after_release[] {metric,
 direction}, confirms_if {phase, metric, expect} | null}`. Render labels from `hypotheses[].label`, the
 matrix as hypotheses × experiments, and `confirms_if` as "confirmed if <metric> is <expect> <phase>".
+`payload.similar_incidents[]` (when Elasticsearch is configured): past production incidents ranked by
+C1 similarity to this breach, `{incident_id, score (0–1), diagnosis, confirmed}` with the diagnosis
+taken from that incident's own verdict — the "looks like incident X, which was a storm" row. `[]`
+when history is unavailable; it never changes what the math decides.
 The renderer's `[triage] source: openai|fallback (...)` line is not in the audit.
 
 ### Measured-evidence panel (`actor == "math"`)
@@ -96,8 +100,24 @@ ES mapping stays consistent). Link `reference` and
 `https://app.devin.ai/sessions/<session_id>`.
 
 ### Canary
-`stage 7, kind canary_update, actor orchestrator`: `payload.v2_weight`, `target`. Failure path:
-`stage 7, kind refused` (`payload.reason`) + `kind page_human`.
+`stage 7, kind canary_update, actor orchestrator`: `payload.v2_weight`, `target`, `evidence`. Failure path:
+`stage 7, kind refused` (`payload.reason`, `evidence`) + `kind page_human`. `evidence` is what the canary
+measured: `{windows, breached_windows, checkout_slo_threshold_ms, gateway_p99_ms_mean, gateway_p99_ms_max}`
+plus, when orders-v2 reported, `{v2_service, v2_windows, v2_qps_mean, v1_error_rate_mean, v2_error_rate_mean,
+v1_p99_ms_mean, v2_p99_ms_mean}`. The same numbers (and the verdict's z-scores) are what goes back to Devin
+as `payload.evidence_text` on the next `patch_opened`.
+
+### Telemetry quality
+`stage 4, kind refused, actor adapter, payload.stale_telemetry == true` (`lag_s`, `max_lag_s`): the newest
+window trailed the clock by more than 3 windows, so the experiment phases could not be aligned and the verdict
+was withheld (the following verdict is `none_of_the_above`, unconfirmed). Show the experiment as *not judged*.
+
+### Aborts and resumes
+- `stage 8, kind refused, payload.aborted == true` (`error`, `actions_applied`) + `kind page_human`: the loop
+  died on an unhandled error after detection; applied levers revert on their TTL.
+- `stage 5, kind mitigation, payload.resumed == true` (`actions_applied`, `leftover[]`, `still_active[]`): a
+  `watch --resume` picked the incident back up; leftover levers were released (an `action_undo` with the
+  original `action_id` follows each) or left to their TTL.
 
 ### Human paging
 `kind page_human` (any stage) — show prominently; `kind refused` right before it says why.

@@ -39,6 +39,7 @@ from .ports import (
     PatchProposal,
     PatchVerification,
     PatchVerifier,
+    SimilarIncidentFinder,
     VerificationStatus,
 )
 from .renderer import TerminalRenderer
@@ -80,7 +81,9 @@ class Orchestrator:
         max_revisions: int = 1,
         investigation: Investigation | None = None,
         investigation_gate: bool = False,
+        similar: SimilarIncidentFinder | None = None,
     ):
+        self._similar = similar
         self._levers, self._audit, self._patches = levers, audit, patches
         self._canary_deployer = canary_deployer
         self._verifier = verifier
@@ -208,7 +211,7 @@ class Orchestrator:
             return RunResult(incident_id, verdict.diagnosis, None, investigations=investigations)
         mitigation = self.mitigate(incident_id, triage, experiment, verdict)
         patch = self.patch(incident_id, verdict, triage)
-        patch, verification, canary = self.ship(incident_id, patch, verdict.diagnosis, mitigation)
+        patch, verification, canary = self.ship(incident_id, patch, verdict, mitigation)
         # A relief lever (e.g. db_failover) is still holding production up: the code patch does
         # not cure the diagnosed cause, so the incident is mitigated, not resolved. A human must
         # fix the dependency before the lever's TTL runs out. (PRD: human-gated remediation.)
@@ -268,19 +271,44 @@ class Orchestrator:
     def triage(self, incident_id: str, fingerprint: Fingerprint) -> TriageResult:
         triage = self._brain.triage(incident_id, fingerprint)
         ids = [item.id for item in triage.hypotheses]
+        similar = self.similar_incidents(incident_id, fingerprint)
         self._record(
             incident_id,
             Stage.triage,
             EventKind.triage,
             Actor.llm,
             f"ambiguous: {' vs '.join(ids)}",
-            {"hypotheses": ids, "ambiguous": triage.ambiguous, "triage": triage.model_dump(mode="json")},
+            {"hypotheses": ids, "ambiguous": triage.ambiguous, "triage": triage.model_dump(mode="json"),
+             "similar_incidents": similar},
         )
         self._renderer.event("triage", f"ambiguous: {' vs '.join(ids)}")
+        if similar:
+            self._renderer.event("triage", "looks like " + ", ".join(
+                f"{s['incident_id']} ({s['score']:.2f}" + (f", was {s['diagnosis']}" if s["diagnosis"] else "") + ")"
+                for s in similar))
         source = self._brain.triage_source()
         if source:
             self._renderer.event("triage", f"source: {source}")
         return triage
+
+    def similar_incidents(self, incident_id: str, fingerprint: Fingerprint, limit: int = 3) -> list[dict]:
+        """Past production incidents whose breach fingerprint resembles this one, each with the
+        diagnosis its own audit trail recorded. Evidence for the report and the UI; never
+        changes what the math decides. Best-effort: an unreachable store yields []."""
+        if self._similar is None:
+            return []
+        try:
+            ranked = self._similar.find(fingerprint, exclude_incident_id=incident_id, limit=limit)
+        except Exception as exc:  # noqa: BLE001 - history is a nice-to-have, never a blocker
+            self._renderer.event("triage", f"similar-incident search unavailable ({type(exc).__name__})")
+            return []
+        out = []
+        for past_id, score in ranked:
+            verdict = next((e for e in reversed(self._audit.query(past_id)) if e.kind == EventKind.verdict), None)
+            out.append({"incident_id": past_id, "score": round(float(score), 4),
+                        "diagnosis": verdict.payload.get("diagnosis") if verdict else None,
+                        "confirmed": bool(verdict.payload.get("confirmed")) if verdict else None})
+        return out
 
     def plan(self, incident_id: str, triage: TriageResult) -> Experiment | None:
         catalog, blast_radius = self._levers.catalog(), self._levers.estimate_blast_radius
@@ -687,7 +715,7 @@ class Orchestrator:
         self,
         incident_id: str,
         patch: PatchProposal,
-        diagnosis: str,
+        verdict: Verdict,
         mitigation: ActionHandle | None,
     ) -> tuple[PatchProposal, PatchVerification, CanaryResult]:
         """Stages 6b-7: checkout -> clone verification -> production canary, with measured
@@ -698,7 +726,7 @@ class Orchestrator:
         revisions = 0
         while True:
             context = self.checkout(incident_id, patch)
-            verification = self.verify_patch(incident_id, patch, diagnosis, context)
+            verification = self.verify_patch(incident_id, patch, verdict.diagnosis, context)
             if verification.status == VerificationStatus.failed:
                 canary = self._refuse_canary(
                     incident_id, f"patch failed clone verification: {verification.detail}"
@@ -709,7 +737,8 @@ class Orchestrator:
                 mitigation = None
                 if canary.status != CanaryStatus.regressed:
                     return patch, verification, canary
-                evidence = f"production canary regressed: {canary.detail}"
+                evidence = _canary_evidence(canary)
+            evidence += "\n" + _diagnosis_evidence(verdict)
             if revisions >= self._max_revisions:
                 return patch, verification, canary
             revised = self.revise(incident_id, patch, evidence)
@@ -845,9 +874,10 @@ class Orchestrator:
         canary_end = self._clock()
         fingerprints = self._telemetry.series(canary_start, canary_end)
         _, landed = self._release(incident_id, canary, Stage.canary, "released canary_weight")
+        measured = _canary_measurements(fingerprints, target)
         if not landed:
             detail = f"canary_weight release did not land; TTL {canary.ttl_s}s will revert it"
-            return CanaryResult(CanaryStatus.regressed, detail, target)
+            return CanaryResult(CanaryStatus.regressed, detail, target, measured)
         regression = self._canary_regression(fingerprints, target)
         if regression is not None:
             self._record(
@@ -856,7 +886,7 @@ class Orchestrator:
                 EventKind.refused,
                 Actor.orchestrator,
                 f"canary regression, auto-rolled back: {regression}",
-                {"reason": regression, "target": asdict(target)},
+                {"reason": regression, "target": asdict(target), "evidence": measured},
                 action_id=canary.action_id,
             )
             self._record(
@@ -868,18 +898,18 @@ class Orchestrator:
                 {},
             )
             self._renderer.event("canary", f"regression: {regression} — paged human")
-            return CanaryResult(CanaryStatus.regressed, regression, target)
+            return CanaryResult(CanaryStatus.regressed, regression, target, measured)
         self._record(
             incident_id,
             Stage.canary,
             EventKind.canary_update,
             Actor.orchestrator,
             "5% canary verified",
-            {"v2_weight": 0.05, "target": asdict(target)},
+            {"v2_weight": 0.05, "target": asdict(target), "evidence": measured},
             action_id=canary.action_id,
         )
         self._renderer.event("canary", "canary_weight v2=0.05 verified and released")
-        return CanaryResult(CanaryStatus.passed, "5% canary verified", target)
+        return CanaryResult(CanaryStatus.passed, "5% canary verified", target, measured)
 
     def _refuse_canary(
         self,
@@ -1054,6 +1084,61 @@ def _telemetry_lag_s(windows: list[Fingerprint], now: datetime) -> float:
     if not windows:
         return 0.0
     return (now - max(fp.window_end for fp in windows)).total_seconds()
+
+
+def _mean(values: list[float]) -> float | None:
+    return round(sum(values) / len(values), 4) if values else None
+
+
+def _canary_measurements(fingerprints: list[Fingerprint], target: CanaryTarget) -> dict:
+    """What the canary actually measured, as numbers: the same facts `_canary_regression`
+    decides on, so the audit log and the patch author see the evidence, not just the verdict."""
+    thresholds = [slo.threshold for fp in fingerprints for slo in fp.slos if slo.name == "checkout"]
+    gateway = [fp.services["gateway"].p99_ms for fp in fingerprints
+               if fp.services.get("gateway") is not None and fp.services["gateway"].p99_ms is not None]
+    out: dict = {
+        "windows": len(fingerprints),
+        "breached_windows": sum(any(slo.breached for slo in fp.slos) for fp in fingerprints),
+        "checkout_slo_threshold_ms": min(thresholds) if thresholds else None,
+        "gateway_p99_ms_mean": _mean(gateway),
+        "gateway_p99_ms_max": max(gateway) if gateway else None,
+    }
+    if target.service_name:
+        v1 = [fp.services["orders"] for fp in fingerprints if fp.services.get("orders") is not None]
+        v2 = [fp.services[target.service_name] for fp in fingerprints if fp.services.get(target.service_name) is not None]
+        out.update({
+            "v2_service": target.service_name,
+            "v2_windows": len(v2),
+            "v2_qps_mean": _mean([s.qps for s in v2 if s.qps is not None]),
+            "v1_error_rate_mean": _mean([s.error_rate for s in v1 if s.error_rate is not None]),
+            "v2_error_rate_mean": _mean([s.error_rate for s in v2 if s.error_rate is not None]),
+            "v1_p99_ms_mean": _mean([s.p99_ms for s in v1 if s.p99_ms is not None]),
+            "v2_p99_ms_mean": _mean([s.p99_ms for s in v2 if s.p99_ms is not None]),
+        })
+    return out
+
+
+def _canary_evidence(canary: CanaryResult) -> str:
+    lines = [f"production canary regressed: {canary.detail}"]
+    if canary.evidence:
+        lines.append(f"measured during the 5% canary: {json.dumps(canary.evidence)}")
+    return "\n".join(lines)
+
+
+def _diagnosis_evidence(verdict: Verdict) -> str:
+    """The z-scores that confirmed the diagnosis, so the author knows which metrics the fix
+    must move and against what noise."""
+    seen: set[tuple[str, str, str]] = set()
+    rows = []
+    for o in verdict.observations:
+        key = (o.experiment_id, o.phase.value, o.metric)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append({"experiment": o.experiment_id, "phase": o.phase.value, "metric": o.metric,
+                     "baseline": round(o.baseline, 4), "measured": round(o.measured, 4), "sigma": round(o.sigma, 4),
+                     "z": round(o.z, 2), "direction": o.direction.value})
+    return f"diagnosis {verdict.diagnosis} (confirmed={verdict.confirmed}); measured observations: {json.dumps(rows)}"
 
 
 def _verification_evidence(verification: PatchVerification) -> str:

@@ -1,5 +1,6 @@
 from .audit import TeeAuditSink
 from .pager import CommandPager, PagingAuditSink, WebhookPager
+from .similar import ElasticSimilarIncidents
 from .brain import LiveBrain, build_live_brain
 from .canary import (
     CanaryPreparationError,
@@ -46,6 +47,7 @@ __all__ = [
     "SandboxCanaryDeployer",
     "TeeAuditSink",
     "CommandPager",
+    "ElasticSimilarIncidents",
     "PagingAuditSink",
     "WebhookPager",
     "TelemetryUnavailable",
