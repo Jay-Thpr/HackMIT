@@ -211,9 +211,12 @@ def triage_hero() -> TriageResult:
             Prediction(
                 hypothesis_id="H_db", experiment_id="db_failover_30s",
                 during=[me("db.query_p50_ms", down), me("svc.orders.retry_ratio", down),
-                        me("svc.gateway.error_rate", down)],
+                        me("svc.gateway.error_rate", down), me("svc.gateway.p99_ms", down)],
                 after_release=[me("db.query_p50_ms", up)],
-                confirms_if=Confirmation(phase=Phase.during, metric="db.query_p50_ms", expect=ConfirmExpect.down),
+                # A degraded dependency is confirmed only if relieving it heals the user-facing
+                # SLO. DB latency alone also drops when the DB is merely a victim (e.g. a
+                # CPU-starved caller), which must stay none-of-the-above.
+                confirms_if=Confirmation(phase=Phase.during, metric="svc.gateway.p99_ms", expect=ConfirmExpect.down),
             ),
         ],
     )

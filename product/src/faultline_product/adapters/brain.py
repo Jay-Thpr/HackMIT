@@ -50,6 +50,12 @@ metrics, so the planner can compare hypotheses experiment by experiment. Where a
 expects no change, say `flat` explicitly. Prefer these metrics when present:
 db.query_p50_ms, db.qps, svc.orders.retry_ratio, svc.gateway.p99_ms, svc.gateway.error_rate,
 db.pool_busy_ratio.
+
+`confirms_if` must test that the CAUSE was addressed, not that a symptom moved: for a
+dependency hypothesis (H_db) require the user-facing SLO metric (svc.gateway.p99_ms) to recover
+while the dependency is relieved, never just the dependency's own latency — a DB that is merely
+a victim of a saturated caller also gets faster when relieved, and that world must remain
+none-of-the-above.
 """
 PRODUCT_SYSTEM_PROMPT = SYSTEM_PROMPT + "\n" + TAXONOMY
 
