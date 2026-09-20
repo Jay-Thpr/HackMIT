@@ -30,7 +30,8 @@ from fastapi.staticfiles import StaticFiles
 from faultline_contracts import AuditEvent, EventKind, Fingerprint
 from faultline_telemetry import ElasticsearchFingerprintStore, HttpElasticsearchClient
 
-from .paths import PRODUCT_ROOT
+from .comparison_api import add_comparison_routes
+from .paths import PRODUCT_ROOT, REPOSITORY_ROOT
 from .ui_scenario import scenario_from_incident
 
 UI_DIST = PRODUCT_ROOT / "ui" / "dist"
@@ -131,7 +132,12 @@ def build_store() -> ElasticsearchFingerprintStore | None:
     )
 
 
-def create_app(audit_paths: list[Path], store: ElasticsearchFingerprintStore | None = None) -> FastAPI:
+def create_app(
+    audit_paths: list[Path],
+    store: ElasticsearchFingerprintStore | None = None,
+    *,
+    comparison_dir: Path | None = None,
+) -> FastAPI:
     reader = IncidentReader(audit_paths, store)
     app = FastAPI(title="Faultline UI API", version="1")
 
@@ -173,6 +179,8 @@ def create_app(audit_paths: list[Path], store: ElasticsearchFingerprintStore | N
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    add_comparison_routes(app, comparison_dir or REPOSITORY_ROOT / "runs" / "comparisons")
 
     if UI_DIST.exists():
         app.mount("/assets", StaticFiles(directory=UI_DIST / "assets"), name="assets")
