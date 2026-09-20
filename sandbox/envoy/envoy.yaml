@@ -2,7 +2,7 @@
 # Retries are deliberately NOT configured here: they live in Orders' code.
 # Levers (driven by the control service through the admin API on :9902):
 #   shed    runtime fault.http.abort.abort_percent   (0-100, 503 at the gateway)
-#   canary  runtime routing.traffic_shift.orders     (0-10000 = share routed to orders-v2)
+#   canary  runtime routing.traffic_shift.orders     (integer percent 0-100 routed to orders-v2; Envoy reads an integer runtime value as N/100)
 admin:
   address: {socket_address: {address: 0.0.0.0, port_value: 9902}}
 

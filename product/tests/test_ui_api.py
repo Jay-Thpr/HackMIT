@@ -70,6 +70,15 @@ def test_scenario_without_windows_reads_unknown_not_zero():
     assert all(r["health"] == "unknown" for r in detect["readings"].values())
 
 
+def test_scenario_surfaces_similar_incidents_as_read_only_context():
+    source = next(e for e in _events() if e.kind.value == "triage" and e.stage == 3)
+    event = source.model_copy(update={"payload": {**source.payload, "similar_incidents": [
+        {"incident_id": "past-storm", "score": 0.91, "diagnosis": "H_meta", "confirmed": True}
+    ]}})
+    scenario = scenario_from_incident(event.incident_id, [event])
+    assert scenario["similarIncidents"] == [{"incident_id": "past-storm", "score": 0.91, "diagnosis": "H_meta", "confirmed": True}]
+
+
 @pytest.mark.parametrize("diagnosis,confirmed", [("H_meta", True), ("H_db", True), ("H_db", False), ("none_of_the_above", False)])
 def test_scenario_preserves_structured_verdict(diagnosis, confirmed):
     source = next(e for e in _events() if e.kind.value == "verdict")

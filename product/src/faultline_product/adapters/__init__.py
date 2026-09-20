@@ -10,6 +10,7 @@ from .canary import (
 from .checkout import FixturePatchCheckout, GitPatchCheckout
 from .clone import DEFAULT_RECIPES, FixturePatchVerifier, LabPatchVerifier, stored_recipes
 from .devin import DevinAdapter, FixtureDevinAdapter
+from .github import GitHubPatchAdapter, PatchFallbackChain
 from .investigate import FixtureInvestigation, LabInvestigation
 from .fixture import (
     FixtureBrain,
@@ -30,7 +31,9 @@ __all__ = [
     "FixturePatchCheckout",
     "FixturePatchVerifier",
     "FixtureInvestigation",
+    "GitHubPatchAdapter",
     "GitPatchCheckout",
+    "PatchFallbackChain",
     "LabInvestigation",
     "LabPatchVerifier",
     "stored_recipes",

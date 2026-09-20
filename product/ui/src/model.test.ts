@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { deriveTopology, environmentPresence, replay, visibleEvents, metricLabel, type WorkspaceEvent } from './model'
+import { ARCHIVED_PRESENCE, deriveTopology, environmentPresence, replay, visibleEvents, metricLabel, type WorkspaceEvent } from './model'
 import { scenarios } from './scenarios'
 
 describe('incident lifecycle', () => {
@@ -16,15 +16,23 @@ describe('incident lifecycle', () => {
       expect(replay(scenario, 72).lifecycle).toBe('confirming')
     })
 
-    it(`${scenario.id}: animates cleanup before recorded removal and retains evidence on rewind`, () => {
+    it(`${scenario.id}: animates cleanup, keeps archived clones for review and emphasises the winner`, () => {
       const cleanup = replay(scenario, 103)
       expect(cleanup).toMatchObject({ lifecycle: 'cleanup', cleanup: 'in-progress' })
       expect(cleanup.environments[1]).toMatchObject({ lifecycle: 'destroying', lifecycleAt: 102, level: 1 })
-      const remaining = replay(scenario, 105)
-      expect(remaining.environments.map(env => env.id)).toEqual(['production', 'clone-b'])
-      expect(remaining.environments[1].level).toBe(2)
-      expect(replay(scenario, 108)).toMatchObject({ lifecycle: 'complete', cleanup: 'complete' })
-      expect(replay(scenario, 108).environments).toHaveLength(1)
+      const afterA = replay(scenario, 105)
+      expect(afterA.environments.map(env => env.id)).toEqual(['production', 'clone-a', 'clone-b'])  // archived clones stay
+      expect(afterA.environments[1]).toMatchObject({ lifecycle: 'archived', lifecycleAt: 105, level: 1 })
+      expect(afterA.cleanup).toBe('in-progress')
+      const done = replay(scenario, 108)
+      expect(done).toMatchObject({ lifecycle: 'complete', cleanup: 'complete' })
+      expect(done.environments).toHaveLength(3)
+      expect(done.environments.every(env => env.id === 'production' || env.lifecycle === 'archived')).toBe(true)
+      // the verdict confirmed hypothesis A: its clone is the winner, B is ruled out
+      expect(done.environments.find(env => env.id === 'clone-a')?.outcome).toBe('confirmed')
+      expect(done.environments.find(env => env.id === 'clone-b')?.outcome).toBe('ruled-out')
+      expect(done.winner).toBe('clone-a')
+      expect(replay(scenario, 47).winner).toBeUndefined()  // no emphasis before the verdict
       expect(visibleEvents(scenario, 108).some(event => event.testResult)).toBe(true)
       expect(replay(scenario, 47).environments).toHaveLength(3)
       expect(replay(scenario, 47).verdict).toBeUndefined()
@@ -37,11 +45,17 @@ describe('incident lifecycle', () => {
       expect(environmentPresence(starting, 24.5)).toBeCloseTo(0.5)
       expect(environmentPresence(starting, 25)).toBe(1)
       expect(environmentPresence(starting, 24.5)).toBeCloseTo(0.5)
-      const removing = replay(scenario, 103).environments[1]
-      expect(environmentPresence(removing, 102)).toBe(1)
-      expect(environmentPresence(removing, 103.5)).toBeCloseTo(0.5)
-      expect(environmentPresence(removing, 105)).toBe(0)
-      expect(environmentPresence(removing, 103.5, true)).toBe(1)
+      // clone A carries the confirmed cause: it never fades while being removed, and stays at full presence archived
+      const removingWinner = replay(scenario, 103).environments[1]
+      expect(environmentPresence(removingWinner, 103.5)).toBe(1)
+      expect(environmentPresence(replay(scenario, 108).environments[1], 108)).toBe(1)
+      // clone B was ruled out: it fades from 1 down to the archived presence, then stays there
+      const removingB = replay(scenario, 106).environments[2]
+      expect(environmentPresence(removingB, 105)).toBe(1)
+      expect(environmentPresence(removingB, 106.5)).toBeCloseTo(ARCHIVED_PRESENCE + (1 - ARCHIVED_PRESENCE) * 0.5)
+      expect(environmentPresence(removingB, 108)).toBe(ARCHIVED_PRESENCE)
+      expect(environmentPresence(replay(scenario, 108).environments[2], 108)).toBe(ARCHIVED_PRESENCE)
+      expect(environmentPresence(removingB, 106.5, true)).toBe(1)
     })
   }
 

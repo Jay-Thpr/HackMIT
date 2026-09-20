@@ -82,8 +82,10 @@ class Orchestrator:
         investigation: Investigation | None = None,
         investigation_gate: bool = False,
         similar: SimilarIncidentFinder | None = None,
+        ship: bool = True,
     ):
         self._similar = similar
+        self._ship = ship
         self._levers, self._audit, self._patches = levers, audit, patches
         self._canary_deployer = canary_deployer
         self._verifier = verifier
@@ -211,6 +213,8 @@ class Orchestrator:
             return RunResult(incident_id, verdict.diagnosis, None, investigations=investigations)
         mitigation = self.mitigate(incident_id, triage, experiment, verdict)
         patch = self.patch(incident_id, verdict, triage)
+        if not self._ship:
+            return self._report_unshipped(incident_id, verdict, patch, mitigation, investigations)
         patch, verification, canary = self.ship(incident_id, patch, verdict, mitigation)
         # A relief lever (e.g. db_failover) is still holding production up: the code patch does
         # not cure the diagnosed cause, so the incident is mitigated, not resolved. A human must
@@ -252,6 +256,42 @@ class Orchestrator:
         )
         return RunResult(incident_id, verdict.diagnosis, patch, canary, verification, investigations)
 
+    def _report_unshipped(
+        self,
+        incident_id: str,
+        verdict: Verdict,
+        patch: PatchProposal,
+        mitigation: ActionHandle | None,
+        investigations: list[HypothesisInvestigation],
+    ) -> RunResult:
+        """Diagnose-and-mitigate mode: the durable fix is proposed for review, not built,
+        verified or canaried here. The mitigation stays in place on its TTL; a human owns the
+        merge and rollout."""
+        held = mitigation is not None
+        self._record(
+            incident_id, Stage.report, EventKind.page_human, Actor.orchestrator,
+            f"durable fix {patch.reference} awaits review; "
+            + (f"{mitigation.lever_id} holds production for {mitigation.ttl_s}s" if held else "no mitigation is held"),
+            {"patch_reference": patch.reference, "lever_id": mitigation.lever_id if held else None,
+             "expires_at": mitigation.expires_at.isoformat() if held else None},
+            action_id=mitigation.action_id if held else None,
+        )
+        self._record(
+            incident_id, Stage.report, EventKind.report, Actor.orchestrator,
+            "incident mitigated; durable fix proposed for review",
+            {
+                "diagnosis": verdict.diagnosis,
+                "patch_reference": patch.reference,
+                "clone_verification": VerificationStatus.skipped.value,
+                "canary_status": "skipped",
+                "canary_detail": "diagnose-and-mitigate mode: no build, clone verification or canary",
+                "mitigation_held": mitigation.lever_id if held else None,
+                "mitigation_expires_at": mitigation.expires_at.isoformat() if held else None,
+            },
+        )
+        self._renderer.event("report", f"mitigated: faultline report --incident {incident_id}")
+        return RunResult(incident_id, verdict.diagnosis, patch, None, None, investigations)
+
     def detect(self, incident_id: str, now: datetime) -> Fingerprint:
         fp = self._telemetry.window(now - timedelta(seconds=WINDOW_S), now)
         breached = next((slo for slo in fp.slos if slo.breached), None)
@@ -278,7 +318,8 @@ class Orchestrator:
             EventKind.triage,
             Actor.llm,
             f"ambiguous: {' vs '.join(ids)}",
-            {"hypotheses": ids, "ambiguous": triage.ambiguous, "triage": triage.model_dump(mode="json"),
+            {"hypotheses": ids, "ambiguous": triage.ambiguous,
+             "triage": triage.model_dump(mode="json"), "source": self._brain.triage_source(),
              "similar_incidents": similar},
         )
         self._renderer.event("triage", f"ambiguous: {' vs '.join(ids)}")

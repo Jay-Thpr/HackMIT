@@ -84,6 +84,9 @@ def scenario_from_incident(
     baseline = _readings(healthy[-1] if healthy else None, topology)
     triage_event = next((e for e in events if e.kind == EventKind.triage and e.stage == 3), None)
     hypotheses = _hypotheses(triage_event)
+    # Retrieval is explanatory only. The UI renders these as read-only context;
+    # the judge still decides solely from the current experiment's measurements.
+    similar_incidents = ((triage_event.payload or {}).get("similar_incidents") or []) if triage_event else []
     hypothesis_ids = [h["id"] for h in hypotheses]
     entry, target, policy = "gateway", "db", "orders"
 
@@ -237,6 +240,7 @@ def scenario_from_incident(
             observed = ", ".join(f"{k}={_fmt(v)}" for k, v in ev.items()) or e.summary
             out.append({**base, "id": f"{e.event_id}-replay-check", "sequence": seq, "kind": "observe", "environmentId": env, "actor": "math",
                         "tool": "suite.evaluate", "title": f"replay check {'passed' if passed else 'failed'}", "detail": e.summary, "result": observed,
+                        "readings": _readings(_last(verify_fps), topology, breached=not passed),  # the clone after the replay: recovered if it passed
                         "testResult": {"checkId": "replay", "passed": passed, "expected": "clone SLO healthy after the replayed trigger ends", "observed": observed}})
             out.append({**base, "id": f"{e.event_id}-verdict", "sequence": seq + 1, "kind": "observe", "title": e.summary, "phase": phase,
                         "tool": "canary.judge", "result": observed})
@@ -250,6 +254,7 @@ def scenario_from_incident(
                     EventKind.experiment_end: "orchestrator.experiment"}[e.kind]
             result = None
             if e.kind == EventKind.patch_opened:
+                tool = {"github": "github.pull_request", "fallback": "patch.prebuilt"}.get(p.get("provider"), tool)
                 result = f"{p.get('provider')} · {p.get('reference')} · revision {p.get('revision')}"
             elif e.kind == EventKind.canary_update and p.get("evidence"):
                 result = ", ".join(f"{k}={_fmt(v)}" for k, v in (p.get("evidence") or {}).items())
@@ -324,6 +329,7 @@ def scenario_from_incident(
         "topology": topology,
         "baseline": baseline,
         "hypotheses": hypotheses,
+        "similarIncidents": similar_incidents,
         "events": out,
     }
 

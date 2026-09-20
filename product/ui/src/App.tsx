@@ -1,7 +1,7 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Activity, ArrowDownRight, ArrowRight, Box, ChevronDown, ChevronRight, CircleHelp, Compass, FlaskConical, Focus, GitBranch, Layers3, LayoutDashboard, ListFilter, Maximize2, MousePointer2, Network, Pause, Play, Plus, ShieldCheck, Sparkles, Waves } from 'lucide-react'
 import { followIncident, loadLiveScenarios } from './live'
-import { environmentLifecycleLabel, replay, timeLabel, visibleEvents, type IncidentLifecycle } from './model'
+import { environmentLifecycleLabel, environmentOutcomeLabel, replay, timeLabel, visibleEvents, type IncidentLifecycle } from './model'
 import { useWorkspace, type View } from './store'
 import { useLayout } from './use-layout'
 import { Inspector } from './components/Inspector'
@@ -34,8 +34,8 @@ const lifecycleSteps: { id: IncidentLifecycle; label: string; title: string; det
   { id: 'starting', label: 'Start clones', title: 'Starting clean copies of the system', detail: 'Each clone is an isolated test environment. It starts without the production fault and must pass a readiness check before testing.' },
   { id: 'investigating', label: 'Test in clones', title: 'Investigating in isolated clones', detail: 'Agents reproduce each possible cause, apply a reversible probe, and compare the measured responses. Production stays separate.' },
   { id: 'confirming', label: 'Confirm response', title: 'Checking the production response', detail: 'A short, reversible retry cap tests the predictions. Recovery must persist after release before the agent can confirm a cause.' },
-  { id: 'cleanup', label: 'Remove clones', title: 'Removing temporary test environments', detail: 'Clones leave the scene only after their removal is recorded. Their observations and test results remain available for review.' },
-  { id: 'complete', label: 'Review evidence', title: 'Clone cleanup is complete', detail: 'Only production remains. Review why this incident happened, inspect the retained tests, or replay the demo from the beginning.' },
+  { id: 'cleanup', label: 'Remove clones', title: 'Removing temporary test environments', detail: 'Clone projects are torn down once their removal is recorded; the clones stay in the workspace, faded, with their observations and test results.' },
+  { id: 'complete', label: 'Review evidence', title: 'Investigation complete', detail: 'The clones stay for review; the one that carried the confirmed cause (or the verified fix) is emphasised. Open the report, inspect the retained tests, or replay from the beginning.' },
 ]
 
 function Mark() { return <span className="brand-mark" aria-hidden="true"><i /><i /><i /></span> }
@@ -70,6 +70,15 @@ export default function App() {
   }
 
   useEffect(() => { void loadLiveScenarios() }, [])
+  // The report opens by itself when the investigation reaches its end while it is being watched
+  // (playback or a live incident streaming in) — not when someone merely seeks to the end.
+  const wasComplete = useRef(workspace.lifecycle === 'complete')
+  useEffect(() => {
+    const complete = workspace.lifecycle === 'complete'
+    if (complete && !wasComplete.current && (playing || ui.streaming === scenario.id) && view === 'investigation') set({ dialog: 'report', playing: false })
+    wasComplete.current = complete
+  }, [workspace.lifecycle, scenario.id])
+  useEffect(() => { wasComplete.current = replay(scenario, cursor).lifecycle === 'complete' }, [scenario.id])
   useEffect(() => { if (scenario.live && !scenario.complete) return followIncident(scenario.id) }, [scenario.id, scenario.live, scenario.complete])
 
   useEffect(() => {
@@ -124,8 +133,8 @@ export default function App() {
           <section className="lifecycle-summary" aria-label="Incident lifecycle" data-phase={workspace.lifecycle}>
             <div className="lifecycle-copy" aria-live="polite"><strong>{lifecycleStep.title}</strong><p>{workspace.lifecycle === 'confirming' && workspace.verdict ? 'Recovery held after the production probe was released. The recorded evidence now confirms the cause; clone cleanup is next.' : lifecycleStep.detail}</p></div>
             <ol className="lifecycle-steps">{lifecycleSteps.map((step, index) => <li key={step.id} data-state={index < lifecycleIndex ? 'complete' : index === lifecycleIndex ? 'current' : 'upcoming'} aria-current={index === lifecycleIndex ? 'step' : undefined}><span>{step.label}</span></li>)}</ol>
-            <div className="lifecycle-environments">{workspace.environments.filter(env => env.id !== 'production').map(env => <span key={env.id} data-environment={env.id} data-lifecycle={env.lifecycle}>{env.label}: {environmentLifecycleLabel[env.lifecycle]}</span>)}{workspace.cleanup === 'complete' && <span>Clones removed; evidence retained</span>}</div>
-            {workspace.lifecycle === 'complete' && <button className="text-button" onClick={() => set({ view: 'explanation' })}>Review the explanation <ArrowRight size={13} /></button>}
+            <div className="lifecycle-environments">{workspace.environments.filter(env => env.id !== 'production').map(env => <span key={env.id} data-environment={env.id} data-lifecycle={env.lifecycle} data-outcome={env.outcome} data-winner={workspace.winner === env.id || undefined}>{env.label}: {env.outcome ? environmentOutcomeLabel[env.outcome] : environmentLifecycleLabel[env.lifecycle]}</span>)}{workspace.cleanup === 'complete' && <span>Clones retained for review; evidence kept</span>}</div>
+            {workspace.lifecycle === 'complete' && <div className="lifecycle-actions"><button className="text-button" onClick={() => set({ dialog: 'report' })}>Open the incident report <ArrowRight size={13} /></button><button className="text-button" onClick={() => set({ view: 'explanation' })}>Review the explanation <ArrowRight size={13} /></button></div>}
           </section>
           <details className="phase-disclosure"><summary>Detailed timeline <span>{phaseNumber} / {phases.length}</span></summary><nav className="investigation-path" aria-label="Investigation phases">{phases.map((phase, index) => {
             const event = scenario.events.find(item => item.phase === phase)!
@@ -141,7 +150,7 @@ export default function App() {
                 <div className="map-status"><span className={`map-mode ${playing ? 'is-playing' : ''}`}><i />{scenario.live ? (playing ? 'REPLAY PLAYING' : 'REPLAY PAUSED') : playing ? 'SIMULATION PLAYING' : cursor === 0 ? 'DEMO READY' : cursor >= scenario.duration ? 'DEMO COMPLETE' : 'REPLAY PAUSED'}</span><span>{scenario.live ? 'Readings are 5 s C1 windows; traffic animation is illustrative' : 'Traffic is illustrative, not individual requests'}</span></div>
                 <div className="camera-tools"><button className={follow ? 'active' : ''} aria-pressed={follow} onClick={() => set({ follow: !follow })}><Compass size={13} />{follow ? 'Following key events' : 'Follow key events'}</button><button aria-pressed={reducedMotion} onClick={() => set({ reducedMotion: !reducedMotion })}><MousePointer2 size={12} />{reducedMotion ? 'Reduced motion' : 'Full motion'}</button></div>
               </div>
-              <div className="map-environments" aria-label="System layers"><button className={isolatedLayer === null ? 'selected' : ''} aria-pressed={isolatedLayer === null} onClick={() => { focus('production'); set({ isolatedLayer: null }); setEvidenceOpen(false) }}><Layers3 size={13} /><strong>All layers</strong></button>{workspace.environments.map(env => <button data-environment={env.id} data-lifecycle={env.lifecycle} className={isolatedLayer === env.id ? 'selected' : ''} aria-label={`Focus ${env.label} layer`} aria-pressed={isolatedLayer === env.id} key={env.id} onClick={() => focus(env.id)}><span style={{ background: env.color }} /><strong>{env.label}</strong><small>{env.level === 0 ? 'Reference system' : environmentLifecycleLabel[env.lifecycle]}</small>{env.id !== 'production' && <GitBranch size={12} />}</button>)}</div>
+              <div className="map-environments" aria-label="System layers"><button className={isolatedLayer === null ? 'selected' : ''} aria-pressed={isolatedLayer === null} onClick={() => { focus('production'); set({ isolatedLayer: null }); setEvidenceOpen(false) }}><Layers3 size={13} /><strong>All layers</strong></button>{workspace.environments.map(env => <button data-environment={env.id} data-lifecycle={env.lifecycle} data-outcome={env.outcome} data-winner={workspace.winner === env.id || undefined} className={isolatedLayer === env.id ? 'selected' : ''} aria-label={`Focus ${env.label} layer`} aria-pressed={isolatedLayer === env.id} key={env.id} onClick={() => focus(env.id)}><span style={{ background: env.color }} /><strong>{env.label}</strong><small>{env.level === 0 ? 'Reference system' : env.outcome ? environmentOutcomeLabel[env.outcome] : environmentLifecycleLabel[env.lifecycle]}</small>{env.id !== 'production' && <GitBranch size={12} />}</button>)}</div>
               <Timeline scenario={scenario} />
             </section>
             {showInspector && <Inspector scenario={scenario} workspace={workspace} environment={environment} />}

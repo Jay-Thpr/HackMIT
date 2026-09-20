@@ -19,9 +19,12 @@ project this manager created. Every action has a ttl and is reverted here when i
 import asyncio
 import json
 import logging
+import math
 import os
+import signal
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -47,7 +50,12 @@ CLONE_PROJECT_PREFIX = "faultline-clone-"
 CLONE_SERVICES = ["db-primary", "db-standby", "payments", "orders", "envoy", "loadgen", "control",
                   "otel-collector"]  # never faultctl
 LAB_SERVICES = {"orders", "orders-v2", "payments"}
-MAX_CLONES_CFG = int(os.environ.get("LAB_MAX_CLONES", str(MAX_CLONES)))
+MAX_CLONES_CFG = int(os.environ.get("LAB_MAX_CLONES", "2"))
+MAX_LIFETIME_S = float(os.environ.get("LAB_CLONE_MAX_LIFETIME_S", "3600"))
+if not 1 <= MAX_CLONES_CFG <= MAX_CLONES:
+    raise ValueError(f"LAB_MAX_CLONES must be between 1 and {MAX_CLONES}")
+if not math.isfinite(MAX_LIFETIME_S) or MAX_LIFETIME_S <= 0:
+    raise ValueError("LAB_CLONE_MAX_LIFETIME_S must be finite and positive")
 HOST = os.environ.get("LAB_CLONE_HOST", "127.0.0.1")
 DB_BASE_MS = float(os.environ.get("DB_BASE_MS", "38"))
 DB_POOL_SIZE = int(os.environ.get("DB_POOL_SIZE", "4"))
@@ -65,14 +73,27 @@ class LabFailure(Exception):
 
 
 # ---- docker plumbing -----------------------------------------------------------------------
+async def _terminate_process(proc) -> None:
+    with suppress(ProcessLookupError):
+        if os.name == "posix":
+            os.killpg(proc.pid, signal.SIGKILL)
+        else:
+            proc.kill()
+    await proc.communicate()
+
+
 async def run(*args: str, env: dict[str, str] | None = None, timeout_s: float = 300) -> str:
     proc = await asyncio.create_subprocess_exec(*args, cwd=SANDBOX_DIR, env={**os.environ, **(env or {})},
-                                                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                                                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                                                start_new_session=os.name == "posix")
     try:
         out, err = await asyncio.wait_for(proc.communicate(), timeout_s)
     except asyncio.TimeoutError:
-        proc.kill()
+        await _terminate_process(proc)
         raise LabFailure(f"{' '.join(args[:4])} timed out after {timeout_s:.0f}s")
+    except asyncio.CancelledError:
+        await _terminate_process(proc)
+        raise
     if proc.returncode:
         raise LabFailure(f"{' '.join(args[:4])} failed: {err.decode(errors='replace').strip()[-600:]}")
     return out.decode()
@@ -89,12 +110,19 @@ class Clone:
         self.project = f"{CLONE_PROJECT_PREFIX}{slot}"
         self.status = CloneStatus.creating
         self.created_at = utcnow()
+        self.expires_at = self.created_at + timedelta(seconds=MAX_LIFETIME_S)
+        self.deadline = time.monotonic() + MAX_LIFETIME_S
+        self.cleanup_retry_at = 0.0
         self.detail: str | None = None
         self.actions: dict[str, LabActionHandle] = {}
         self.db_extra: dict[str, float] = {}  # action_id -> extra_ms contribution on the primary
         self.cpu_orig: dict[str, int] = {}  # service -> original NanoCpus
         self.lock = asyncio.Lock()
         self.ports = {k: v + 1000 * slot for k, v in BASE_PORTS.items()}
+
+    @property
+    def remaining_s(self) -> float:
+        return max(0.0, self.deadline - time.monotonic())
 
     # -- env / compose ---------------------------------------------------------------------
     def env(self) -> dict[str, str]:
@@ -331,7 +359,7 @@ _seq = 0
 
 
 def _alive() -> list[Clone]:
-    return [c for c in clones.values() if c.status not in (CloneStatus.destroyed, CloneStatus.failed)]
+    return [c for c in clones.values() if c.status != CloneStatus.destroyed]
 
 
 def _get(clone_id: str) -> Clone:
@@ -344,6 +372,99 @@ def _get(clone_id: str) -> Clone:
 def _ready(c: Clone) -> None:
     if c.status != CloneStatus.ready:
         raise HTTPException(status_code=409, detail=f"clone {c.clone_id} is {c.status.value}, not ready")
+    if c.remaining_s <= 0:
+        raise HTTPException(status_code=409, detail=f"clone {c.clone_id} lifetime expired")
+
+
+async def _destroy(c: Clone, reason: str | None = None) -> None:
+    if c.status == CloneStatus.destroyed:
+        return
+    c.status = CloneStatus.failed
+    c.detail = reason or "clone cleanup in progress"
+    try:
+        await c.teardown()
+    except LabFailure as exc:
+        c.status = CloneStatus.failed
+        c.detail = f"cleanup pending: {exc}"
+        c.cleanup_retry_at = time.monotonic() + 30
+        log.warning("%s: %s", c.clone_id, c.detail)
+        raise
+    for h in c.actions.values():
+        if h.status == ActionStatus.active:
+            h.status = ActionStatus.undone
+    c.status = CloneStatus.destroyed
+    c.detail = reason
+    log.info("%s destroyed%s", c.clone_id, f": {reason}" if reason else "")
+
+
+def _cleanup_due(c: Clone) -> bool:
+    return (
+        c.status != CloneStatus.destroyed
+        and (c.status == CloneStatus.failed or c.remaining_s <= 0)
+        and time.monotonic() >= c.cleanup_retry_at
+    )
+
+
+async def _reap_clone(c: Clone) -> None:
+    async with c.lock:
+        if not _cleanup_due(c):
+            return
+        reason = "clone lifetime expired" if c.remaining_s <= 0 else c.detail
+        try:
+            await _destroy(c, reason)
+        except LabFailure:
+            pass
+
+
+async def _lease_loop() -> None:
+    pending: dict[str, asyncio.Task] = {}
+    try:
+        while True:
+            for clone_id, task in list(pending.items()):
+                if task.done():
+                    del pending[clone_id]
+                    try:
+                        task.result()
+                    except Exception:
+                        log.exception("%s: clone cleanup task failed", clone_id)
+            for c in list(clones.values()):
+                if c.clone_id not in pending and not c.lock.locked() and _cleanup_due(c):
+                    pending[c.clone_id] = asyncio.create_task(_reap_clone(c))
+            await asyncio.sleep(1)
+    finally:
+        for task in pending.values():
+            task.cancel()
+        await asyncio.gather(*pending.values(), return_exceptions=True)
+
+
+async def _expire_actions(c: Clone) -> None:
+    if c.lock.locked():
+        return
+    now = utcnow()
+    due = [h for h in c.actions.values() if h.status == ActionStatus.active and now >= h.expires_at]
+    if not due:
+        return
+    async with c.lock:
+        if c.status != CloneStatus.ready:
+            return
+        for h in due:
+            if h.status != ActionStatus.active:
+                continue
+            try:
+                log.info("%s: action %s %s ttl expired, reverting", c.clone_id, h.action, h.action_id)
+                await c.undo(h, ActionStatus.expired)
+            except LabFailure as e:
+                log.warning("%s: revert %s failed: %s", c.clone_id, h.action, e)
+                h.status = ActionStatus.failed
+
+
+async def _expiry_loop() -> None:
+    while True:
+        for c in list(clones.values()):
+            if c.status != CloneStatus.ready:
+                continue
+            await _expire_actions(c)
+        await asyncio.sleep(0.5)
 
 
 def _validate_params(action: str, params: dict[str, Any]) -> None:
@@ -372,26 +493,6 @@ def _validate_params(action: str, params: dict[str, Any]) -> None:
             raise HTTPException(status_code=400, detail=f"bad value for {action}.{k}: {v!r}")
 
 
-async def _expiry_loop() -> None:
-    while True:
-        for c in list(clones.values()):
-            if c.status != CloneStatus.ready:
-                continue
-            now = utcnow()
-            due = [h for h in c.actions.values() if h.status == ActionStatus.active and now >= h.expires_at]
-            if not due:
-                continue
-            async with c.lock:
-                for h in due:
-                    try:
-                        log.info("%s: action %s %s ttl expired, reverting", c.clone_id, h.action, h.action_id)
-                        await c.undo(h, ActionStatus.expired)
-                    except LabFailure as e:
-                        log.warning("%s: revert %s failed: %s", c.clone_id, h.action, e)
-                        h.status = ActionStatus.failed
-        await asyncio.sleep(0.5)
-
-
 async def _sweep_orphans() -> None:
     """Clones from a previous manager run are disposable state we no longer track: remove them."""
     try:
@@ -412,9 +513,14 @@ async def _sweep_orphans() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     await _sweep_orphans()
-    task = asyncio.create_task(_expiry_loop())
-    yield
-    task.cancel()
+    expiry = asyncio.create_task(_expiry_loop())
+    lease = asyncio.create_task(_lease_loop())
+    try:
+        yield
+    finally:
+        expiry.cancel()
+        lease.cancel()
+        await asyncio.gather(expiry, lease, return_exceptions=True)
 
 
 app = FastAPI(lifespan=lifespan)
@@ -458,16 +564,21 @@ async def create_clone(spec: CloneSpec):
     log.info("creating %s as project %s (ports %s)", c.clone_id, c.project, c.ports)
     async with c.lock:
         try:
-            await c.start()
-            await c.verify_ready(READY_TIMEOUT_S)
+            async with asyncio.timeout(c.remaining_s):
+                await c.start()
+                await c.verify_ready(READY_TIMEOUT_S)
             c.status = CloneStatus.ready
-        except LabFailure as e:
-            c.status, c.detail = CloneStatus.failed, str(e)
-            log.error("%s failed: %s", c.clone_id, e)
+        except (LabFailure, TimeoutError) as exc:
+            failure = exc if isinstance(exc, LabFailure) else LabFailure("clone lifetime expired during provisioning")
+            c.status, c.detail = CloneStatus.failed, str(failure)
+            log.error("%s failed: %s", c.clone_id, failure)
             try:
-                await c.teardown()
-            except LabFailure as e2:
-                log.warning("teardown of failed clone %s: %s", c.clone_id, e2)
+                await _destroy(c, str(failure))
+            except LabFailure:
+                pass
+            raise failure
+        except asyncio.CancelledError:
+            c.status, c.detail = CloneStatus.failed, "clone provisioning cancelled"
             raise
     return _json(c.info())
 
@@ -480,15 +591,21 @@ async def get_clone(clone_id: str):
 @app.post("/clones/{clone_id}/reset")
 async def reset_clone(clone_id: str):
     c = _get(clone_id)
-    if c.status == CloneStatus.destroyed:
-        raise HTTPException(status_code=409, detail="clone is destroyed")
     async with c.lock:
+        _ready(c)
         c.status, c.detail = CloneStatus.resetting, None
         try:
-            await c.reset()
+            async with asyncio.timeout(c.remaining_s):
+                await c.reset()
             c.status = CloneStatus.ready
+        except TimeoutError:
+            c.status, c.detail = CloneStatus.failed, "clone lifetime expired during reset"
+            raise LabFailure("clone lifetime expired during reset")
         except LabFailure as e:
             c.status, c.detail = CloneStatus.failed, str(e)
+            raise
+        except asyncio.CancelledError:
+            c.status, c.detail = CloneStatus.failed, "clone reset cancelled"
             raise
     return _json(c.info())
 
@@ -497,21 +614,15 @@ async def reset_clone(clone_id: str):
 async def destroy_clone(clone_id: str):
     c = _get(clone_id)
     async with c.lock:
-        if c.status != CloneStatus.destroyed:
-            await c.teardown()
-            for h in c.actions.values():
-                if h.status == ActionStatus.active:
-                    h.status = ActionStatus.undone
-            c.status = CloneStatus.destroyed
-            log.info("%s destroyed", c.clone_id)
+        await _destroy(c)
     return _json(c.info())
 
 
 @app.post("/clones/{clone_id}/workload")
 async def set_workload(clone_id: str, w: WorkloadSpec):
     c = _get(clone_id)
-    _ready(c)
     async with c.lock:
+        _ready(c)
         await c.apply_workload(w)
         c.spec = c.spec.model_copy(update={"workload": w})
     return _json(c.info())
@@ -528,8 +639,10 @@ async def apply_action(clone_id: str, req: LabActionRequest):
     _validate_params(req.action, req.params)
     if req.params.get("service") == "orders-v2" and not c.spec.patch_ref:
         raise HTTPException(status_code=409, detail="this clone has no orders-v2 (no patch_ref)")
-    _ready(c)
     async with c.lock:
+        _ready(c)
+        if req.ttl_s > c.remaining_s:
+            raise HTTPException(status_code=409, detail="action ttl_s exceeds remaining clone lifetime")
         h = LabActionHandle(action_id=f"a{len(c.actions) + 1}", clone_id=c.clone_id, action=req.action,
                             params=req.params, ttl_s=req.ttl_s)
         c.actions[h.action_id] = h
@@ -552,6 +665,7 @@ async def undo_action(clone_id: str, action_id: str):
         raise HTTPException(status_code=404, detail=f"unknown action {action_id!r}")
     async with c.lock:
         if h.status == ActionStatus.active:
+            _ready(c)
             await c.undo(h, ActionStatus.undone)
             log.info("%s: action %s %s undone", c.clone_id, h.action, h.action_id)
     return _json(h)
@@ -564,4 +678,13 @@ async def list_actions(clone_id: str):
 
 @app.get("/healthz")
 async def healthz():
-    return {"ok": True, "clones_alive": len(_alive()), "max_clones": MAX_CLONES_CFG}
+    return {
+        "ok": True, "clones_alive": len(_alive()), "max_clones": MAX_CLONES_CFG,
+        "clone_max_lifetime_s": MAX_LIFETIME_S,
+        "clones": [
+            {"clone_id": c.clone_id, "status": c.status.value,
+             "expires_at": c.expires_at.isoformat(), "remaining_s": c.remaining_s,
+             "cleanup_pending": c.status == CloneStatus.failed}
+            for c in _alive()
+        ],
+    }

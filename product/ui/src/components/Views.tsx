@@ -28,7 +28,7 @@ export function ExperimentLab({ scenario, workspace }: { scenario: Scenario; wor
   const events = visibleEvents(scenario, cursor)
   const hypotheses = events.some(event => event.kind === 'reason') ? scenario.hypotheses : []
   const clones = workspace.environments.filter(environment => environment.id !== 'production')
-  const lifecycleLabels = { unknown: 'Readiness not recorded', starting: 'Starting', ready: 'Ready', investigating: 'Investigating', destroying: 'Removing' }
+  const lifecycleLabels = { unknown: 'Readiness not recorded', starting: 'Starting', ready: 'Ready', investigating: 'Investigating', destroying: 'Removing', archived: 'Archived · retained for review' }
   return <div className="lab-view">
     <section className="lab-banner"><div><h2>Compare causes in isolated copies.</h2><p>Clones are isolated test environments built from the system’s topology, versions, and workload. Each investigator tests one possible cause without copying production data or hidden fault state.</p><p className="page-instruction">Inspect a clone to follow its agent and test results in the 3D workspace.</p></div><div className="lab-draft-action"><button className="primary-button" onClick={() => set({ dialog: 'experiment' })}>Draft a test <ArrowRight size={15} /></button><small>Validate a plan only; nothing runs.</small></div></section>
     <div className="section-heading"><h3>Clones in this demo</h3><span>{clones.length} present · {timeLabel(cursor)}</span></div>

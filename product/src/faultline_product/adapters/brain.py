@@ -1,10 +1,11 @@
 from collections.abc import Callable
-from typing import Any, Literal
+from typing import Any
 
 from faultline_brain import (
     DEFAULT_MODEL,
     SYSTEM_PROMPT,
     NoiseModel,
+    TriageValidationError,
     confirmation_experiment,
     judge,
     plan_experiment,
@@ -19,6 +20,7 @@ from faultline_contracts import (
     TriageResult,
     Verdict,
 )
+from faultline_brain.agent_builder import AgentBuilderError
 from faultline_contracts.triage import NONE_OF_THE_ABOVE
 
 INCIDENT_STEADY_WINDOWS = 6
@@ -70,13 +72,21 @@ class LiveBrain:
         model: str = DEFAULT_MODEL,
         triage_fallback: TriageResult | None = None,
         usage_sink: Callable[[dict], None] | None = None,
+        fallback_client: Any | None = None,
+        provider: str = "openai",
+        provider_sink: Callable[[dict], None] | None = None,
+        evidence_reader: Any | None = None,
     ):
         self._candidates = list(candidates)
         self._client = client
         self._model = model
         self._triage_fallback = triage_fallback
         self._usage_sink = usage_sink
-        self.last_triage_source: Literal["openai", "fallback"] | None = None
+        self._fallback_client = fallback_client
+        self._provider = provider
+        self._provider_sink = provider_sink
+        self._evidence_reader = evidence_reader
+        self.last_triage_source: str | None = None
         self.last_triage_note: str | None = None
 
     def triage(self, incident_id: str, fingerprint: Fingerprint) -> TriageResult:
@@ -86,40 +96,77 @@ class LiveBrain:
             self.last_triage_source = "fallback"
             self.last_triage_note = "fallback (no OPENAI_API_KEY)"
             return self._triage_fallback.model_copy(update={"incident_id": incident_id})
-        try:
-            result = run_triage(
-                self._client,
-                fingerprint,
-                self._candidates,
-                incident_id,
-                model=self._model,
-                system_prompt=PRODUCT_SYSTEM_PROMPT,
-                usage_sink=self._usage_sink,
-            )
-        except Exception as exc:  # noqa: BLE001 - triage must never end the incident
-            if self._triage_fallback is None:
-                raise
-            self.last_triage_source = "fallback"
-            self.last_triage_note = f"fallback (OpenAI error: {type(exc).__name__})"
-            return self._triage_fallback.model_copy(update={"incident_id": incident_id})
-        if (
-            self._triage_fallback is not None
-            and plan_experiment(result, self._candidates).selected is None
-            and plan_experiment(self._triage_fallback, self._candidates).selected is not None
-        ):
-            # The model proposed, but nothing in its prediction matrix separates its own
-            # hypotheses, so no experiment can be planned. Keep the incident moving on the
-            # canonical hypotheses and say so; the model's proposal is kept for the report.
-            self.last_triage_source = "fallback"
-            self.last_triage_note = (
-                "fallback (OpenAI predictions did not separate "
-                + " vs ".join(h.id for h in result.hypotheses)
-                + ")"
-            )
-            return self._triage_fallback.model_copy(update={"incident_id": incident_id})
-        self.last_triage_source = "openai"
-        self.last_triage_note = "openai"
-        return result
+        context = None
+        if self._provider == "agent_builder" and self._evidence_reader is not None:
+            from .evidence import evidence_metadata, production_evidence
+
+            context = production_evidence(self._evidence_reader, incident_id, fingerprint)
+            if self._provider_sink:
+                self._provider_sink(
+                    {
+                        "provider": "agent_builder",
+                        "role": "triage",
+                        "status": "evidence_loaded",
+                        **evidence_metadata(context),
+                    }
+                )
+        failures = []
+        clients = [(self._client, self._provider)]
+        if self._fallback_client is not None:
+            clients.append((self._fallback_client, "openai"))
+        for client, provider in clients:
+            try:
+                result = run_triage(
+                    client.with_context(context) if provider == "agent_builder" and context is not None else client,
+                    fingerprint,
+                    self._candidates,
+                    incident_id,
+                    model=self._model,
+                    system_prompt=PRODUCT_SYSTEM_PROMPT,
+                    usage_sink=self._usage_sink,
+                )
+                if provider == "agent_builder" and plan_experiment(result, self._candidates).selected is None:
+                    raise TriageValidationError("Agent Builder predictions did not separate hypotheses")
+            except Exception as exc:  # noqa: BLE001 - triage must never end the incident
+                description = str(exc) if isinstance(exc, AgentBuilderError) else type(exc).__name__
+                failures.append(
+                    f"{'OpenAI' if provider == 'openai' else provider} error: {description}"
+                )
+                if self._provider_sink:
+                    event = {"provider": provider, "role": "triage", "status": "rejected", "reason": type(exc).__name__}
+                    if isinstance(exc, AgentBuilderError):
+                        event["error"] = exc.diagnostic()
+                    self._provider_sink(event)
+                continue
+            if (
+                self._triage_fallback is not None
+                and plan_experiment(result, self._candidates).selected is None
+                and plan_experiment(self._triage_fallback, self._candidates).selected is not None
+            ):
+                # The model proposed, but nothing in its prediction matrix separates its own
+                # hypotheses, so no experiment can be planned. Keep the incident moving on the
+                # canonical hypotheses and say so; the model's proposal is kept for the report.
+                self.last_triage_source = "fallback"
+                self.last_triage_note = (
+                    "fallback (OpenAI predictions did not separate "
+                    + " vs ".join(h.id for h in result.hypotheses)
+                    + ")"
+                )
+                if self._provider_sink:
+                    self._provider_sink({"provider": "fixture", "role": "triage", "status": "fallback"})
+                return self._triage_fallback.model_copy(update={"incident_id": incident_id})
+            self.last_triage_source = provider
+            self.last_triage_note = provider + (" (fallback after " + ", ".join(failures) + ")" if failures else "")
+            if self._provider_sink:
+                self._provider_sink({"provider": provider, "role": "triage", "status": "validated"})
+            return result
+        if self._triage_fallback is None:
+            raise RuntimeError("triage failed: " + ", ".join(failures))
+        self.last_triage_source = "fallback"
+        self.last_triage_note = "fallback (" + ", ".join(failures) + ")"
+        if self._provider_sink:
+            self._provider_sink({"provider": "fixture", "role": "triage", "status": "fallback"})
+        return self._triage_fallback.model_copy(update={"incident_id": incident_id})
 
     def triage_source(self) -> str | None:
         return self.last_triage_note
@@ -253,14 +300,32 @@ def build_live_brain(
     api_key: str | None,
     model: str,
     triage_fallback: TriageResult | None,
+    proposal_client: Any | None = None,
+    provider_sink: Callable[[dict], None] | None = None,
+    evidence_reader: Any | None = None,
 ) -> LiveBrain:
     client = None
     if api_key:
         try:
             from openai import OpenAI
         except ImportError as exc:
-            raise RuntimeError("install with: uv sync --extra llm") from exc
-        client = OpenAI(api_key=api_key)
+            if proposal_client is None:
+                raise RuntimeError("install with: uv sync --extra llm") from exc
+            if provider_sink:
+                provider_sink({"provider": "openai", "role": "triage", "status": "unavailable", "reason": "ImportError"})
+        else:
+            client = OpenAI(api_key=api_key)
+    if proposal_client is not None:
+        return LiveBrain(
+            candidates,
+            client=proposal_client,
+            fallback_client=client,
+            provider="agent_builder",
+            model=model,
+            triage_fallback=triage_fallback,
+            provider_sink=provider_sink,
+            evidence_reader=evidence_reader,
+        )
     return LiveBrain(
         candidates,
         client=client,
