@@ -1386,7 +1386,7 @@ main { padding: 22px 22px 0; }
 .agent-hit-target { width:30px; height:30px; background:transparent; border:0; border-radius:50%; cursor:pointer; }.agent-hit-target:focus-visible { outline:1px solid #edbd95; }
 .app-shell .agent-brief { padding-bottom:26px; margin-bottom:24px; border-bottom:1px solid #485144; }.agent-brief dl { margin:20px 0; }.agent-brief dl>div { padding:14px 0; }.agent-brief dt { font-size:12px; font-weight:600; color:#e7e8df; margin-bottom:8px; }.agent-brief dd { margin:0; color:#bac1b6; }
 .app-shell .inspector-heading .quiet-badge { border:0; padding:0; }.app-shell .selected-entity { background:transparent; padding:22px 24px; }.app-shell .issue-summary { background:transparent; border-left:0; padding:0 0 22px; border-bottom:1px solid #485144; }.app-shell .node-agent-activity { padding:22px 0; }.app-shell .inspector-body .overline { letter-spacing:.07em; font-size:10px; }.app-shell .trace-step-detail p { margin:10px 0; }.app-shell .trace-prediction,.app-shell .trace-result { padding:12px 0; border:0; background:transparent; }
-.app-shell .why-hypothesis,.app-shell .lab-clone-card { background:transparent; border:0; border-top:1px solid #485144; border-radius:0; padding:28px 0; }.app-shell .why-comparisons,.app-shell .clone-card-grid { gap:40px; }.app-shell .coverage-card { background:transparent; border:0; border-top:1px solid #485144; border-radius:0; }.app-shell .why-intro h2 { font-weight:500; font-size:26px; }.app-shell .why-method { padding:38px 0; }
+.app-shell .why-hypothesis,.app-shell .why-ledger,.app-shell .lab-clone-card { background:transparent; border:0; border-top:1px solid #485144; border-radius:0; padding:28px 0; }.app-shell .why-comparisons,.app-shell .clone-card-grid { gap:40px; }.app-shell .coverage-card { background:transparent; border:0; border-top:1px solid #485144; border-radius:0; }.app-shell .why-intro h2 { font-weight:500; font-size:26px; }.app-shell .why-method { padding:38px 0; }
 
 .evidence-context { display:grid; grid-template-columns:1fr 1fr; gap:32px; margin:34px 0; }.incident-memory,.supporting-evidence { border-top:1px solid #485144; padding:20px 0; }.incident-memory>p,.supporting-evidence>p,.supporting-evidence>div>p { color:#bac1b6; max-width:58ch; margin-top:9px; }.memory-results { display:grid; gap:10px; margin-top:20px; }.memory-results article { display:grid; grid-template-columns:1fr auto; gap:3px 16px; padding:12px 0; border-top:1px solid #3c443a; }.memory-results strong { font:12px var(--mono); color:#e5e8e0; }.memory-results span { color:#b7c396; font-size:12px; }.memory-results p { grid-column:1/-1; color:#bac1b6; font-size:12px; }.supporting-evidence dl { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin:22px 0 14px; }.supporting-evidence dt { color:#aeb6aa; font-size:11px; }.supporting-evidence dd { margin:5px 0 0; font-size:22px; color:#edf0e7; }.telemetry-services { color:#c6cec0; font-size:12px; }.supporting-evidence small { display:block; margin-top:18px; color:#9da79a; font-size:11px; }
 @media(max-width:850px) { .evidence-context { grid-template-columns:1fr; gap:12px; } }
@@ -1478,3 +1478,35 @@ main { padding: 22px 22px 0; }
 .report-dialog-evidence { font-size:11px; line-height:1.7; color:var(--muted); margin:6px 0 14px; word-break:break-word; }
 .report-dialog-actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:18px; }
 @media(max-width:600px) { .report-dialog-facts { grid-template-columns:1fr; } }
+
+/* incident replay: selected incident pinned on top, browsable list below */
+.replay-selected { padding:22px 24px; border-color:#b7c396; }
+.replay-selected-heading { display:flex; justify-content:space-between; gap:18px; align-items:flex-start; flex-wrap:wrap; }
+.replay-selected-heading h2 { font-size:20px; font-weight:500; line-height:1.4; margin:6px 0; }
+.replay-selected-heading p { font-size:13px; color:var(--muted); }
+.replay-step { display:flex; gap:8px; flex-shrink:0; }
+.replay-step .secondary-button:disabled { opacity:.4; }
+.report-preview-inline { margin-top:18px; padding-top:18px; border-top:1px solid var(--border); }
+.report-preview-inline h3 { font-size:17px; font-weight:500; margin:8px 0 6px; }
+.report-preview-inline>p { font-size:13px; color:var(--muted); line-height:1.65; max-width:70ch; }
+.report-preview-inline .replay-actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:16px; }
+.replay-browse { margin-top:22px; }
+.replay-browse-controls { display:flex; gap:14px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
+.replay-browse-controls .search-input { flex:1 1 280px; }
+.replay-filters { display:flex; gap:6px; flex-wrap:wrap; }
+.replay-filters button { border:1px solid var(--border); background:transparent; color:var(--muted); border-radius:6px; padding:6px 10px; font-size:12px; display:inline-flex; gap:6px; align-items:center; cursor:pointer; }
+.replay-filters button small { font:11px var(--mono); opacity:.8; }
+.replay-filters button.selected { color:var(--ink); border-color:#b7c396; }
+.replay-list { list-style:none; margin:0; padding:0; border-top:1px solid var(--border); }
+.replay-list li { display:flex; align-items:center; gap:10px; border-bottom:1px solid var(--border); }
+.replay-list li.is-selected { background:rgba(183,195,150,.08); }
+.replay-list-main { flex:1; display:grid; grid-template-columns:150px minmax(0,1fr) auto; gap:14px; align-items:center; padding:11px 10px; background:transparent; border:0; color:inherit; text-align:left; cursor:pointer; font:inherit; }
+.replay-list-main:hover { background:rgba(255,255,255,.03); }
+.replay-list-id { font:12px var(--mono); color:var(--ink); }
+.replay-list-title { font-size:13px; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.replay-list-meta { font-size:12px; color:var(--muted); display:inline-flex; gap:8px; align-items:center; white-space:nowrap; }
+.replay-outcome { font-size:11px; padding:2px 7px; border-radius:4px; border:1px solid var(--border); color:var(--muted); }
+.replay-outcome.ready { color:#b7c396; border-color:#b7c396; }
+.replay-outcome.mitigated { color:#edb18d; border-color:#edb18d; }
+.replay-outcome.escalated { color:#e0a0a0; border-color:#e0a0a0; }
+@media(max-width:800px) { .replay-list-main { grid-template-columns:1fr; gap:4px; } .replay-list-title { white-space:normal; } }
