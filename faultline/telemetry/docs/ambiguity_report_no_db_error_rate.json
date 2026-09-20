@@ -1,0 +1,128 @@
+{
+  "generated_at": "2026-09-20T02:17:40.385375+00:00",
+  "incidents": [
+    {
+      "incident_id": "live-14",
+      "origin": "production",
+      "label": "storm",
+      "windows": 26
+    },
+    {
+      "incident_id": "demo-degraded-1",
+      "origin": "production",
+      "label": "degraded",
+      "windows": 26
+    },
+    {
+      "incident_id": "live-storm-012057",
+      "origin": "production",
+      "label": "storm",
+      "windows": 26
+    },
+    {
+      "incident_id": "live-storm-015819",
+      "origin": "production",
+      "label": "storm",
+      "windows": 26
+    },
+    {
+      "incident_id": "o2-storm-020856",
+      "origin": "clone",
+      "label": "storm",
+      "windows": 20
+    },
+    {
+      "incident_id": "o2-degraded-021238",
+      "origin": "clone",
+      "label": "degraded",
+      "windows": 20
+    }
+  ],
+  "nearest_centroid_loio": {
+    "windows": 144,
+    "window_accuracy": 0.4444444444444444,
+    "per_class_recall": {
+      "storm": 0.30612244897959184,
+      "degraded": 0.7391304347826086
+    },
+    "balanced_accuracy": 0.5226264418811002,
+    "incidents_correct": 2,
+    "incidents": 6,
+    "per_incident": {
+      "live-14": {
+        "label": "storm",
+        "prediction": "degraded",
+        "windows": 26
+      },
+      "demo-degraded-1": {
+        "label": "degraded",
+        "prediction": "degraded",
+        "windows": 26
+      },
+      "live-storm-012057": {
+        "label": "storm",
+        "prediction": "degraded",
+        "windows": 26
+      },
+      "live-storm-015819": {
+        "label": "storm",
+        "prediction": "degraded",
+        "windows": 26
+      },
+      "o2-storm-020856": {
+        "label": "storm",
+        "prediction": "degraded",
+        "windows": 20
+      },
+      "o2-degraded-021238": {
+        "label": "degraded",
+        "prediction": "degraded",
+        "windows": 20
+      }
+    }
+  },
+  "passive_llm": {
+    "model": "gpt-4.1",
+    "windows": 36,
+    "window_accuracy": 0.6666666666666666,
+    "per_class_recall": {
+      "storm": 1.0,
+      "degraded": 0.0
+    },
+    "balanced_accuracy": 0.5,
+    "incidents_correct": 4,
+    "incidents": 6,
+    "per_incident": {
+      "live-14": {
+        "label": "storm",
+        "prediction": "storm",
+        "windows": 6
+      },
+      "demo-degraded-1": {
+        "label": "degraded",
+        "prediction": "storm",
+        "windows": 6
+      },
+      "live-storm-012057": {
+        "label": "storm",
+        "prediction": "storm",
+        "windows": 6
+      },
+      "live-storm-015819": {
+        "label": "storm",
+        "prediction": "storm",
+        "windows": 6
+      },
+      "o2-storm-020856": {
+        "label": "storm",
+        "prediction": "storm",
+        "windows": 6
+      },
+      "o2-degraded-021238": {
+        "label": "degraded",
+        "prediction": "storm",
+        "windows": 6
+      }
+    }
+  }
+}

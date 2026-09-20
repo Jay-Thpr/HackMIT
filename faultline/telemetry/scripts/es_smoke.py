@@ -8,7 +8,6 @@ three C1 fingerprints and two C4 audit events under a fresh incident id, reads
 them back through the store and sink, and prints the ES|QL incident timeline.
 """
 
-import os
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -20,7 +19,7 @@ from faultline_contracts.fingerprint import DbStats, SloStatus
 from faultline_telemetry import (
     ElasticsearchAuditSink,
     ElasticsearchFingerprintStore,
-    HttpElasticsearchClient,
+    client_from_env,
     ensure_index_templates,
     incident_timeline,
     load_repo_dotenv,
@@ -29,11 +28,10 @@ from faultline_telemetry import (
 
 def main() -> int:
     load_repo_dotenv(Path(__file__))
-    url = os.environ.get("FAULTLINE_ELASTICSEARCH_URL")
-    if not url:
+    client = client_from_env()
+    if client is None:
         print("FAULTLINE_ELASTICSEARCH_URL is not set", file=sys.stderr)
         return 2
-    client = HttpElasticsearchClient(url, api_key=os.environ.get("FAULTLINE_ELASTICSEARCH_API_KEY"))
 
     ensure_index_templates(client)
 
