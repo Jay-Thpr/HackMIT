@@ -1,9 +1,139 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
+
+async function seekTo(page: Page, time: number) {
+  const slider = page.getByRole('slider', { name: 'Simulation timeline' })
+  await slider.evaluate((element, value) => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(element, String(value))
+    element.dispatchEvent(new Event('input', { bubbles: true }))
+    element.dispatchEvent(new Event('change', { bubbles: true }))
+  }, time)
+  await expect(slider).toHaveValue(String(time))
+}
+
+for (const architecture of ['commerce', 'pipeline']) {
+  test(`${architecture}: healthy start, explicit clone lifecycle, cleanup, and rewind`, async ({ page }) => {
+    await page.goto('/')
+    await page.getByRole('combobox', { name: 'Example architecture' }).selectOption(architecture)
+    await expect(page.locator('.map-canvas canvas')).toBeVisible()
+    const lifecycle = page.getByRole('region', { name: 'Incident lifecycle' })
+    const environments = page.getByRole('combobox', { name: 'Selected environment' }).locator('option')
+    await expect(lifecycle).toHaveAttribute('data-phase', 'monitoring')
+    await expect(environments).toHaveCount(1)
+    await expect(page.getByRole('button', { name: 'Play incident demo', exact: true })).toBeVisible()
+    await expect(page.locator('.node-issue-marker')).toHaveCount(0)
+    await page.screenshot({ path: `test-results/${architecture}-healthy-start.png`, fullPage: true })
+    await seekTo(page, 12)
+    await expect(lifecycle).toHaveAttribute('data-phase', 'detected')
+    await expect(environments).toHaveCount(1)
+    await expect(page.locator('.node-issue-marker').first()).toBeVisible()
+    await seekTo(page, 24)
+    await expect(lifecycle).toHaveAttribute('data-phase', 'starting')
+    await expect(lifecycle.locator('[data-environment="clone-a"]')).toHaveAttribute('data-lifecycle', 'starting')
+    await seekTo(page, 25)
+    await expect(lifecycle.locator('[data-environment="clone-a"]')).toHaveAttribute('data-lifecycle', 'ready')
+    await seekTo(page, 47)
+    await expect(environments).toHaveCount(3)
+    await expect(lifecycle).toHaveAttribute('data-phase', 'investigating')
+    await page.waitForTimeout(1200)
+    await page.screenshot({ path: `test-results/${architecture}-investigation.png`, fullPage: true })
+    await seekTo(page, 72)
+    await expect(lifecycle).toHaveAttribute('data-phase', 'confirming')
+    await seekTo(page, 103)
+    await expect(lifecycle).toHaveAttribute('data-phase', 'cleanup')
+    await expect(lifecycle.locator('[data-environment="clone-a"]')).toHaveAttribute('data-lifecycle', 'destroying')
+    await seekTo(page, 105)
+    await expect(environments).toHaveCount(2)
+    await expect(lifecycle.locator('[data-environment="clone-b"]')).toHaveAttribute('data-lifecycle', 'destroying')
+    await seekTo(page, 108)
+    await expect(environments).toHaveCount(1)
+    await expect(lifecycle).toHaveAttribute('data-phase', 'complete')
+    await expect(page.getByText('Clones removed; evidence retained', { exact: true })).toBeVisible()
+    await page.waitForTimeout(1200)
+    await page.screenshot({ path: `test-results/${architecture}-cleanup-complete.png`, fullPage: true })
+    await page.getByRole('button', { name: 'Review the explanation', exact: true }).click()
+    await expect(page.locator('.why-checks')).toHaveCount(2)
+    await expect(page.getByText('Clone archived. Its test results are retained above.')).toHaveCount(2)
+    await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Agent workspace', exact: true }).click()
+    await seekTo(page, 47)
+    await expect(environments).toHaveCount(3)
+    await expect(page.getByRole('heading', { name: 'Self-sustaining overload confirmed', exact: true })).toHaveCount(0)
+    await page.getByRole('button', { name: 'Restart simulation', exact: true }).click()
+    await expect(lifecycle).toHaveAttribute('data-phase', 'monitoring')
+    await expect(environments).toHaveCount(1)
+  })
+}
+
+test('clone motion is seek-safe, paused, and removed only after archive', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('.map-canvas canvas')).toBeVisible()
+  await seekTo(page, 24)
+  const cloneA = page.locator('.environment-label[data-environment="clone-a"]')
+  const cloneB = page.locator('.environment-label[data-environment="clone-b"]')
+  await expect(cloneA).toHaveAttribute('data-presence', '0.000')
+  await seekTo(page, 25)
+  await expect(cloneA).toHaveAttribute('data-presence', '1.000')
+  await seekTo(page, 103)
+  await expect(cloneA).toHaveAttribute('data-presence', '0.741')
+  await page.waitForTimeout(650)
+  await expect(cloneA).toHaveAttribute('data-presence', '0.741')
+  await seekTo(page, 105)
+  await expect(cloneA).toHaveCount(0)
+  await expect(cloneB).toHaveAttribute('data-level', '2')
+  await seekTo(page, 106)
+  await expect(cloneB).toHaveAttribute('data-presence', '0.741')
+  await page.getByRole('button', { name: 'Full motion', exact: true }).click()
+  await expect(cloneB).toHaveAttribute('data-presence', '1.000')
+  await seekTo(page, 108)
+  await expect(cloneB).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Replay incident demo', exact: true })).toBeVisible()
+})
+
+test('demo playback advances from healthy to clone startup and freezes when paused', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('.map-canvas canvas')).toBeVisible()
+  await page.getByRole('button', { name: 'Play incident demo', exact: true }).click()
+  await page.getByRole('button', { name: 'Playback speed 1 times' }).click()
+  await page.getByRole('button', { name: 'Playback speed 2 times' }).click()
+  const lifecycle = page.getByRole('region', { name: 'Incident lifecycle' })
+  await expect(lifecycle).toHaveAttribute('data-phase', 'detected', { timeout: 8000 })
+  await expect(lifecycle).toHaveAttribute('data-phase', 'starting', { timeout: 8000 })
+  await page.getByRole('button', { name: 'Pause demo', exact: true }).click()
+  const cursor = await page.getByRole('slider', { name: 'Simulation timeline' }).inputValue()
+  await page.waitForTimeout(500)
+  expect(await page.getByRole('slider', { name: 'Simulation timeline' }).inputValue()).toBe(cursor)
+  await expect(lifecycle).toHaveAttribute('data-phase', 'starting')
+  const canvas = page.locator('.map-canvas canvas')
+  const paused = await canvas.screenshot()
+  await page.waitForTimeout(650)
+  expect(await canvas.screenshot()).toEqual(paused)
+})
+
+test('pages explain their jobs and offer meaningful empty-state actions', async ({ page }) => {
+  await page.goto('/')
+  const navigation = page.getByRole('navigation', { name: 'Main navigation' })
+  await navigation.getByRole('button', { name: 'Clone experiments', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'No clone investigation yet' })).toBeVisible()
+  await expect(page.locator('.lab-clone-card')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Draft a test', exact: true }).click()
+  await expect(page.getByRole('dialog')).toContainText('does not save the plan, create a clone, or run a test')
+  await page.getByRole('textbox', { name: 'Hypothesis to test' }).fill('A dependency is slow')
+  await page.getByRole('textbox', { name: 'Predicted response' }).fill('Reducing requests lowers latency')
+  await page.getByRole('button', { name: 'Validate draft', exact: true }).click()
+  await expect(page.getByRole('status')).toContainText('Nothing was saved or executed')
+  await page.keyboard.press('Escape')
+  await navigation.getByRole('button', { name: 'Incident replay', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Available demos' })).toBeVisible()
+  await page.getByRole('button', { name: 'Replay this demo: Event pipeline', exact: true }).click()
+  await expect(page.getByRole('combobox', { name: 'Example architecture' })).toHaveValue('pipeline')
+  await expect(page.getByRole('region', { name: 'Incident lifecycle' })).toHaveAttribute('data-phase', 'monitoring')
+  await expect(page.getByRole('button', { name: 'Pause demo', exact: true })).toBeVisible()
+})
 
 test('renders the real WebGL scene and a clearly marked, interactive prototype', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   await page.goto('/')
+  await seekTo(page, 47)
   await expect(page.getByText('Simulated data', { exact: true })).toBeVisible()
   await expect(page.locator('.map-canvas canvas')).toBeVisible()
   await expect(page.locator('.inspector')).toHaveCount(0)
@@ -29,12 +159,13 @@ for (const width of [1512, 900, 600, 390]) {
     const sidebar = page.locator('.sidebar')
     const sidebarWidth = await sidebar.evaluate(element => getComputedStyle(element).width)
     const contentOffset = await page.locator('.main-shell').evaluate(element => getComputedStyle(element).marginLeft)
-    for (const name of ['Agent workspace', 'Experiment lab', 'Why this incident?', 'Observability', 'Agent workspace', 'Replay library']) {
+    for (const name of ['Agent workspace', 'Clone experiments', 'Why this incident?', 'Observability', 'Agent workspace', 'Incident replay']) {
       const button = navigation.getByRole('button', { name, exact: true })
       await button.click()
       await expect(button).toHaveAttribute('aria-current', 'page')
       await expect(sidebar).toHaveCSS('width', sidebarWidth)
       await expect(page.locator('.main-shell')).toHaveCSS('margin-left', contentOffset)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
       if (width > 760) {
         await expect(button.locator('span').first()).toBeVisible()
         await expect(page.locator('.sidebar-case')).toBeVisible()
@@ -59,12 +190,14 @@ test('context dropdowns use the workspace theme instead of default controls', as
   }
   await page.getByRole('combobox', { name: 'Example architecture', exact: true }).selectOption('pipeline')
   await expect(page.getByRole('combobox', { name: 'Example architecture', exact: true })).toHaveValue('pipeline')
+  await seekTo(page, 47)  // the replay opens healthy, so clones only exist once the investigation starts
   await page.getByRole('combobox', { name: 'Selected environment', exact: true }).selectOption('clone-a')
   await expect(page.getByTestId('topology-stage')).toHaveAttribute('data-isolated-layer', 'clone-a')
 })
 
 test('seeking backward removes future environments and evidence', async ({ page }) => {
   await page.goto('/')
+  await seekTo(page, 47)
   await expect(page.getByRole('combobox', { name: 'Selected environment' }).locator('option')).toHaveCount(3)
   await page.getByRole('button', { name: 'Restart simulation' }).click()
   await expect(page.getByRole('combobox', { name: 'Selected environment' }).locator('option')).toHaveCount(1)
@@ -79,7 +212,9 @@ test('seeking backward removes future environments and evidence', async ({ page 
 
 test('supports a second arbitrary architecture, 3D view, metrics, and safe draft controls', async ({ page }) => {
   await page.goto('/')
+  await seekTo(page, 47)
   await page.getByRole('combobox', { name: 'Example architecture' }).selectOption('pipeline')
+  await seekTo(page, 47)
   await expect(page.locator('.map-canvas canvas')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Show flat topology' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Inspect events in Production', exact: true })).toBeVisible()
@@ -87,10 +222,10 @@ test('supports a second arbitrary architecture, 3D view, metrics, and safe draft
   await page.getByRole('textbox', { name: 'Filter services' }).fill('admin-api')
   await expect(page.locator('tbody tr')).toHaveCount(1)
   await expect(page.locator('tbody tr')).toContainText('Not collected')
-  await page.getByRole('button', { name: 'New experiment', exact: true }).click()
+  await page.getByRole('button', { name: 'Draft experiment', exact: true }).click()
   await expect(page.getByRole('dialog')).toBeVisible()
   await page.getByRole('button', { name: 'Validate draft' }).click()
-  await expect(page.getByRole('status')).toContainText('Nothing was submitted or persisted')
+  await expect(page.getByRole('status')).toContainText('Nothing was saved or executed')
   await page.keyboard.press('Escape')
   await page.getByRole('button', { name: 'Safety & approvals' }).click()
   await expect(page.getByRole('button', { name: /Approval unavailable/ })).toBeDisabled()
@@ -102,17 +237,19 @@ test('keeps mobile content in the viewport and respects reduced motion', async (
   await page.setViewportSize({ width: 390, height: 844 })
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.goto('/')
+  await seekTo(page, 47)
   await expect(page.locator('.map-canvas canvas')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Show flat topology' })).toHaveCount(0)
   await page.screenshot({ path: 'test-results/workspace-mobile.png', fullPage: true })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
-  await page.getByRole('button', { name: 'New experiment', exact: true }).click()
+  await page.getByRole('button', { name: 'Draft experiment', exact: true }).click()
   await expect(page.getByRole('dialog')).toBeVisible()
   await page.keyboard.press('Escape')
 })
 
 test('phase navigation synchronizes replay and previous event controls', async ({ page }) => {
   await page.goto('/')
+  await seekTo(page, 47)
   await page.locator('.phase-disclosure summary').click()
   await page.getByRole('navigation', { name: 'Investigation phases' }).getByRole('button', { name: /Confirming in production/ }).click()
   await expect(page.getByRole('slider', { name: 'Simulation timeline' })).toHaveValue('72')
@@ -127,22 +264,25 @@ test('phase navigation synchronizes replay and previous event controls', async (
 test('spatial investigation and draft dialog meet core accessibility checks', async ({ page }) => {
   const { default: AxeBuilder } = await import('@axe-core/playwright')
   await page.goto('/')
+  await seekTo(page, 47)
   await expect(page.locator('.map-canvas canvas')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Show flat topology' })).toHaveCount(0)
   const workspace = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
   expect(workspace.violations.map(item => ({ id: item.id, nodes: item.nodes.map(node => node.target) }))).toEqual([])
-  await page.getByRole('button', { name: 'New experiment', exact: true }).click()
+  await page.getByRole('button', { name: 'Draft experiment', exact: true }).click()
   const dialog = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()
   expect(dialog.violations.map(item => ({ id: item.id, nodes: item.nodes.map(node => node.target) }))).toEqual([])
 })
 
 test('follow investigation focuses event environments and can pause', async ({ page }) => {
   await page.goto('/')
+  await seekTo(page, 47)
   await expect(page.locator('.map-canvas canvas')).toBeVisible()
-  await page.getByRole('button', { name: 'Follow investigation', exact: true }).click()
+  await page.getByRole('button', { name: 'Follow key events', exact: true }).click()
+  await page.getByRole('button', { name: 'Resume demo', exact: true }).click()
   await expect(page.getByRole('combobox', { name: 'Selected environment' })).toHaveValue('clone-b')
   await expect(page.getByRole('button', { name: 'Inspect primary-db in Clone B', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Pause investigation', exact: true }).click()
+  await page.getByRole('button', { name: 'Pause demo', exact: true }).click()
   const cursor = await page.getByRole('slider', { name: 'Simulation timeline' }).inputValue()
   await page.waitForTimeout(300)
   expect(await page.getByRole('slider', { name: 'Simulation timeline' }).inputValue()).toBe(cursor)
@@ -150,6 +290,7 @@ test('follow investigation focuses event environments and can pause', async ({ p
 
 test('node selection reveals scoped activity and closing returns to an uncluttered space', async ({ page }) => {
   await page.goto('/')
+  await seekTo(page, 47)
   await expect(page.getByRole('button', { name: 'Inspect primary-db in Production', exact: true })).toBeVisible()
   await expect(page.locator('.inspector')).toHaveCount(0)
   await page.getByRole('button', { name: 'Inspect primary-db in Production', exact: true }).click()
@@ -209,6 +350,7 @@ for (const viewport of [{ width: 1512, height: 982 }, { width: 480, height: 844 
 
 test('layer focus isolates a clone and all layers restores the overview', async ({ page }) => {
   await page.goto('/')
+  await seekTo(page, 47)
   await expect(page.getByTestId('topology-stage')).toHaveAttribute('data-isolated-layer', 'all')
   await page.getByRole('button', { name: 'Focus Clone A layer', exact: true }).click()
   await expect(page.getByTestId('topology-stage')).toHaveAttribute('data-isolated-layer', 'clone-a')
@@ -224,8 +366,47 @@ test('layer focus isolates a clone and all layers restores the overview', async 
 })
 
 
+test('incident markers remain clickable after close camera zoom', async ({ page }) => {
+  await page.goto('/')
+  await seekTo(page, 47)
+  await page.getByRole('button', { name: 'Inspect primary-db in Production', exact: true }).click()
+  await page.waitForTimeout(1300)
+  const canvas = page.locator('.map-canvas canvas')
+  const box = (await canvas.boundingBox())!
+  await page.mouse.move(box.x + box.width * 0.4, Math.min(800, box.y + box.height * 0.5))
+  await page.mouse.wheel(0, -900)
+  await page.waitForTimeout(1200)
+  const marker = page.getByRole('button', { name: 'Inspect issue in primary-db in Production', exact: true })
+  await expect.poll(() => marker.evaluate(element => {
+    const bounds = element.getBoundingClientRect()
+    const canvasBounds = element.closest('.map-canvas')!.getBoundingClientRect()
+    const hit = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+    return bounds.top >= canvasBounds.top && bounds.bottom <= canvasBounds.bottom && !!hit && element.contains(hit)
+  })).toBe(true)
+  await marker.click()
+  await expect(page.getByRole('region', { name: 'Issue details' })).toContainText('Elevated latency and errors')
+})
+
+test('expanded map keeps the incident inspector above the scene', async ({ page }) => {
+  await page.goto('/')
+  await seekTo(page, 47)
+  await page.getByRole('button', { name: 'Expand map', exact: true }).click()
+  await page.getByRole('button', { name: 'Inspect issue in primary-db in Production', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Issue details' })).toBeVisible()
+  await expect.poll(() => page.locator('.inspector').evaluate(element => {
+    const bounds = element.getBoundingClientRect()
+    const hit = document.elementFromPoint(bounds.x + 30, bounds.y + 30)
+    return !!hit && element.contains(hit)
+  })).toBe(true)
+  await page.getByRole('button', { name: 'Close entity inspector', exact: true }).click()
+  await expect(page.locator('.inspector')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Exit expanded map', exact: true }).click()
+  await expect(page.locator('.topology-panel')).not.toHaveClass(/is-expanded/)
+})
+
 test('issue markers reveal the selected system symptoms and measurements', async ({ page }) => {
   await page.goto('/')
+  await seekTo(page, 47)
   await page.getByRole('button', { name: 'Inspect issue in primary-db in Production', exact: true }).click()
   await expect(page.getByRole('region', { name: 'Issue details' })).toContainText('Elevated latency and errors')
   await expect(page.getByRole('region', { name: 'Issue details' })).toContainText('18.4%')
@@ -235,6 +416,7 @@ test('issue markers reveal the selected system symptoms and measurements', async
 
 test('clone test markers reveal individual recorded assertions', async ({ page }) => {
   await page.goto('/')
+  await seekTo(page, 47)
   const marker = page.getByRole('button', { name: 'Incident reproduced: passed in Clone A', exact: true })
   await expect(marker).toHaveAttribute('title', 'Incident reproduced · passed')
   await marker.click()
@@ -246,6 +428,7 @@ test('clone test markers reveal individual recorded assertions', async ({ page }
 
 test('explanation page separates causes, tests and evidence from the 3D workspace', async ({ page }) => {
   await page.goto('/')
+  await seekTo(page, 47)
   await page.getByRole('button', { name: 'Why this incident?', exact: true }).first().click()
   await expect(page.getByRole('heading', { name: 'To find out which explanation survives a test.' })).toBeVisible()
   await expect(page.locator('.why-hypothesis')).toHaveCount(2)
@@ -260,7 +443,8 @@ test('explanation page separates causes, tests and evidence from the 3D workspac
 test('shared dark palette stays readable across pages', async ({ page }) => {
   const { default: AxeBuilder } = await import('@axe-core/playwright')
   await page.goto('/')
-  for (const name of ['Why this incident?', 'Observability', 'Experiment lab', 'Replay library']) {
+  await seekTo(page, 47)
+  for (const name of ['Why this incident?', 'Observability', 'Clone experiments', 'Incident replay']) {
     await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name, exact: true }).click()
     await page.screenshot({path:`test-results/palette-${name.replace(/[^a-z]/gi,'')}.png`,fullPage:true})
     const result = await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa']).analyze()
@@ -270,6 +454,7 @@ test('shared dark palette stays readable across pages', async ({ page }) => {
 
 test('agent marker opens its purpose and current work', async ({page}) => {
   await page.goto('/')
+  await seekTo(page, 47)
   await page.getByRole('button', {name:'Inspect Investigator A', exact:true}).click()
   await expect(page.getByRole('region',{name:'Agent activity'})).toContainText('Why this step')
   await expect(page.getByRole('region',{name:'Agent activity'})).toContainText('What comes next')
@@ -325,7 +510,7 @@ for (const [diagnosis, confirmed, label] of [
     await expect(page.locator('.why-intro h2')).toHaveText(confirmed ? `Confirmed cause: ${label}.` : 'No cause confirmed.')
     await expect(page.locator('.why-conclusion h2')).toHaveText(confirmed ? `Confirmed cause: ${label}.` : 'No cause confirmed.')
     await expect(page.getByText('Recovery held after retries were restored.', { exact: true })).toHaveCount(0)
-    await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Replay library', exact: true }).click()
+    await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Incident replay', exact: true }).click()
     await expect(page.locator('.report-preview h3')).toHaveText(`${diagnosis}: ${confirmed ? 'confirmed' : 'not confirmed'}`)
     await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Why this incident?', exact: true }).click()
     await page.getByRole('button', { name: 'Restart simulation', exact: true }).click()

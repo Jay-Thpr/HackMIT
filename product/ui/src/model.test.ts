@@ -1,6 +1,56 @@
 import { describe, expect, it } from 'vitest'
-import { deriveTopology, replay, visibleEvents, metricLabel, type WorkspaceEvent } from './model'
+import { deriveTopology, environmentPresence, replay, visibleEvents, metricLabel, type WorkspaceEvent } from './model'
 import { scenarios } from './scenarios'
+
+describe('incident lifecycle', () => {
+  for (const scenario of scenarios) {
+    it(`${scenario.id}: begins healthy and waits for observed clone readiness`, () => {
+      expect(replay(scenario, 0)).toMatchObject({ lifecycle: 'monitoring', cleanup: 'not-started' })
+      expect(replay(scenario, 12).lifecycle).toBe('detected')
+      const starting = replay(scenario, 24)
+      expect(starting.lifecycle).toBe('starting')
+      expect(starting.environments[1]).toMatchObject({ lifecycle: 'starting', level: 1, lifecycleAt: 24 })
+      expect(starting.environments[1].nodes[scenario.targetId]).toEqual({ health: 'unknown' })
+      expect(replay(scenario, 25).environments[1]).toMatchObject({ lifecycle: 'ready', nodes: scenario.baseline })
+      expect(replay(scenario, 39).environments.slice(1).every(env => env.lifecycle === 'investigating')).toBe(true)
+      expect(replay(scenario, 72).lifecycle).toBe('confirming')
+    })
+
+    it(`${scenario.id}: animates cleanup before recorded removal and retains evidence on rewind`, () => {
+      const cleanup = replay(scenario, 103)
+      expect(cleanup).toMatchObject({ lifecycle: 'cleanup', cleanup: 'in-progress' })
+      expect(cleanup.environments[1]).toMatchObject({ lifecycle: 'destroying', lifecycleAt: 102, level: 1 })
+      const remaining = replay(scenario, 105)
+      expect(remaining.environments.map(env => env.id)).toEqual(['production', 'clone-b'])
+      expect(remaining.environments[1].level).toBe(2)
+      expect(replay(scenario, 108)).toMatchObject({ lifecycle: 'complete', cleanup: 'complete' })
+      expect(replay(scenario, 108).environments).toHaveLength(1)
+      expect(visibleEvents(scenario, 108).some(event => event.testResult)).toBe(true)
+      expect(replay(scenario, 47).environments).toHaveLength(3)
+      expect(replay(scenario, 47).verdict).toBeUndefined()
+      expect(replay(scenario, 0).cleanup).toBe('not-started')
+    })
+
+    it(`${scenario.id}: derives presence from the replay clock, not elapsed wall time`, () => {
+      const starting = replay(scenario, 24).environments[1]
+      expect(environmentPresence(starting, 24)).toBe(0)
+      expect(environmentPresence(starting, 24.5)).toBeCloseTo(0.5)
+      expect(environmentPresence(starting, 25)).toBe(1)
+      expect(environmentPresence(starting, 24.5)).toBeCloseTo(0.5)
+      const removing = replay(scenario, 103).environments[1]
+      expect(environmentPresence(removing, 102)).toBe(1)
+      expect(environmentPresence(removing, 103.5)).toBeCloseTo(0.5)
+      expect(environmentPresence(removing, 105)).toBe(0)
+      expect(environmentPresence(removing, 103.5, true)).toBe(1)
+    })
+  }
+
+  it('does not remove clones or claim cleanup just because a verdict exists', () => {
+    const scenario = { ...scenarios[0], events: scenarios[0].events.filter(event => event.kind !== 'archive' && event.lifecycle !== 'destroying') }
+    expect(replay(scenario, 112).environments).toHaveLength(3)
+    expect(replay(scenario, 112).cleanup).toBe('not-started')
+  })
+})
 
 describe('adapter-independent topology', () => {
   it('keeps peer-only destinations and disconnected services without assuming container counts', () => {

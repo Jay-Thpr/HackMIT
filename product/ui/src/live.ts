@@ -28,8 +28,6 @@ export async function loadLiveScenarios(base = '/api'): Promise<Scenario[]> {
     }))
     const scenarios = loaded.filter((item): item is Scenario => item !== null)
     useWorkspace.getState().addScenarios(scenarios, wanted === true ? scenarios[0]?.id : wanted ?? undefined)
-    const target = wanted === true ? scenarios[0]?.id : wanted
-    if (target) followIncident(target, base)
     return scenarios
   } catch {
     return []
@@ -40,25 +38,33 @@ let source: EventSource | null = null
 
 /** Follow one incident as it happens: the API re-sends the whole Scenario each time the audit log
  *  grows (Server-Sent Events) until the report is written. Idempotent per incident. */
-export function followIncident(id: string, base = '/api'): void {
+export function followIncident(id: string, base = '/api'): (() => void) | undefined {
   const state = useWorkspace.getState()
   if (state.streaming === id || typeof EventSource === 'undefined') return
   const current = state.scenarios.find(item => item.id === id)
   if (current && current.live && current.complete) return
   source?.close()
-  source = new EventSource(`${base}/incidents/${encodeURIComponent(id)}/stream`)
+  const connection = new EventSource(`${base}/incidents/${encodeURIComponent(id)}/stream`)
+  source = connection
   useWorkspace.setState({ streaming: id })
-  source.addEventListener('scenario', event => {
-    const scenario = JSON.parse((event as MessageEvent).data) as Scenario
+  connection.addEventListener('scenario', event => {
+    if (source !== connection) return
+    let scenario: Scenario
+    try { scenario = JSON.parse((event as MessageEvent).data) as Scenario } catch { return }
+    if (scenario.id !== id || !scenario.live || !Array.isArray(scenario.events)) return
     const store = useWorkspace.getState()
     const isNew = !store.scenarios.some(item => item.id === scenario.id)
     store.updateScenario(scenario)
-    if (isNew) {  // first frame of an incident that did not exist when the page loaded: show it, at "now"
+    if (isNew && store.scenarioId === id) {  // first frame of an incident that did not exist when the page loaded: show it, at "now"
       useWorkspace.getState().setScenario(scenario.id)
       useWorkspace.getState().seek(scenario.duration)
     }
   })
-  const stop = () => { source?.close(); source = null; useWorkspace.setState({ streaming: null }) }
-  source.addEventListener('done', stop)
-  source.onerror = () => { if (source?.readyState === EventSource.CLOSED) stop() }
+  const stop = () => {
+    connection.close()
+    if (source === connection) { source = null; useWorkspace.setState({ streaming: null }) }
+  }
+  connection.addEventListener('done', stop)
+  connection.onerror = () => { if (connection.readyState === EventSource.CLOSED) stop() }
+  return stop
 }

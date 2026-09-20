@@ -14,12 +14,12 @@ export function suiteChecks(scenario: Scenario, environmentId: string, cursor: n
     const descriptions: Record<string, string> = {
       baseline: 'Check that the new clone starts with normal latency, load, and error rates.',
       reproduction: 'Apply the suspected cause in the clone and check whether it produces the same symptoms as production.',
-      probe: environmentId === 'clone-a' ? 'Cap retries and check whether latency returns to normal.' : 'Cap retries and check whether latency stays high even as load falls.',
-      release: environmentId === 'clone-a' ? 'Restore retries and check whether the system stays healthy.' : 'Restore retries and check whether overload returns, as this hypothesis predicts.',
+      probe: 'Compare the measured probe response with the recorded prediction.',
+      release: 'Check the measured response after the intervention is released.',
     }
     const manifest = scenario.testCases?.filter(test => test.groupId === check.id) ?? [{ id: check.id, groupId: check.id, name: check.label, description: descriptions[check.id] }]
     const cases = manifest.map(test => {
-      const result = events.filter(item => item.testResult?.checkId === check.id && (item.testResult.caseId ?? item.testResult.checkId) === test.id).at(-1)
+      const result = events.filter(item => item.testResult && (item.testResult.caseId ?? item.testResult.checkId) === test.id).at(-1)
       return { ...test, event: result, state: result?.testResult ? result.testResult.passed ? 'passed' : 'failed' : state === 'queued' ? 'queued' : 'running' }
     })
     const passed = cases.filter(test => test.state === 'passed').length

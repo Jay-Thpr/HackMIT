@@ -1,4 +1,4 @@
-import { ArrowRight, Box, Database, FlaskConical, GitBranch, Layers3, Play, Search, ShieldCheck } from 'lucide-react'
+import { ArrowRight, Box, Database, GitBranch, Layers3, Play, Search } from 'lucide-react'
 import { useState } from 'react'
 import { metricLabel, timeLabel, visibleEvents, type Environment, type Scenario, type WorkspaceState } from '../model'
 import { useWorkspace } from '../store'
@@ -24,27 +24,47 @@ export function Observability({ scenario, environment }: { scenario: Scenario; e
 }
 
 export function ExperimentLab({ scenario, workspace }: { scenario: Scenario; workspace: WorkspaceState }) {
-  const { cursor, seek, set } = useWorkspace()
+  const { cursor, seek, focus, set, startDemo } = useWorkspace()
+  const events = visibleEvents(scenario, cursor)
+  const hypotheses = events.some(event => event.kind === 'reason') ? scenario.hypotheses : []
+  const clones = workspace.environments.filter(environment => environment.id !== 'production')
+  const lifecycleLabels = { unknown: 'Readiness not recorded', starting: 'Starting', ready: 'Ready', investigating: 'Investigating', destroying: 'Removing' }
   return <div className="lab-view">
-    <section className="lab-banner"><div className="lab-banner-icon"><FlaskConical size={29} strokeWidth={1.2} /></div><div><span className="overline">CLONE EXPERIMENTS</span><h2>Test a possible cause.</h2><p>Choose a cause, predict what should happen, and test it in a clone.</p></div><button className="primary-button" onClick={() => set({ dialog: 'experiment' })}>Design an experiment <ArrowRight size={15} /></button></section>
-    <div className="section-heading"><h3>Isolated environments</h3><span>{workspace.environments.length - 1} active in this replay</span></div>
-    <div className="clone-card-grid">{scenario.hypotheses.map(hypothesis => {
-      const creation = scenario.events.find(event => event.kind === 'clone' && event.environment?.hypothesisId === hypothesis.id)
+    <section className="lab-banner"><div><h2>Compare causes in isolated copies.</h2><p>Clones are isolated test environments built from the system’s topology, versions, and workload. Each investigator tests one possible cause without copying production data or hidden fault state.</p><p className="page-instruction">Inspect a clone to follow its agent and test results in the 3D workspace.</p></div><div className="lab-draft-action"><button className="primary-button" onClick={() => set({ dialog: 'experiment' })}>Draft a test <ArrowRight size={15} /></button><small>Validate a plan only; nothing runs.</small></div></section>
+    <div className="section-heading"><h3>Clones in this demo</h3><span>{clones.length} present · {timeLabel(cursor)}</span></div>
+    {hypotheses.length === 0 ? <section className="lab-empty"><h3>No clone investigation yet</h3><p>The demo starts healthy. After an incident is detected, Faultline proposes causes, starts clean clones, and tests them before confirming a result and removing the clones.</p><button className="secondary-button" onClick={() => startDemo(scenario.id)}><Play size={14} />Watch incident demo</button></section> : <div className="clone-card-grid">{hypotheses.map(hypothesis => {
+      const creation = events.find(event => event.kind === 'clone' && event.environment?.hypothesisId === hypothesis.id)
       const environmentId = creation?.environmentId
-      const observation = scenario.events.find(event => event.kind === 'observe' && event.environmentId === environmentId)
-      const environment = workspace.environments.find(env => env.id === environmentId)
-      return <article className="panel lab-clone-card" key={hypothesis.id}><div className="clone-card-top"><span className="clone-icon" style={{ color: hypothesis.color }}><GitBranch size={23} /></span><span className="quiet-badge">{environment ? 'Isolated · simulated' : 'Not active at this time'}</span></div><span className="overline">HYPOTHESIS {hypothesis.id}</span><h3>{hypothesis.title}</h3><p>{hypothesis.description}</p><dl><div><dt>Inherits</dt><dd>Topology, versions, workload</dd></div><div><dt>Does not inherit</dt><dd>Production data or hidden state</dd></div><div><dt>Observation</dt><dd>{environment ? `Through ${timeLabel(cursor)}` : 'No active clone'}</dd></div></dl><button className="secondary-button" disabled={!creation} onClick={() => { if (!creation || !environmentId) return; seek(observation?.at ?? creation.at); set({ view: 'investigation', environmentId, selectedNode: undefined, focusRevision: useWorkspace.getState().focusRevision + 1 }) }}>Explore this reproduction <ArrowRight size={14} /></button></article>
-    })}</div>
-    <section className="panel lab-safety"><ShieldCheck size={23} /><div><h3>Nothing runs against your infrastructure here.</h3><p>These are simulated experiments. Running a real test requires a connected backend and a verified way to undo the change.</p></div></section>
+      const environment = clones.find(env => env.id === environmentId)
+      const archive = events.find(event => event.kind === 'archive' && event.environmentId === environmentId)
+      const latest = environmentId ? events.filter(event => event.environmentId === environmentId).at(-1) : undefined
+      const status = environment ? lifecycleLabels[environment.lifecycle] : archive ? 'Archived' : 'Waiting for clone'
+      const statusId = `clone-status-${hypothesis.id}`
+      return <article className="panel lab-clone-card" key={hypothesis.id}>
+        <div className="clone-card-top"><span className="clone-identity"><GitBranch size={17} />{creation?.environment?.label ?? `Hypothesis ${hypothesis.id}`}</span><span className="clone-lifecycle" data-state={environment?.lifecycle ?? (archive ? 'archived' : 'waiting')}>{status}</span></div>
+        <h3>{hypothesis.title}</h3><p>{hypothesis.description}</p>
+        <dl><div><dt>Expected response</dt><dd>{hypothesis.prediction}</dd></div><div><dt>Latest step</dt><dd id={statusId}>{latest?.title ?? 'Continue the timeline to see this clone start.'}</dd></div></dl>
+        <button className="secondary-button" disabled={!environment && !archive} aria-describedby={statusId} onClick={() => {
+          if (!creation || !environmentId) return
+          if (archive) seek(creation.at)
+          focus(environmentId)
+          set({ view: 'investigation', playing: Boolean(archive), follow: Boolean(archive) })
+        }}>{archive ? <><Play size={14} />Replay this experiment</> : environment ? <>Inspect clone <ArrowRight size={14} /></> : 'Waiting for clone startup'}</button>
+      </article>
+    })}</div>}
+    <p className="page-source-note">Simulated clone lifecycle and test results. No infrastructure is connected.</p>
   </div>
 }
 
 export function ReplayLibrary({ scenario }: { scenario: Scenario }) {
-  const { cursor, seek, set } = useWorkspace()
-  const verdict = visibleEvents(scenario, cursor).filter(event => event.kind === 'verdict' && event.environmentId === 'production').at(-1)
+  const { cursor, set, startDemo, scenarios } = useWorkspace()
+  const events = visibleEvents(scenario, cursor)
+  const verdict = events.filter(event => event.kind === 'verdict' && event.environmentId === 'production').at(-1)
+  const detected = events.some(event => event.kind === 'detect')
+  const archivedCount = events.filter(event => event.kind === 'archive').length
   return <div className="replay-view">
-    <section className="panel replay-hero"><span className="overline">INCIDENT MEMORY</span><h2>Review an investigation.</h2><p>Replay the incident to see what the agent changed, what happened next, and how it reached a conclusion.</p><span className="quiet-badge">Design preview · no saved live incidents</span></section>
-    <section className="panel replay-row"><div className="replay-icon"><Layers3 size={23} /></div><div><span className="overline">ILLUSTRATIVE REPLAY · {scenario.incident}</span><h3>{scenario.incidentTitle}</h3><p>{scenario.name} · {scenario.duration}s simulated timeline · {scenario.events.length} scripted steps</p></div><button className="secondary-button" onClick={() => { seek(0); set({ view: 'investigation', playing: true }) }}><Play size={14} />Play from the start</button></section>
-    <section className="panel report-preview"><span className="overline">REPORT AT THE SELECTED TIME</span><h3>{verdict?.title ?? 'Investigation is not yet confirmed.'}</h3><p>{verdict?.detail ?? 'The report will only show conclusions whose evidence exists at the selected point on the timeline.'}</p><div className="report-facts"><span>Source<strong>Scripted example</strong></span><span>Production actions<strong>{visibleEvents(scenario, cursor).filter(event => event.kind === 'action' && event.environmentId === 'production').length}</strong></span><span>Patch / canary<strong>Not connected</strong></span><span>Benchmark accuracy<strong>Not measured</strong></span></div></section>
+    <section className="panel replay-hero"><h2>Review the incident from the beginning.</h2><p>Choose a demo to watch healthy operation, an incident, clone startup, investigation, confirmation, and cleanup. Playback opens the 3D workspace with the camera following each step.</p><span className="page-source-note">Scripted examples, not a history of saved incidents.</span></section>
+    <section className="panel report-preview"><div className="report-heading"><div><span className="overline">SELECTED DEMO · {scenario.incident}</span><h2>{scenario.name}</h2></div><span className="quiet-badge">Report at {timeLabel(cursor)}</span></div><h3>{verdict?.title ?? (detected ? 'Investigation in progress' : 'Healthy reference, before the incident')}</h3><p>{verdict?.detail ?? (detected ? 'Evidence is still being gathered. A conclusion appears only when the confirmation event is reached.' : 'No incident has been detected at this point in the demo. Replay it to follow the investigation.')}</p><div className="report-facts"><span>Timeline<strong>{timeLabel(cursor)} / {timeLabel(scenario.duration)}</strong></span><span>Simulated production probes<strong>{events.filter(event => event.kind === 'action' && event.environmentId === 'production').length}</strong></span><span>Clones removed<strong>{archivedCount}</strong></span></div><button className="text-button" onClick={() => set({ view: 'investigation', playing: false })}>Inspect this moment in 3D <ArrowRight size={14} /></button></section>
+    <section className="replay-demos" aria-labelledby="available-demos-title"><div className="section-heading"><h3 id="available-demos-title">Available demos</h3><span>{scenarios.length} examples</span></div>{scenarios.map(demo => <article className="replay-row" key={demo.id} data-selected={demo.id === scenario.id}><div><div className="demo-identity"><h3>{demo.name}</h3>{demo.id === scenario.id && <span className="quiet-badge">Selected</span>}</div><p>{demo.incident} · {demo.incidentTitle}</p><small>{demo.subtitle} · {demo.duration}s simulated timeline</small></div><button className="secondary-button" aria-label={`Replay this demo: ${demo.name}`} onClick={() => startDemo(demo.id)}><Play size={14} />Replay this demo</button></article>)}</section>
   </div>
 }

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Scenario } from './model'
+import { replay, type Scenario } from './model'
 import { scenarios as synthetic } from './scenarios'
 
 export type View = 'explanation' | 'investigation' | 'observability' | 'experiments' | 'replay'
@@ -26,6 +26,7 @@ interface UIState {
   addScenarios: (items: Scenario[], select?: string) => void
   updateScenario: (item: Scenario) => void
   streaming: string | null
+  startDemo: (id?: string) => void
   seek: (time: number) => void
   tick: (delta: number) => void
   togglePlay: () => void
@@ -40,7 +41,7 @@ export const useWorkspace = create<UIState>((set, get) => ({
   scenarios: synthetic,
   scenarioId: synthetic[0].id,
   streaming: null,
-  cursor: 47,
+  cursor: 0,
   playing: false,
   speed: 1,
   environmentId: 'production',
@@ -51,22 +52,32 @@ export const useWorkspace = create<UIState>((set, get) => ({
   reducedMotion: prefersReducedMotion,
   focusRevision: 0,
   dialog: null,
-  setScenario: id => set({ scenarioId: id, cursor: 47, environmentId: 'production', isolatedLayer: null, selectedNode: undefined, selectedSuiteCheck: undefined, selectedAgent: undefined, selectedEvent: undefined, playing: false, focusRevision: get().focusRevision + 1 }),
+  setScenario: id => set({ scenarioId: id, cursor: 0, environmentId: 'production', isolatedLayer: null, selectedNode: undefined, selectedSuiteCheck: undefined, selectedAgent: undefined, selectedEvent: undefined, playing: false, follow: false, focusRevision: get().focusRevision + 1 }),
+  startDemo: id => {
+    get().setScenario(id ?? get().scenarioId)
+    set({ playing: true, follow: true, speed: 1, view: 'investigation' })
+  },
   seek: time => {
-    const scenario = get().scenarios.find(item => item.id === get().scenarioId)!
-    set({ cursor: Math.max(0, Math.min(time, scenario.duration)), playing: false, selectedEvent: undefined })
+    const state = get()
+    const scenario = state.scenarios.find(item => item.id === state.scenarioId)!
+    const cursor = Math.max(0, Math.min(time, scenario.duration))
+    // Rewinding drops a selection only when that environment no longer exists at the new time.
+    const reset = !replay(scenario, cursor).environments.some(environment => environment.id === state.environmentId)
+    set({ cursor, playing: false, follow: false, selectedEvent: undefined, ...(reset ? { environmentId: 'production', isolatedLayer: null, selectedNode: undefined, selectedSuiteCheck: undefined, selectedAgent: undefined, focusRevision: state.focusRevision + 1 } : {}) })
   },
   tick: delta => {
     const state = get()
     if (!state.playing) return
-    const duration = state.scenarios.find(item => item.id === state.scenarioId)!.duration
+    const scenario = state.scenarios.find(item => item.id === state.scenarioId)!
+    const duration = scenario.duration
     const cursor = Math.min(duration, state.cursor + delta * state.speed)
-    set({ cursor, playing: cursor < duration })
+    set({ cursor, playing: cursor < duration || Boolean(scenario.live && !scenario.complete) })
   },
   togglePlay: () => {
     const state = get()
     const duration = state.scenarios.find(item => item.id === state.scenarioId)!.duration
-    set({ playing: !state.playing, cursor: state.cursor >= duration ? 0 : state.cursor })
+    if (!state.playing && (state.cursor === 0 || state.cursor >= duration)) { get().startDemo(); return }
+    set({ playing: !state.playing })
   },
   addScenarios: (items, select) => {
     const known = new Set(get().scenarios.map(item => item.id))
@@ -80,8 +91,8 @@ export const useWorkspace = create<UIState>((set, get) => ({
     const state = get()
     const previous = state.scenarios.find(s => s.id === item.id)
     const scenarios = previous ? state.scenarios.map(s => (s.id === item.id ? item : s)) : [item, ...state.scenarios]
-    const atEnd = previous ? state.cursor >= previous.duration - 1 : true
-    const cursor = state.scenarioId === item.id && atEnd ? item.duration : Math.min(state.cursor, item.duration)
+    const atEnd = previous ? state.cursor >= previous.duration - 1 : false
+    const cursor = state.scenarioId !== item.id ? state.cursor : state.playing && atEnd ? item.duration : Math.min(state.cursor, item.duration)
     set({ scenarios, cursor })
   },
   inspect: (selectedNode, environmentId) => set({ selectedSuiteCheck: undefined, selectedAgent: undefined, selectedNode, environmentId, isolatedLayer: environmentId, traceTab: 'trace', follow: false, selectedEvent: undefined, focusRevision: get().focusRevision + 1 }),
