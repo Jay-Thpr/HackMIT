@@ -179,7 +179,7 @@ def scenario_from_incident(
                         "detail": tr.get("reasoning") or " ".join(h["description"] for h in hypotheses) or e.summary,
                         "result": f"ambiguous: {p.get('ambiguous')}; hypotheses: {', '.join(p.get('hypotheses') or [])}"})
         elif e.kind == EventKind.experiment_start:
-            out.append({**base, "kind": "observe", "title": e.summary, "phase": phase, "tool": "orchestrator.experiment"})
+            out.append({**base, "kind": "observe", "title": e.summary, "phase": phase, "tool": "orchestrator.experiment", "incident": "confirming"})
         elif e.kind == EventKind.action_apply:
             lever, params, ttl = p.get("lever_id"), p.get("params") or {}, int(p.get("ttl_s") or 0)
             label = f"{lever} {params}" if params else str(lever)
@@ -240,10 +240,11 @@ def scenario_from_incident(
             observed = ", ".join(f"{k}={_fmt(v)}" for k, v in ev.items()) or e.summary
             out.append({**base, "id": f"{e.event_id}-replay-check", "sequence": seq, "kind": "observe", "environmentId": env, "actor": "math",
                         "tool": "suite.evaluate", "title": f"replay check {'passed' if passed else 'failed'}", "detail": e.summary, "result": observed,
+                        "readings": _readings(_last(verify_fps), topology, breached=not passed),  # the clone after the replay: recovered if it passed
                         "testResult": {"checkId": "replay", "passed": passed, "expected": "clone SLO healthy after the replayed trigger ends", "observed": observed}})
             out.append({**base, "id": f"{e.event_id}-verdict", "sequence": seq + 1, "kind": "observe", "title": e.summary, "phase": phase,
                         "tool": "canary.judge", "result": observed})
-            out.extend(_teardown(base, e.event_id, env, "the verification clone", base["at"], seq + 2))
+            out.extend(_teardown(base, e.event_id, env, "the verification clone", base["at"], seq + 2, incident="cleanup"))
             seq += 3
         elif e.kind in (EventKind.mitigation, EventKind.patch_opened, EventKind.canary_update, EventKind.refused,
                         EventKind.page_human, EventKind.report, EventKind.experiment_end):
@@ -335,16 +336,19 @@ def scenario_from_incident(
 
 # ---- helpers ----------------------------------------------------------------------------------
 
-def _teardown(base: dict[str, Any], event_id: str, env: str, label: str, at: int, seq: int) -> list[dict[str, Any]]:
+def _teardown(base: dict[str, Any], event_id: str, env: str, label: str, at: int, seq: int,
+              incident: str = "investigating") -> list[dict[str, Any]]:
     """Two UI events for a clone's recorded removal: `destroying` (the manager tears the project
-    down; the UI fades it over ~3 s) then `archive` (gone; its evidence stays in the trace)."""
+    down; the UI fades it over ~3 s) then `archive` (gone; its evidence stays in the trace).
+    `incident` states the incident phase during the teardown: an investigation clone going away
+    while other investigators still run (or before the production probe) is still "investigating";
+    only the verification clone's teardown is "cleanup", and only the report is "complete"."""
     return [
         {**base, "id": f"{event_id}-destroy", "sequence": seq, "at": at, "kind": "lifecycle", "environmentId": env,
-         "actor": "adapter", "lifecycle": "destroying", "tool": "lab.destroy.request",
+         "actor": "adapter", "lifecycle": "destroying", "tool": "lab.destroy.request", "incident": incident,
          "title": f"Removing {label}", "detail": "The clone lab tears the clone project down; its observations and test results are retained."},
         {**base, "id": f"{event_id}-archive", "sequence": seq + 1, "at": at + 3, "kind": "archive", "environmentId": env,
-         "actor": "adapter", "tool": "lab.destroy", "title": f"{label} archived; evidence retained",
-         "incident": "cleanup",  # only the report closes a real incident; more clones/probes may follow
+         "actor": "adapter", "tool": "lab.destroy", "title": f"{label} archived; evidence retained", "incident": incident,
          "detail": "No clone state is merged into production."},
     ]
 

@@ -3,7 +3,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { CameraControls, Html, Line, RoundedBox } from '@react-three/drei'
 import * as THREE from 'three'
 import type { GraphLayout } from '../layout'
-import { environmentPresence, type Entity, type Environment, type Position, type Scenario, type WorkspaceState } from '../model'
+import { environmentOutcomeLabel, environmentPresence, type Entity, type Environment, type Position, type Scenario, type WorkspaceState } from '../model'
 import { useWorkspace } from '../store'
 import { deriveNodeRecovery, type NodeRecovery } from '../recovery'
 import { agentActivity } from '../agent-activity'
@@ -232,15 +232,16 @@ function EnvironmentCluster({ environment, layout, scenario, workspace }: { envi
   const { environmentId, isolatedLayer, focus, cursor, reducedMotion } = useWorkspace()
   const presence = environmentPresence(environment, cursor, reducedMotion)
   const removing = environment.lifecycle === 'destroying'
-  const lifecycleLabel = environment.lifecycle === 'starting' ? 'Starting' : removing ? 'Removing' : undefined
-  const travel = reducedMotion ? 0 : (1 - presence) * (removing ? 0.18 : -0.35)
+  const emphasised = environment.outcome === 'confirmed' || environment.outcome === 'fix-verified'
+  const lifecycleLabel = environment.outcome ? environmentOutcomeLabel[environment.outcome] : environment.lifecycle === 'starting' ? 'Starting' : removing ? 'Removing' : environment.lifecycle === 'archived' ? 'Archived' : undefined
+  const travel = reducedMotion || environment.lifecycle === 'archived' ? 0 : (1 - presence) * (removing ? 0.18 : -0.35)
   const faded = isolatedLayer !== null && isolatedLayer !== environment.id
   const activeEvent = scenario.events.filter(event => event.at <= cursor && event.targetId).at(-1)
   const activeActions = workspace.actions.filter(action => action.environmentId === environment.id && action.status !== 'reverted')
   const currentEvent = scenario.events.filter(event => event.at <= cursor && event.environmentId === environment.id && event.targetId).at(-1)
   const path = useMemo(() => investigationPath(layout, scenario.entryId, currentEvent?.targetId), [layout, scenario.entryId, currentEvent?.targetId])
   return <group position={position}>
-    <Html position={[-layout.width / 2 + 0.3, 0.6, 0]} center zIndexRange={[35, 0]}><button className={`environment-label ${environmentId === environment.id ? 'is-focused' : ''}`} data-environment={environment.id} data-lifecycle={environment.lifecycle} data-presence={presence.toFixed(3)} data-level={environment.level} aria-label={`${environment.label}${lifecycleLabel ? ` · ${lifecycleLabel}` : ''}`} onClick={() => focus(environment.id)} style={{ opacity: faded ? 0.45 : 1 }}><span>{environment.label}</span>{lifecycleLabel && <span> · {lifecycleLabel}</span>}</button></Html>
+    <Html position={[-layout.width / 2 + 0.3, 0.6, 0]} center zIndexRange={[35, 0]}><button className={`environment-label ${environmentId === environment.id ? 'is-focused' : ''}`} data-environment={environment.id} data-lifecycle={environment.lifecycle} data-outcome={environment.outcome} data-emphasised={emphasised || undefined} data-presence={presence.toFixed(3)} data-level={environment.level} aria-label={`${environment.label}${lifecycleLabel ? ` · ${lifecycleLabel}` : ''}`} onClick={() => focus(environment.id)} style={{ opacity: faded ? 0.45 : 1 }}><span>{environment.label}</span>{lifecycleLabel && <span> · {lifecycleLabel}</span>}</button></Html>
     <group position={[0, travel, 0]} scale={scale * (reducedMotion ? 1 : 0.96 + 0.04 * presence)} visible={presence > 0.001}>
       {environment.id !== 'production' && layout.positions[scenario.targetId] && <group position={layout.positions[scenario.targetId]}>
         {suiteChecks(scenario, environment.id, cursor).map((check, checkIndex) => {

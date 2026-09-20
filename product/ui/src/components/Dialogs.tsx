@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowRight, Check, GitBranch, LockKeyhole, ShieldCheck, X } from 'lucide-react'
+import { ArrowRight, Check, FileText, GitBranch, LockKeyhole, ShieldCheck, X } from 'lucide-react'
 import { visibleEvents, type Scenario, type WorkspaceState } from '../model'
 import { useWorkspace } from '../store'
 
@@ -16,7 +16,7 @@ export function Dialogs({ scenario, workspace }: { scenario: Scenario; workspace
   }, [dialog, scenario.id, hypothesesAvailable])
   const close = () => set({ dialog: null })
   return <dialog ref={element} className="workspace-dialog" onCancel={close} onClose={close} aria-labelledby="dialog-title" onClick={event => { if (event.target === element.current) { const bounds = element.current!.getBoundingClientRect(); if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) close() } }}>
-    <div className="dialog-header"><span className="overline">{dialog === 'experiment' ? 'LOCAL DRAFT' : 'SAFETY & APPROVALS'}</span><button className="icon-button" aria-label="Close dialog" onClick={close}><X size={18} /></button></div>
+    <div className="dialog-header"><span className="overline">{dialog === 'experiment' ? 'LOCAL DRAFT' : dialog === 'report' ? 'INCIDENT REPORT' : 'SAFETY & APPROVALS'}</span><button className="icon-button" aria-label="Close dialog" onClick={close}><X size={18} /></button></div>
     {dialog === 'experiment' ? <form key={scenario.id} onChange={() => setSaved(false)} onSubmit={event => { event.preventDefault(); setSaved(true) }}>
       <h2 id="dialog-title">Draft an experiment</h2><p className="dialog-subtitle">Describe a possible cause and the response that would test it. Validation checks required fields and the time limit, not whether the experiment is safe or correct.</p>
       <label>Hypothesis to test{hypothesesAvailable ? <select required value={hypothesisId} onChange={event => { setHypothesisId(event.target.value); setPrediction(scenario.hypotheses.find(item => item.id === event.target.value)!.prediction) }}>{scenario.hypotheses.map(hypothesis => <option key={hypothesis.id} value={hypothesis.id}>{hypothesis.title}</option>)}</select> : <input required value={hypothesisId} onChange={event => setHypothesisId(event.target.value)} placeholder="Describe a possible cause" aria-describedby="draft-hypothesis-help" />}</label>
@@ -28,7 +28,7 @@ export function Dialogs({ scenario, workspace }: { scenario: Scenario; workspace
       <div className="dialog-notice"><LockKeyhole size={16} /><span>Draft only. Validation does not save the plan, create a clone, or run a test.</span></div>
       <button className="primary-button full-width" type="submit">{saved ? <><Check size={15} />Draft validated locally</> : <>Validate draft <ArrowRight size={15} /></>}</button>
       {saved && <p className="form-success" role="status">Required fields and time limit are valid. Nothing was saved or executed. Editing a field clears this validation.</p>}
-    </form> : <>
+    </form> : dialog === 'report' ? <IncidentReport scenario={scenario} workspace={workspace} close={close} /> : <>
       <h2 id="dialog-title">Autonomy with boundaries.</h2><p className="dialog-subtitle">A design preview of execution boundaries. No live permissions or approvals are connected.</p>
       <div className="safety-tier"><ShieldCheck size={17} /><div><strong>Proposed automatic tier</strong><p>Telemetry reads and bounded, reversible interventions.</p></div></div>
       <div className="safety-tier"><GitBranch size={17} /><div><strong>Canary-gated</strong><p>Code changes require replay verification and a measured rollout.</p></div></div>
@@ -37,4 +37,37 @@ export function Dialogs({ scenario, workspace }: { scenario: Scenario; workspace
       <div className="dialog-notice"><LockKeyhole size={16} /><span>“Pause simulation” stops only this UI’s playback. It is not a production kill switch and does not undo infrastructure actions.</span></div>
     </>}
   </dialog>
+}
+
+
+function IncidentReport({ scenario, workspace, close }: { scenario: Scenario; workspace: WorkspaceState; close: () => void }) {
+  const { cursor, set } = useWorkspace()
+  const shown = visibleEvents(scenario, cursor)
+  const verdict = shown.filter(event => event.kind === 'verdict' && event.environmentId === 'production').at(-1)
+  const report = scenario.report
+  const winner = workspace.environments.find(env => env.id === workspace.winner)
+  const confirmedClone = workspace.environments.find(env => env.outcome === 'confirmed')
+  const fixClone = workspace.environments.find(env => env.outcome === 'fix-verified' || env.outcome === 'fix-failed')
+  const productionActions = shown.filter(event => event.kind === 'action' && event.environmentId === 'production').length
+  const hypothesis = scenario.hypotheses.find(item => item.id === workspace.diagnosis)
+  const facts: [string, string][] = [
+    ['Diagnosis', workspace.diagnosis ? `${hypothesis?.title ?? workspace.diagnosis}${workspace.confirmed ? ' · confirmed' : ' · not confirmed'}` : 'No verdict yet'],
+    ['Confirmed in', confirmedClone ? `${confirmedClone.label}, then production` : 'Production'],
+    ['Production actions', `${productionActions}${report ? ` of ${report.productionActions}` : ''}, each with a TTL and a recorded undo`],
+    ['Durable fix', report?.patch ? `${report.patchProvider ?? 'patch'} · ${report.patch}${report.patchRevision ? ` · revision ${report.patchRevision}` : ''}` : scenario.live ? 'No patch recorded' : 'Not part of this example'],
+    ['Fix verified', fixClone ? `${fixClone.label}: ${fixClone.outcome === 'fix-verified' ? 'survived the replayed incident' : 'did not survive the replay'}` : report?.verification ?? 'Not run'],
+    ['Canary', report?.canary ?? (scenario.live ? 'Not run' : 'Not part of this example')],
+  ]
+  if (report?.mitigationHeld) facts.push(['Mitigation held', `${report.mitigationHeld} is holding production up; a human must fix the cause before its TTL ends`])
+  return <div className="report-dialog">
+    <div className="report-dialog-heading"><FileText size={18} /><div><h2 id="dialog-title">{verdict?.title ?? workspace.verdict ?? 'Investigation complete'}</h2><p className="dialog-subtitle">{report?.outcome ?? 'Scripted example · simulated outcome'} · {scenario.live ? `audit log · ${scenario.id}` : scenario.incident}</p></div></div>
+    {winner && <p className="report-winner" data-environment={winner.id}><strong>{winner.label}</strong> is emphasised in the workspace: {winner.outcome === 'fix-verified' ? 'the patched clone survived the replayed incident.' : 'its reproduction matched the cause production confirmed.'}</p>}
+    <dl className="report-dialog-facts">{facts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+    {verdict?.result && <p className="report-dialog-evidence">{verdict.result}</p>}
+    <div className="report-dialog-actions">
+      <button className="primary-button" onClick={() => { close(); set({ view: 'replay' }) }}>Full report <ArrowRight size={15} /></button>
+      <button className="secondary-button" onClick={() => { close(); set({ view: 'explanation' }) }}>Why this incident?</button>
+      <button className="secondary-button" onClick={close}>Stay in the workspace</button>
+    </div>
+  </div>
 }

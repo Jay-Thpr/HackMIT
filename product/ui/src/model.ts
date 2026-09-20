@@ -1,6 +1,7 @@
 export type NodeKind = 'service' | 'datastore' | 'queue' | 'external'
 export type Health = 'healthy' | 'degraded' | 'unknown'
-export type EnvironmentLifecycle = 'unknown' | 'starting' | 'ready' | 'investigating' | 'destroying'
+export type EnvironmentLifecycle = 'unknown' | 'starting' | 'ready' | 'investigating' | 'destroying' | 'archived'
+export type EnvironmentOutcome = 'confirmed' | 'ruled-out' | 'fix-verified' | 'fix-superseded' | 'fix-failed'
 export type IncidentLifecycle = 'monitoring' | 'detected' | 'starting' | 'investigating' | 'confirming' | 'cleanup' | 'complete'
 export type Position = [number, number, number]
 
@@ -41,6 +42,7 @@ export interface Environment {
   lifecycle: EnvironmentLifecycle
   lifecycleAt: number
   level: number
+  outcome?: EnvironmentOutcome  // once the verdict exists: which clone carried the confirmed cause / the verified fix
   nodes: Record<string, NodeReading>
 }
 
@@ -134,6 +136,7 @@ export interface WorkspaceState {
   phase: string
   lifecycle: IncidentLifecycle
   cleanup: 'not-started' | 'in-progress' | 'complete'
+  winner?: string  // environment to emphasise at the end: the verified-fix clone, else the confirmed cause's clone
   verdict?: string
   diagnosis?: string
   confirmed?: boolean
@@ -189,24 +192,25 @@ export function replay(scenario: Scenario, time: number): WorkspaceState {
   let confirmed: boolean | undefined
   for (const event of visibleEvents(scenario, time)) {
     if (event.phase) phase = event.phase
-    if (event.incident) lifecycle = event.incident
-    if (event.kind === 'detect') lifecycle = 'detected'
+    const explicit = event.incident !== undefined  // live scenarios state the incident phase; derived transitions below defer to it
+    if (event.kind === 'detect' && !explicit) lifecycle = 'detected'
     if (event.kind === 'clone' && event.environment && !environments.some(env => env.id === event.environmentId)) {
       environments.push({ id: event.environmentId, ...event.environment, createdAt: event.at, lifecycle: event.lifecycle ?? (scenario.live ? 'unknown' : 'starting'), lifecycleAt: event.at, level: nextLevel++, nodes: Object.fromEntries(scenario.topology.nodes.map(node => [node.id, { health: 'unknown' }])) })
-      if (lifecycle === 'monitoring' || lifecycle === 'detected') lifecycle = 'starting'
-      else if (cleanup !== 'not-started') { lifecycle = 'starting'; cleanup = 'in-progress' }  // a later clone (e.g. patch verification) after an earlier cleanup
+      if (cleanup !== 'not-started') cleanup = 'in-progress'  // a later clone (sequential investigators, patch verification) after an earlier teardown
+      if (!explicit && (lifecycle === 'monitoring' || lifecycle === 'detected' || lifecycle === 'cleanup' || lifecycle === 'complete')) lifecycle = 'starting'
     }
     const environment = environments.find(env => env.id === event.environmentId)
     if (environment && event.readings) environment.nodes = { ...environment.nodes, ...structuredClone(event.readings) }
     if (environment && event.lifecycle) {
       environment.lifecycle = event.lifecycle
       environment.lifecycleAt = event.at
-      if (event.lifecycle === 'destroying') { lifecycle = 'cleanup'; cleanup = 'in-progress' }
+      if (event.lifecycle === 'destroying') { cleanup = 'in-progress'; if (!explicit) lifecycle = 'cleanup' }
     }
     if (event.kind === 'action' && event.action) {
       actions.push({ ...event.action, start: event.at, environmentId: event.environmentId, targetId: event.targetId, status: 'active' })
       if (environment && environment.id !== 'production') { environment.lifecycle = 'investigating'; environment.lifecycleAt = event.at }
-      if (event.environmentId === 'production') lifecycle = 'confirming'  // real runs destroy the investigation clones before probing production
+      if (explicit) { /* stated by the event */ }
+      else if (event.environmentId === 'production') lifecycle = 'confirming'  // real runs destroy the investigation clones before probing production
       else if (cleanup === 'not-started' || lifecycle === 'starting') lifecycle = 'investigating'
     }
     if (event.kind === 'undo') {
@@ -219,25 +223,57 @@ export function replay(scenario: Scenario, time: number): WorkspaceState {
       confirmed = isConfirmedVerdict(event)
     }
     if (event.kind === 'archive') {
-      const index = environments.findIndex(env => env.id === event.environmentId)
-      if (index > 0) {
-        environments.splice(index, 1)
-        cleanup = environments.length === 1 ? 'complete' : 'in-progress'
-        lifecycle = cleanup === 'complete' ? 'complete' : 'cleanup'
+      // The clone project is gone, but the environment stays in the workspace, faded, so the
+      // investigation can be reviewed at the end; its evidence and test columns remain.
+      const archived = environments.find(env => env.id === event.environmentId && env.id !== 'production')
+      if (archived) {
+        archived.lifecycle = 'archived'
+        archived.lifecycleAt = event.at
+        cleanup = environments.every(env => env.id === 'production' || env.lifecycle === 'archived') ? 'complete' : 'in-progress'
+        if (!explicit) lifecycle = cleanup === 'complete' ? 'complete' : 'cleanup'
       }
     }
+    if (explicit) lifecycle = event.incident!
   }
   for (const action of actions) {
     if (action.status !== 'reverted' && time >= action.start + action.ttl) action.status = 'awaiting-reversion'
   }
-  return { environments, actions, phase, lifecycle, cleanup, verdict, diagnosis, confirmed }
+  let winner: string | undefined
+  if (diagnosis && confirmed) {
+    const shown = visibleEvents(scenario, time)
+    for (const env of environments) {
+      if (env.id === 'production') continue
+      if (env.hypothesisId === 'patch') {
+        const replays = shown.filter(e => e.environmentId === env.id && e.testResult)
+        if (replays.length) env.outcome = replays.every(e => e.testResult!.passed) ? 'fix-verified' : 'fix-failed'
+      } else if (env.hypothesisId) env.outcome = env.hypothesisId === diagnosis ? 'confirmed' : 'ruled-out'
+    }
+    // the latest verified fix wins (an earlier revision may have passed its clone and then failed the canary)
+    const verified = environments.filter(env => env.outcome === 'fix-verified')
+    for (const env of verified.slice(0, -1)) env.outcome = 'fix-superseded'
+    winner = verified.at(-1)?.id ?? environments.find(env => env.outcome === 'confirmed')?.id
+  }
+  return { environments, actions, phase, lifecycle, cleanup, winner, verdict, diagnosis, confirmed }
 }
 
-export const environmentLifecycleLabel: Record<EnvironmentLifecycle, string> = { unknown: 'Readiness not recorded', starting: 'Starting', ready: 'Ready', investigating: 'Investigating', destroying: 'Removing' }
+export const environmentLifecycleLabel: Record<EnvironmentLifecycle, string> = { unknown: 'Readiness not recorded', starting: 'Starting', ready: 'Ready', investigating: 'Investigating', destroying: 'Removing', archived: 'Archived' }
+export const environmentOutcomeLabel: Record<EnvironmentOutcome, string> = { confirmed: 'Confirmed cause', 'ruled-out': 'Ruled out', 'fix-verified': 'Fix verified', 'fix-superseded': 'Earlier revision · superseded', 'fix-failed': 'Fix failed' }
+
+/** Archived clones stay in the scene at this presence so the investigation can be reviewed;
+ *  the clone that carried the confirmed cause or the verified fix stays at full presence. */
+export const ARCHIVED_PRESENCE = 0.4
 
 export function environmentPresence(environment: Environment, cursor: number, reducedMotion = false): number {
-  if (environment.id === 'production' || reducedMotion) return 1
-  const progress = Math.max(0, Math.min(1, environment.lifecycle === 'destroying' ? 1 - (cursor - environment.lifecycleAt) / 3 : cursor - environment.createdAt))
+  if (environment.id === 'production') return 1
+  const emphasised = environment.outcome === 'confirmed' || environment.outcome === 'fix-verified'
+  const rest = emphasised ? 1 : ARCHIVED_PRESENCE
+  if (environment.lifecycle === 'archived') return rest
+  if (reducedMotion) return 1
+  if (environment.lifecycle === 'destroying') {
+    const progress = Math.max(0, Math.min(1, 1 - (cursor - environment.lifecycleAt) / 3))
+    return rest + (1 - rest) * progress * progress * (3 - 2 * progress)
+  }
+  const progress = Math.max(0, Math.min(1, cursor - environment.createdAt))
   return progress * progress * (3 - 2 * progress)
 }
 
