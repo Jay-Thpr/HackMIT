@@ -846,20 +846,6 @@ main { padding: 22px 22px 0; }
 /* Spatial investigation — Sorbet palette, a quiet canvas with details on demand. */
 :root { --paper: #fefefe; --border: #edecec; --ink: #343734; --muted: #6b7068; }
 .is-spatial-workspace { background: #fefefe; color: #343734; }
-.is-spatial-workspace .sidebar { width: 64px; padding: 25px 10px; align-items: center; background: #fefefe; border-color: #edecec; }
-.is-spatial-workspace .brand { padding: 0; margin: 0 0 42px; }
-.is-spatial-workspace .brand>span:last-child,
-.is-spatial-workspace .nav-group-label,
-.is-spatial-workspace .nav-item>span,
-.is-spatial-workspace .sidebar-case,
-.is-spatial-workspace .sidebar-bottom,
-.is-spatial-workspace .sidebar-note,
-.is-spatial-workspace .workspace-switch { display: none; }
-.is-spatial-workspace .nav-item { width: 42px; height: 44px; justify-content: center; padding: 0; margin: 4px 0; color: #74796e; border-radius: 10px; }
-.is-spatial-workspace .nav-item.active { background: #e0e7d7; color: #4a5540; box-shadow: none; }
-.is-spatial-workspace .nav-item:hover { background: #edecec; }
-.is-spatial-workspace .sidebar-rule { width: 24px; margin: 20px 0; background: #edecec; }
-.is-spatial-workspace .main-shell { margin-left: 64px; width: calc(100% - 64px); }
 .is-spatial-workspace .topbar { background: #fefefe; height: 49px; padding: 0 30px; border-color: #f1f1ef; }
 .is-spatial-workspace .breadcrumb { color: #858982; font-size: 11px; }
 .is-spatial-workspace .breadcrumb strong { color: #6a7065; }
@@ -969,7 +955,6 @@ main { padding: 22px 22px 0; }
 @media (max-width: 1100px) { .is-spatial-workspace .workspace-grid.has-inspector { grid-template-columns: minmax(0,1fr) 300px; gap: 18px; } .is-spatial-workspace main { padding-left: 22px; padding-right: 22px; } .is-spatial-workspace .workspace-header-actions { flex-wrap: wrap; justify-content: flex-end; } }
 @media (max-width: 850px) { .is-spatial-workspace .workspace-grid.has-inspector { grid-template-columns: minmax(0,1fr); } .is-spatial-workspace .inspector { max-height: 650px; } .is-spatial-workspace .workspace-header { align-items: flex-start; } .is-spatial-workspace .workspace-header-actions { max-width: 240px; } }
 @media (max-width: 600px) {
-  .is-spatial-workspace .sidebar { width: 52px; padding: 23px 5px; } .is-spatial-workspace .main-shell { margin-left: 52px; width: calc(100% - 52px); }
   .is-spatial-workspace .topbar { padding: 0 16px; } .is-spatial-workspace main { padding: 20px 16px 0; }
   .is-spatial-workspace .workspace-header { display: block; margin-bottom: 16px; } .is-spatial-workspace .workspace-header h1 { font-size: 19px; }
   .is-spatial-workspace .workspace-header-actions { max-width: none; justify-content: flex-start; margin-top: 14px; }

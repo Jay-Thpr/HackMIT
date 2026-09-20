@@ -20,6 +20,31 @@ test('renders the real WebGL scene and a clearly marked, interactive prototype',
   expect(errors).toEqual([])
 })
 
+for (const width of [1512, 900, 600, 390]) {
+  test(`sidebar keeps its responsive layout across navigation at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 982 })
+    await page.goto('/')
+    const navigation = page.getByRole('navigation', { name: 'Main navigation' })
+    await navigation.getByRole('button', { name: 'Why this incident?', exact: true }).click()
+    const sidebar = page.locator('.sidebar')
+    const sidebarWidth = await sidebar.evaluate(element => getComputedStyle(element).width)
+    const contentOffset = await page.locator('.main-shell').evaluate(element => getComputedStyle(element).marginLeft)
+    for (const name of ['Agent workspace', 'Experiment lab', 'Why this incident?', 'Observability', 'Agent workspace', 'Replay library']) {
+      const button = navigation.getByRole('button', { name, exact: true })
+      await button.click()
+      await expect(button).toHaveAttribute('aria-current', 'page')
+      await expect(sidebar).toHaveCSS('width', sidebarWidth)
+      await expect(page.locator('.main-shell')).toHaveCSS('margin-left', contentOffset)
+      if (width > 760) {
+        await expect(button.locator('span').first()).toBeVisible()
+        await expect(page.locator('.sidebar-case')).toBeVisible()
+      } else {
+        await expect(button.locator('span').first()).toBeHidden()
+      }
+    }
+  })
+}
+
 test('seeking backward removes future environments and evidence', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByRole('combobox', { name: 'Selected environment' }).locator('option')).toHaveCount(3)
