@@ -8,6 +8,7 @@ Production is never touched; the clone is destroyed on the way out, pass or fail
 
 import time
 import json
+import logging
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +23,8 @@ from ..paths import PRODUCT_ROOT
 from ..ports import PatchProposal, PatchVerification, PatchVerifier, VerificationStatus
 from .live_telemetry import FingerprintWriter, LiveTelemetrySource, TelemetryUnavailable
 from .sandbox import SandboxLeverAdapter
+
+log = logging.getLogger(__name__)
 
 # How each hero diagnosis is reproduced in a clone (sandbox/INTEGRATION.md "reproduction
 # recipes"). Investigators (Owner 3) can pass their own measured recipe instead.
@@ -155,12 +158,12 @@ class LabPatchVerifier(PatchVerifier):
             clone = self._lab.create(spec)
         except (LabError, httpx.HTTPError) as exc:
             return PatchVerification(VerificationStatus.skipped, f"clone lab unavailable: {exc}")
-        if clone.status != CloneStatus.ready or clone.endpoints is None:
-            return PatchVerification(
-                VerificationStatus.skipped, f"clone {clone.clone_id} not ready: {clone.detail}",
-                clone_id=clone.clone_id,
-            )
         try:
+            if clone.status != CloneStatus.ready or clone.endpoints is None:
+                return PatchVerification(
+                    VerificationStatus.skipped, f"clone {clone.clone_id} not ready: {clone.detail}",
+                    clone_id=clone.clone_id,
+                )
             suite = _unique_recipes(
                 [current_recipe]
                 + (stored_recipes(self._recipe_store) if self._recipe_store is not None else [])
@@ -196,8 +199,8 @@ class LabPatchVerifier(PatchVerifier):
         finally:
             try:
                 self._lab.destroy(clone.clone_id)
-            except (LabError, httpx.HTTPError):
-                pass
+            except (LabError, httpx.HTTPError) as exc:
+                log.warning("clone %s cleanup failed: %s", clone.clone_id, exc)
 
     def _run(self, clone: CloneInfo, recipe: Recipe, incident_id: str) -> PatchVerification:
         telemetry = self._telemetry_factory(clone, incident_id)

@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -210,6 +211,41 @@ def test_default_clone_telemetry_carries_writer_incident_and_clone_id():
     assert source._writer is writer
     assert (source._incident_id, source._clone_id) == ("inc-9", clone.clone_id)
     assert source._optional_urls == {"orders_v2": "http://clone:9104/stats"}
+
+
+def test_verifier_destroys_allocated_clone_that_never_became_ready():
+    class NotReadyLab(FakeLab):
+        def create(self, spec):
+            self.created.append(spec)
+            return CloneInfo(
+                clone_id=f"{spec.name}-1", status=CloneStatus.failed, spec=spec,
+                created_at=T0, endpoints=None, detail="clone provisioning cancelled",
+            )
+
+    lab = NotReadyLab()
+    result = _verifier(lab, FakeCloneTelemetry(load_fixture("storm"), heals=True), RecordingLevers()).verify(
+        "inc-x", _patch(), "H_meta"
+    )
+
+    assert result.status == VerificationStatus.skipped
+    assert "not ready" in result.detail
+    assert lab.destroyed == [result.clone_id]
+
+
+def test_verifier_logs_destroy_failure_and_keeps_the_result(caplog):
+    class FlakyDestroyLab(FakeLab):
+        def destroy(self, clone_id):
+            self.destroyed.append(clone_id)
+            raise LabError("DELETE /clones/x -> 503: compose down failed")
+
+    lab = FlakyDestroyLab()
+    verifier = _verifier(lab, FakeCloneTelemetry(load_fixture("storm"), heals=True), RecordingLevers())
+    with caplog.at_level(logging.WARNING):
+        result = verifier.verify("inc-9", _patch(), "H_meta")
+
+    assert result.status == VerificationStatus.passed
+    assert lab.destroyed == [result.clone_id]
+    assert "cleanup failed" in caplog.text
 
 
 def test_verifier_skips_without_lab_recipe_or_context():
