@@ -40,11 +40,41 @@ export function ExperimentLab({ scenario, workspace }: { scenario: Scenario; wor
 }
 
 export function ReplayLibrary({ scenario }: { scenario: Scenario }) {
-  const { cursor, seek, set } = useWorkspace()
-  const verdict = visibleEvents(scenario, cursor).filter(event => event.kind === 'verdict' && event.environmentId === 'production').at(-1)
+  const { cursor, seek, set, scenarios, setScenario } = useWorkspace()
+  const shown = visibleEvents(scenario, cursor)
+  const verdict = shown.filter(event => event.kind === 'verdict' && event.environmentId === 'production').at(-1)
+  const finalVerdict = scenario.events.filter(event => event.kind === 'verdict' && event.environmentId === 'production').at(-1)
+  const live = scenarios.filter(item => item.live)
+  const report = scenario.report
+  const review = (id: string) => {
+    // Review = the whole recorded run: select it and put the cursor at its end so the report shows
+    const target = scenarios.find(item => item.id === id)
+    if (!target) return
+    if (id !== scenario.id) setScenario(id)
+    useWorkspace.getState().seek(target.duration)
+  }
+  const patchLabel = report?.patch
+    ? `${report.patchProvider ?? 'patch'}${report.patchRevision ? ` rev ${report.patchRevision}` : ''} · verification ${report.verification ?? '—'} · canary ${report.canary ?? '—'}`
+    : scenario.live ? 'No patch recorded' : 'Not connected'
   return <div className="replay-view">
-    <section className="panel replay-hero"><span className="overline">INCIDENT MEMORY</span><h2>Review an investigation.</h2><p>Replay the incident to see what the agent changed, what happened next, and how it reached a conclusion.</p><span className="quiet-badge">Design preview · no saved live incidents</span></section>
-    <section className="panel replay-row"><div className="replay-icon"><Layers3 size={23} /></div><div><span className="overline">ILLUSTRATIVE REPLAY · {scenario.incident}</span><h3>{scenario.incidentTitle}</h3><p>{scenario.name} · {scenario.duration}s simulated timeline · {scenario.events.length} scripted steps</p></div><button className="secondary-button" onClick={() => { seek(0); set({ view: 'investigation', playing: true }) }}><Play size={14} />Play from the start</button></section>
-    <section className="panel report-preview"><span className="overline">REPORT AT THE SELECTED TIME</span><h3>{verdict?.title ?? 'Investigation is not yet confirmed.'}</h3><p>{verdict?.detail ?? 'The report will only show conclusions whose evidence exists at the selected point on the timeline.'}</p><div className="report-facts"><span>Source<strong>Scripted example</strong></span><span>Production actions<strong>{visibleEvents(scenario, cursor).filter(event => event.kind === 'action' && event.environmentId === 'production').length}</strong></span><span>Patch / canary<strong>Not connected</strong></span><span>Benchmark accuracy<strong>Not measured</strong></span></div></section>
+    <section className="panel replay-hero"><span className="overline">INCIDENT MEMORY</span><h2>Review an investigation.</h2><p>Replay the incident to see what the agent changed, what happened next, and how it reached a conclusion. The report reveals only conclusions whose evidence exists at the selected point on the timeline.</p><span className="quiet-badge">{live.length ? `${live.length} recorded incident${live.length === 1 ? '' : 's'} from the audit log` : 'Design preview · no recorded incidents loaded'}</span></section>
+    {live.map(item => <section key={item.id} className={`panel replay-row ${item.id === scenario.id ? 'is-selected' : ''}`} aria-label={`Incident ${item.id}`}>
+      <div className="replay-icon"><Layers3 size={23} /></div>
+      <div><span className="overline">{item.complete ? 'RECORDED INCIDENT' : 'LIVE INCIDENT · IN PROGRESS'} · {item.id}</span><h3>{item.report?.diagnosis ? `${item.incidentTitle} → ${item.report.diagnosis}${item.report.confirmed ? ' confirmed' : ' not confirmed'}` : item.incidentTitle}</h3><p>{item.report?.outcome ?? 'in progress'} · {timeLabel(item.duration)} · {item.events.length} audited steps · {item.report?.productionActions ?? 0} production actions</p></div>
+      <div className="replay-actions"><button className="secondary-button" onClick={() => review(item.id)}>Review<ArrowRight size={14} /></button><button className="secondary-button" onClick={() => { if (item.id !== scenario.id) setScenario(item.id); useWorkspace.getState().seek(0); set({ view: 'investigation', playing: true }) }}><Play size={14} />Play from the start</button></div>
+    </section>)}
+    {!scenario.live && <section className="panel replay-row"><div className="replay-icon"><Layers3 size={23} /></div><div><span className="overline">ILLUSTRATIVE REPLAY · {scenario.incident}</span><h3>{scenario.incidentTitle}</h3><p>{scenario.name} · {scenario.duration}s simulated timeline · {scenario.events.length} scripted steps</p></div><button className="secondary-button" onClick={() => { seek(0); set({ view: 'investigation', playing: true }) }}><Play size={14} />Play from the start</button></section>}
+    <section className="panel report-preview"><span className="overline">REPORT AT THE SELECTED TIME · {timeLabel(cursor)}</span>
+      <h3>{verdict?.title ?? (finalVerdict ? 'The verdict is later on the timeline.' : scenario.live && !scenario.complete ? 'Investigation in progress.' : 'Investigation is not yet confirmed.')}</h3>
+      <p>{verdict?.detail ?? (finalVerdict ? `Measurement reached “${finalVerdict.title}” at ${timeLabel(finalVerdict.at)}. Move the timeline forward, or review the full report.` : 'The report will only show conclusions whose evidence exists at the selected point on the timeline.')}</p>
+      {!verdict && finalVerdict && <button className="secondary-button" onClick={() => seek(scenario.duration)}>Review the full report<ArrowRight size={14} /></button>}
+      {verdict?.result && <p className="report-evidence">{verdict.result}</p>}
+      <div className="report-facts">
+        <span>Source<strong>{scenario.live ? `Audit log · ${scenario.id}` : 'Scripted example'}</strong></span>
+        <span>Production actions<strong>{shown.filter(event => event.kind === 'action' && event.environmentId === 'production').length}{report ? ` / ${report.productionActions}` : ''}</strong></span>
+        <span>Patch / canary<strong>{patchLabel}</strong></span>
+        <span>{report?.mitigationHeld ? 'Mitigation held' : 'Benchmark accuracy'}<strong>{report?.mitigationHeld ?? 'Not measured'}</strong></span>
+      </div>
+    </section>
   </div>
 }

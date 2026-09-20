@@ -106,7 +106,10 @@ def test_scenario_marks_completion_and_now():
     done = scenario_from_incident("demo-storm-2", events)
     assert done["complete"] is True and done["now"] == done["duration"]
     partial = scenario_from_incident("demo-storm-2", events[:12], now=events[11].ts + timedelta(seconds=300))
-    assert partial["complete"] is False
+    assert partial["complete"] is False and partial["report"]["outcome"] == "in progress"
+    stale = scenario_from_incident("demo-storm-2", events[:12], now=events[11].ts + timedelta(hours=2))
+    assert stale["complete"] is True and stale["report"]["outcome"].startswith("abandoned")
+    assert done["report"]["diagnosis"] == "H_meta" and done["report"]["canary"] == "passed" and done["report"]["patchRevision"] == 1
     assert partial["duration"] == partial["now"] > max(e["at"] for e in partial["events"])
 
 
@@ -127,9 +130,11 @@ def test_stream_emits_scenario_frames_as_the_audit_grows_and_done_at_report(tmp_
         path.write_text("\n".join(lines[:nxt]) + "\n")
         appended["n"] = nxt
 
+    recorded_end = _events()[-1].ts  # the log is hours old: pretend "now" is when it was written
+
     async def collect():
         frames = []
-        async for frame in scenario_updates(reader, "demo-storm-2", poll_s=0, sleep=sleep):
+        async for frame in scenario_updates(reader, "demo-storm-2", poll_s=0, sleep=sleep, clock=lambda: recorded_end):
             frames.append(frame)
         return frames
 

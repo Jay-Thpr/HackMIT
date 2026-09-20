@@ -237,13 +237,39 @@ def scenario_from_incident(
     # verdict not confirmed). Pages in stages 6-8 are followed by more events (revise, report).
     last = events[-1]
     complete = last.kind == EventKind.report or (last.kind == EventKind.page_human and last.stage in (4, 5))
+    # A run that stopped writing (crashed, killed) is not "in progress" forever.
+    abandoned = not complete and now is not None and (now - last.ts) > timedelta(minutes=30)
+    complete = complete or abandoned
     duration = (out[-1]["at"] + 10) if out else 60
     if not complete and now is not None:
         duration = max(duration, at(now))  # the incident is still running: the slider ends at wall-clock now
+    verdict_ev = next((e for e in reversed(events) if e.kind == EventKind.verdict), None)
+    report_ev = next((e for e in reversed(events) if e.kind == EventKind.report), None)
+    patch_ev = next((e for e in reversed(events) if e.kind == EventKind.patch_opened), None)
+    verify_ev = next((e for e in reversed(events) if e.kind == EventKind.canary_update and e.stage == 6), None)
+    rp = (report_ev.payload if report_ev else {}) or {}
+    report = {
+        "outcome": report_ev.summary if report_ev else (
+            "paged" if events[-1].kind == EventKind.page_human else "abandoned (no further events)" if abandoned else "in progress"),
+        "diagnosis": (verdict_ev.payload or {}).get("diagnosis") if verdict_ev else None,
+        "confirmed": bool((verdict_ev.payload or {}).get("confirmed")) if verdict_ev else False,
+        "verdictAt": at(verdict_ev.ts) if verdict_ev else None,
+        "patch": (patch_ev.payload or {}).get("reference") if patch_ev else None,
+        "patchProvider": (patch_ev.payload or {}).get("provider") if patch_ev else None,
+        "patchRevision": (patch_ev.payload or {}).get("revision", 0) if patch_ev else None,
+        "verification": rp.get("clone_verification") or ((verify_ev.payload or {}).get("status") if verify_ev else None),
+        "canary": rp.get("canary_status"),
+        "mitigationHeld": rp.get("mitigation_held"),
+        "productionActions": sum(1 for e in events if e.kind == EventKind.action_apply),
+        "pages": sum(1 for e in events if e.kind == EventKind.page_human),
+        "startedAt": events[0].ts.isoformat(),
+        "endedAt": events[-1].ts.isoformat(),
+    }
     return {
         "id": incident_id,
         "live": True,
         "complete": complete,
+        "report": report,
         "now": at(now) if now is not None else duration,
         "name": f"Incident {incident_id}",
         "subtitle": "Live incident · real audit log",
