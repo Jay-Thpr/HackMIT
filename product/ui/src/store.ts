@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { scenarios } from './scenarios'
 
-export type View = 'investigation' | 'observability' | 'experiments' | 'replay'
+export type View = 'explanation' | 'investigation' | 'observability' | 'experiments' | 'replay'
 
 interface UIState {
   scenarioId: string
@@ -9,12 +9,14 @@ interface UIState {
   playing: boolean
   speed: number
   environmentId: string
+  isolatedLayer: string | null
+  selectedAgent?: string
+  selectedSuiteCheck?: { environmentId: string; checkId: string }
   selectedNode?: string
   selectedEvent?: string
   view: View
   traceTab: 'evidence' | 'trace'
   follow: boolean
-  flat: boolean
   reducedMotion: boolean
   focusRevision: number
   dialog: 'experiment' | 'safety' | null
@@ -35,14 +37,14 @@ export const useWorkspace = create<UIState>((set, get) => ({
   playing: false,
   speed: 1,
   environmentId: 'production',
+  isolatedLayer: null,
   view: 'investigation',
   traceTab: 'evidence',
   follow: false,
-  flat: false,
   reducedMotion: prefersReducedMotion,
   focusRevision: 0,
   dialog: null,
-  setScenario: id => set({ scenarioId: id, cursor: 47, environmentId: 'production', selectedNode: undefined, selectedEvent: undefined, playing: false, focusRevision: get().focusRevision + 1 }),
+  setScenario: id => set({ scenarioId: id, cursor: 47, environmentId: 'production', isolatedLayer: null, selectedNode: undefined, selectedSuiteCheck: undefined, selectedAgent: undefined, selectedEvent: undefined, playing: false, focusRevision: get().focusRevision + 1 }),
   seek: time => {
     const scenario = scenarios.find(item => item.id === get().scenarioId)!
     set({ cursor: Math.max(0, Math.min(time, scenario.duration)), playing: false, selectedEvent: undefined })
@@ -59,7 +61,7 @@ export const useWorkspace = create<UIState>((set, get) => ({
     const duration = scenarios.find(item => item.id === state.scenarioId)!.duration
     set({ playing: !state.playing, cursor: state.cursor >= duration ? 0 : state.cursor })
   },
-  inspect: (selectedNode, environmentId) => set({ selectedNode, environmentId, selectedEvent: undefined, focusRevision: get().focusRevision + 1 }),
-  focus: environmentId => set({ environmentId, selectedNode: undefined, focusRevision: get().focusRevision + 1 }),
+  inspect: (selectedNode, environmentId) => set({ selectedSuiteCheck: undefined, selectedAgent: undefined, selectedNode, environmentId, isolatedLayer: environmentId, traceTab: 'trace', follow: false, selectedEvent: undefined, focusRevision: get().focusRevision + 1 }),
+  focus: environmentId => set({ environmentId, isolatedLayer: environmentId, follow: false, selectedNode: undefined, selectedSuiteCheck: undefined, selectedAgent: undefined, focusRevision: get().focusRevision + 1 }),
   set: patch => set(patch),
 }))

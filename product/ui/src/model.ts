@@ -56,6 +56,7 @@ export interface WorkspaceEvent {
   prediction?: string
   result?: string
   action?: { id: string; label: string; ttl: number }
+  testResult?: { caseId?: string; checkId: string; passed: boolean; expected: string; observed: string }
   undoId?: string
   environment?: { label: string; color: string; hypothesisId: string }
   readings?: Record<string, NodeReading>
@@ -71,6 +72,7 @@ export interface Scenario {
   entryId: string
   policyId: string
   duration: number
+  testCases?: { id: string; groupId: 'baseline' | 'reproduction' | 'probe' | 'release'; name: string; description: string }[]
   topology: Topology
   baseline: Record<string, NodeReading>
   hypotheses: { id: string; title: string; description: string; prediction: string; color: string }[]
@@ -118,7 +120,7 @@ export function visibleEvents(scenario: Scenario, time: number): WorkspaceEvent[
 }
 
 export function replay(scenario: Scenario, time: number): WorkspaceState {
-  const environments: Environment[] = [{ id: 'production', label: 'Production', color: '#427766', createdAt: 0, nodes: structuredClone(scenario.baseline) }]
+  const environments: Environment[] = [{ id: 'production', label: 'Production', color: '#806747', createdAt: 0, nodes: structuredClone(scenario.baseline) }]
   const actions: ActiveAction[] = []
   let phase = 'Monitoring'
   let verdict: string | undefined
