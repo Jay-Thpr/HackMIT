@@ -3,7 +3,7 @@ name = "faultline-telemetry"
 version = "0.1.0"
 description = "C1 telemetry and C4 Elasticsearch audit adapters for Faultline"
 requires-python = ">=3.11"
-dependencies = ["faultline-contracts", "httpx>=0.27"]
+dependencies = ["faultline-contracts", "httpx>=0.27", "tiktoken>=0.8"]
 
 [tool.uv.sources]
 faultline-contracts = { path = "../../contracts", editable = true }
