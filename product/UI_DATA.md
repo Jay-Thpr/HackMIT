@@ -32,10 +32,13 @@ All events for the incident, in `ts` order. `stage` gives the pipeline position;
 `report` event's `payload.diagnosis`, `canary_status`, `clone_verification` give the outcome.
 
 ### LLM reasoning panel (`actor == "llm"`)
-`stage 3, kind triage`: `payload.hypotheses` (ids, e.g. `["H_meta","H_db","H_cpu"]`), `payload.ambiguous`.
-Hypothesis labels/descriptions and the prediction matrix are in the `TriageResult` (C2); today the
-audit carries only ids. If you want labels/predictions/`confirms_if` rendered, tell Owner 4 and the
-triage event will carry the `TriageResult` dump — it is a five-line change.
+`stage 3, kind triage`: `payload.hypotheses` (ids, e.g. `["H_meta","H_db","H_cpu"]`), `payload.ambiguous`,
+and `payload.triage` = the full `TriageResult` (C2, `faultline_contracts.triage`) as JSON:
+`reasoning`, `hypotheses[] {id, label, description, evidence[]}`, and the prediction matrix
+`predictions[] {hypothesis_id, experiment_id, during[] {metric, direction}, after_release[] {metric,
+direction}, confirms_if {phase, metric, expect} | null}`. Render labels from `hypotheses[].label`, the
+matrix as hypotheses × experiments, and `confirms_if` as "confirmed if <metric> is <expect> <phase>".
+The renderer's `[triage] source: openai|fallback (...)` line is not in the audit.
 
 ### Measured-evidence panel (`actor == "math"`)
 - `stage 5, kind verdict`: `payload.diagnosis`, `payload.confirmed`, `payload.observations[]`, each
@@ -52,11 +55,15 @@ triage event will carry the `TriageResult` dump — it is a five-line change.
   breached_after_settle, windows_after_settle, orders_v2_p99_ms_after, retry_ratio_after}`.
 
 ### Planner / experiment
-- `[plan] … selected, blast radius N%` is only in the renderer today; the audit has
-  `stage 4, kind experiment_start` with `payload.hold_s`, `ttl_s`, `experiment_id`. The planner's
-  **candidate table** (separation vs blast radius per experiment) is not yet emitted; if the UI
-  wants it (judge-visible item 4), Owner 4 will add a `stage 4` event with
-  `payload.candidates[] = {experiment_id, lever_id, separation, score, blast_radius_pct, selected}`.
+- `stage 4, kind triage, actor math, payload.planner == true`: the planner's **candidate table**
+  (PRD stage 4b, judge-visible item 4). `payload.candidates[]` is one row per scored experiment,
+  ranked as the planner ranked them: `{experiment_id, lever_id, separation, score, blast_radius_pct,
+  selected}`. `separation` = number of (phase, metric) predictions on which the hypotheses disagree;
+  `score = separation − 0.1 × blast_radius_pct`; exactly one row has `selected: true` (none when the
+  planner refused — the following `refused` + `page_human` say why). `experiment_id` on the event is the
+  winner. The event is emitted once per `plan()`; the follow-up confirmation experiment does not re-emit it.
+- The chosen probe then appears as `stage 4, kind experiment_start` with `payload.hold_s`, `ttl_s`,
+  `experiment_id`.
 - Phase boundaries for shading the chart: `kind experiment_start` (cap on) and `kind experiment_end`
   (released) with matching `experiment_id`; `faultline_contracts.experiment_windows(events)` computes
   them for you. During = start→end; after-release = end→+default_watch_s (20 s for retry_cap).
@@ -66,6 +73,12 @@ triage event will carry the `TriageResult` dump — it is a five-line change.
 `applied_at`, `status`, `action_id`. Every `action_apply` has a matching `action_undo` with the same
 `action_id` (or the TTL expired on the target). `stage 7 action_apply` also has `payload.target`
 (`patch_reference`, `version`, `source_revision`, `service_name`).
+
+Every release is re-verified against the target (`status()` after `undo()`, one retry). If the lever is
+still active, the `action_undo` carries `payload.status == "active"` and is followed by `kind refused`
+with `payload.release_failed == true`, `lever_id`, `ttl_s`, `expires_at` (summary "release of <lever> did
+not land; TTL <n>s will revert it") and a `page_human` with the same `action_id`. Show the lever as
+**still applied until `expires_at`**. A canary whose release did not land is reported `regressed`.
 
 ### Patch / Devin
 `stage 6, kind patch_opened`: `payload.provider` (`devin|fallback`), `reference` (PR URL or
