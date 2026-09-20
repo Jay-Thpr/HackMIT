@@ -42,12 +42,21 @@ for (const architecture of ['commerce', 'pipeline']) {
     await expect(lifecycle).toHaveAttribute('data-phase', 'cleanup')
     await expect(lifecycle.locator('[data-environment="clone-a"]')).toHaveAttribute('data-lifecycle', 'destroying')
     await seekTo(page, 105)
-    await expect(environments).toHaveCount(2)
+    await expect(environments).toHaveCount(3)  // archived clones stay in the workspace for review
+    await expect(lifecycle.locator('[data-environment="clone-a"]')).toHaveAttribute('data-lifecycle', 'archived')
     await expect(lifecycle.locator('[data-environment="clone-b"]')).toHaveAttribute('data-lifecycle', 'destroying')
     await seekTo(page, 108)
-    await expect(environments).toHaveCount(1)
+    await expect(environments).toHaveCount(3)
     await expect(lifecycle).toHaveAttribute('data-phase', 'complete')
-    await expect(page.getByText('Clones removed; evidence retained', { exact: true })).toBeVisible()
+    await expect(page.getByText('Clones retained for review; evidence kept', { exact: true })).toBeVisible()
+    // the clone that carried the confirmed cause is emphasised; the other is ruled out
+    await expect(lifecycle.locator('[data-environment="clone-a"]')).toHaveAttribute('data-outcome', 'confirmed')
+    await expect(lifecycle.locator('[data-environment="clone-a"]')).toHaveAttribute('data-winner', 'true')
+    await expect(lifecycle.locator('[data-environment="clone-b"]')).toHaveAttribute('data-outcome', 'ruled-out')
+    await expect(page.locator('dialog[open]')).toHaveCount(0)  // seeking to the end does not pop the report
+    await page.getByRole('button', { name: 'Open the incident report', exact: true }).click()
+    await expect(page.locator('dialog[open] #dialog-title')).toHaveText('Self-sustaining overload confirmed')
+    await page.keyboard.press('Escape')
     await page.waitForTimeout(1200)
     await page.screenshot({ path: `test-results/${architecture}-cleanup-complete.png`, fullPage: true })
     await page.getByRole('button', { name: 'Review the explanation', exact: true }).click()
@@ -56,6 +65,7 @@ for (const architecture of ['commerce', 'pipeline']) {
     await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Agent workspace', exact: true }).click()
     await seekTo(page, 47)
     await expect(environments).toHaveCount(3)
+    await expect(lifecycle.locator('[data-environment="clone-a"]')).not.toHaveAttribute('data-outcome', /.+/)  // no emphasis before the verdict
     await expect(page.getByRole('heading', { name: 'Self-sustaining overload confirmed', exact: true })).toHaveCount(0)
     await page.getByRole('button', { name: 'Restart simulation', exact: true }).click()
     await expect(lifecycle).toHaveAttribute('data-phase', 'monitoring')
@@ -63,7 +73,7 @@ for (const architecture of ['commerce', 'pipeline']) {
   })
 }
 
-test('clone motion is seek-safe, paused, and removed only after archive', async ({ page }) => {
+test('clone motion is seek-safe, paused, and archived clones stay with the winner emphasised', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('.map-canvas canvas')).toBeVisible()
   await seekTo(page, 24)
@@ -72,20 +82,40 @@ test('clone motion is seek-safe, paused, and removed only after archive', async 
   await expect(cloneA).toHaveAttribute('data-presence', '0.000')
   await seekTo(page, 25)
   await expect(cloneA).toHaveAttribute('data-presence', '1.000')
+  // clone A carries the cause the verdict confirms: it never fades while being removed
   await seekTo(page, 103)
-  await expect(cloneA).toHaveAttribute('data-presence', '0.741')
-  await page.waitForTimeout(650)
-  await expect(cloneA).toHaveAttribute('data-presence', '0.741')
+  await expect(cloneA).toHaveAttribute('data-presence', '1.000')
+  await expect(cloneA).toHaveAttribute('data-outcome', 'confirmed')
+  await expect(cloneA).toHaveAttribute('data-emphasised', 'true')
   await seekTo(page, 105)
-  await expect(cloneA).toHaveCount(0)
+  await expect(cloneA).toHaveAttribute('data-lifecycle', 'archived')
   await expect(cloneB).toHaveAttribute('data-level', '2')
+  // clone B was ruled out: it fades to the archived presence and stays
   await seekTo(page, 106)
-  await expect(cloneB).toHaveAttribute('data-presence', '0.741')
+  await expect(cloneB).toHaveAttribute('data-presence', /^0\.84/)
+  await page.waitForTimeout(650)
+  await expect(cloneB).toHaveAttribute('data-presence', /^0\.84/)
   await page.getByRole('button', { name: 'Full motion', exact: true }).click()
   await expect(cloneB).toHaveAttribute('data-presence', '1.000')
+  await page.getByRole('button', { name: 'Reduced motion', exact: true }).click()
   await seekTo(page, 108)
-  await expect(cloneB).toHaveCount(0)
+  await expect(cloneB).toHaveAttribute('data-presence', '0.400')
+  await expect(cloneB).toHaveAttribute('data-outcome', 'ruled-out')
+  await expect(cloneA).toHaveAttribute('data-presence', '1.000')
   await expect(page.getByRole('button', { name: 'Replay incident demo', exact: true })).toBeVisible()
+})
+
+test('the incident report opens by itself when playback reaches the end', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('.map-canvas canvas')).toBeVisible()
+  await seekTo(page, 100)
+  await page.getByRole('button', { name: 'Resume demo', exact: true }).click()
+  await expect(page.locator('dialog[open] #dialog-title')).toHaveText('Self-sustaining overload confirmed', { timeout: 15000 })
+  await expect(page.locator('dialog[open] .report-winner')).toContainText('Clone A')
+  await expect(page.locator('dialog[open] .report-dialog-facts')).toContainText('Clone A, then production')
+  await page.getByRole('button', { name: 'Stay in the workspace', exact: true }).click()
+  await expect(page.locator('dialog[open]')).toHaveCount(0)
+  await expect(page.getByRole('region', { name: 'Incident lifecycle' })).toHaveAttribute('data-phase', 'complete')
 })
 
 test('demo playback advances from healthy to clone startup and freezes when paused', async ({ page }) => {

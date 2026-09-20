@@ -240,6 +240,7 @@ def scenario_from_incident(
             observed = ", ".join(f"{k}={_fmt(v)}" for k, v in ev.items()) or e.summary
             out.append({**base, "id": f"{e.event_id}-replay-check", "sequence": seq, "kind": "observe", "environmentId": env, "actor": "math",
                         "tool": "suite.evaluate", "title": f"replay check {'passed' if passed else 'failed'}", "detail": e.summary, "result": observed,
+                        "readings": _readings(_last(verify_fps), topology, breached=not passed),  # the clone after the replay: recovered if it passed
                         "testResult": {"checkId": "replay", "passed": passed, "expected": "clone SLO healthy after the replayed trigger ends", "observed": observed}})
             out.append({**base, "id": f"{e.event_id}-verdict", "sequence": seq + 1, "kind": "observe", "title": e.summary, "phase": phase,
                         "tool": "canary.judge", "result": observed})
