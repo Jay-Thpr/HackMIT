@@ -250,3 +250,105 @@ def test_full_outbox_coalesces_updates_and_recovers_capacity(tmp_path):
         ]
     finally:
         mirror.close()
+
+
+@pytest.mark.parametrize("limit", ["rows", "bytes"])
+def test_independent_writers_cannot_overbook_shared_outbox(tmp_path, limit):
+    from concurrent.futures import ThreadPoolExecutor
+    import json
+
+    first_document = {"event_id": "first"}
+    second_document = {"event_id": "other"}
+    one_document_bytes = len(json.dumps(first_document, sort_keys=True, separators=(",", ":"), allow_nan=False).encode())
+    bounds = {"max_pending": 1} if limit == "rows" else {"max_bytes": one_document_bytes}
+    primary = Client()
+    path = tmp_path / "outbox.sqlite"
+    first = MirroredElasticsearchClient(primary, Client(), path, start=False, **bounds)
+    second = MirroredElasticsearchClient(primary, Client(), path, start=False, **bounds)
+    first_counted, second_counted, release = threading.Event(), threading.Event(), threading.Event()
+
+    def pause_first(statement):
+        if statement.startswith("SELECT bytes FROM outbox"):
+            first_counted.set()
+            release.wait(2)
+
+    def observe_second(statement):
+        if statement.startswith("SELECT bytes FROM outbox"):
+            second_counted.set()
+
+    first._db.set_trace_callback(pause_first)
+    second._db.set_trace_callback(observe_second)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            one = pool.submit(first.index, index="faultline-audit", document=first_document)
+            try:
+                assert first_counted.wait(1)
+                two = pool.submit(second.index, index="faultline-audit", document=second_document)
+                second_counted.wait(0.05)
+            finally:
+                release.set()
+            assert one.result(timeout=2) == {"result": "created"}
+            assert two.result(timeout=2) == {"result": "created"}
+        assert len(primary.documents) == 2
+        assert first.health()["pending"] == second.health()["pending"] == 1
+        assert first.health()["pending_bytes"] == one_document_bytes
+        assert first.health()["rejected"] + second.health()["rejected"] == 1
+    finally:
+        release.set()
+        first.close()
+        second.close()
+
+
+def test_shared_outbox_update_at_capacity_and_rejection_rolls_back(tmp_path):
+    primary = Client()
+    path = tmp_path / "outbox.sqlite"
+    first = MirroredElasticsearchClient(primary, Client(), path, start=False, max_pending=1)
+    second = MirroredElasticsearchClient(primary, Client(), path, start=False, max_pending=1)
+    try:
+        first.index(index="faultline-audit", document={"event_id": "first", "summary": "old"})
+        second.index(index="faultline-audit", document={"event_id": "first", "summary": "updated"})
+        first.index(index="faultline-audit", document={"event_id": "second"})
+        assert first.health()["pending"] == second.health()["pending"] == 1
+        assert first.health()["rejected"] + second.health()["rejected"] == 1
+        assert not first._db.in_transaction and not second._db.in_transaction
+    finally:
+        first.close()
+        second.close()
+
+    secondary = Client()
+    third = MirroredElasticsearchClient(primary, secondary, path, retry_s=0.01)
+    try:
+        wait_for(lambda: third.health()["pending"] == 0)
+        assert [item["document"] for item in secondary.documents] == [{"event_id": "first", "summary": "updated"}]
+        third.index(index="faultline-audit", document={"event_id": "second"})
+        wait_for(lambda: third.health()["pending"] == 0)
+        assert [item["document"] for item in secondary.documents] == [
+            {"event_id": "first", "summary": "updated"}, {"event_id": "second"},
+        ]
+        assert third.health()["rejected"] == 0
+    finally:
+        third.close()
+
+
+def test_shared_outbox_lock_contention_does_not_fail_primary(tmp_path):
+    primary = Client()
+    path = tmp_path / "outbox.sqlite"
+    first = MirroredElasticsearchClient(primary, Client(), path, start=False)
+    second = MirroredElasticsearchClient(primary, Client(), path, start=False)
+    try:
+        first._db.execute("BEGIN IMMEDIATE")
+        try:
+            assert second.index(index="faultline-audit", document={"event_id": "blocked"}) == {"result": "created"}
+        finally:
+            first._db.rollback()
+        assert [item["document"] for item in primary.documents] == [{"event_id": "blocked"}]
+        assert second.health()["pending"] == 0
+        assert second.health()["rejected"] == 1
+        assert second.health()["last_error"] == "OperationalError"
+        second.index(index="faultline-audit", document={"event_id": "retry"})
+        assert second.health()["pending"] == 1
+        assert second.health()["rejected"] == 1
+        assert not first._db.in_transaction and not second._db.in_transaction
+    finally:
+        first.close()
+        second.close()
