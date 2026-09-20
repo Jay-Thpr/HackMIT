@@ -83,9 +83,11 @@ class Orchestrator:
         investigation_gate: bool = False,
         similar: SimilarIncidentFinder | None = None,
         ship: bool = True,
+        require_verification: bool = False,
     ):
         self._similar = similar
         self._ship = ship
+        self._require_verification = require_verification
         self._levers, self._audit, self._patches = levers, audit, patches
         self._canary_deployer = canary_deployer
         self._verifier = verifier
@@ -843,6 +845,14 @@ class Orchestrator:
         else:
             self._renderer.event("verify", "replaying the reproduced incident against the patch in a clone")
             verification = self._verifier.verify(incident_id, patch, diagnosis, context)
+        if self._require_verification and verification.status != VerificationStatus.passed:
+            verification = PatchVerification(
+                VerificationStatus.failed,
+                f"required live verification did not pass: {verification.detail}",
+                clone_id=verification.clone_id,
+                recipe=verification.recipe,
+                evidence=verification.evidence,
+            )
         payload = {
             "status": verification.status.value,
             "clone_id": verification.clone_id,
@@ -911,15 +921,36 @@ class Orchestrator:
         )
         spec = next(spec for spec in self._levers.catalog() if spec.id == "canary_weight")
         canary_start = self._clock()
-        self._sleep(spec.default_watch_s)
-        canary_end = self._clock()
-        fingerprints = self._telemetry.series(canary_start, canary_end)
-        _, landed = self._release(incident_id, canary, Stage.canary, "released canary_weight")
+        fingerprints: list[Fingerprint] = []
+        capture_error = None
+        try:
+            observe = getattr(self._telemetry, "observe", None)
+            if callable(observe):
+                fingerprints = observe(
+                    spec.default_watch_s,
+                    required_services=(target.service_name,) if target.service_name else (),
+                )
+            else:
+                self._sleep(spec.default_watch_s)
+                fingerprints = self._telemetry.series(canary_start, self._clock())
+        except Exception as exc:
+            capture_error = f"canary telemetry collection failed: {type(exc).__name__}"
+        finally:
+            _, landed = self._release(incident_id, canary, Stage.canary, "released canary_weight")
         measured = _canary_measurements(fingerprints, target)
         if not landed:
             detail = f"canary_weight release did not land; TTL {canary.ttl_s}s will revert it"
             return CanaryResult(CanaryStatus.regressed, detail, target, measured)
-        regression = self._canary_regression(fingerprints, target)
+        regression = capture_error or self._canary_regression(fingerprints, target)
+        if self._require_verification:
+            from .prepared_evidence import canary_split_evidence, canary_window_issue
+            measured.update(canary_split_evidence(fingerprints, expected_share=0.05,
+                                                  service=target.service_name or "orders_v2"))
+        if self._require_verification and regression is None:
+            regression = canary_window_issue(fingerprints,
+                                             minimum_windows=spec.default_watch_s // WINDOW_S,
+                                             expected_share=0.05,
+                                             service=target.service_name or "orders_v2")
         if regression is not None:
             self._record(
                 incident_id,

@@ -80,7 +80,7 @@ def scenario_from_incident(
         return max(0, int(round((ts - t0).total_seconds())))
 
     topology = _topology(windows)
-    healthy = [fp for fp in windows if not _breached(fp)]
+    healthy = [fp for fp in windows if fp.window_end <= detect.ts and not _breached(fp)]
     baseline = _readings(healthy[-1] if healthy else None, topology)
     triage_event = next((e for e in events if e.kind == EventKind.triage and e.stage == 3), None)
     hypotheses = _hypotheses(triage_event)
@@ -88,7 +88,17 @@ def scenario_from_incident(
     # the judge still decides solely from the current experiment's measurements.
     similar_incidents = ((triage_event.payload or {}).get("similar_incidents") or []) if triage_event else []
     hypothesis_ids = [h["id"] for h in hypotheses]
-    entry, target, policy = "gateway", "db", "orders"
+    node_ids = {n["id"] for n in topology["nodes"]}
+    entry = "gateway" if "gateway" in node_ids else sorted(node_ids)[0]
+    if "db" in node_ids:
+        target = "db"
+    elif any(i.startswith("kafka") for i in node_ids):
+        target = sorted(i for i in node_ids if i.startswith("kafka"))[0]
+    elif any(i.startswith("fulfillment") or i.startswith("worker") for i in node_ids):
+        target = sorted(i for i in node_ids if i.startswith(("fulfillment", "worker")))[0]
+    else:
+        target = sorted(node_ids)[0]
+    policy = "orders" if "orders" in node_ids else ("api" if "api" in node_ids else target)
 
     out: list[dict[str, Any]] = [{
         "id": f"{incident_id}-baseline", "sequence": 1, "at": 0, "kind": "baseline", "actor": "math",
@@ -353,22 +363,33 @@ def _teardown(base: dict[str, Any], event_id: str, env: str, label: str, at: int
     ]
 
 
+def _resource_kind(name: str) -> str:
+    if name.startswith("shard"):
+        return "datastore"
+    if name.startswith("kafka"):
+        return "queue"
+    return "service"
+
+
 def _topology(windows: list[Fingerprint]) -> dict[str, Any]:
     services: set[str] = set()
+    resources: set[str] = set()
     edges: dict[str, dict[str, str]] = {}
     for fp in windows:
         services.update(fp.services.keys())
+        resources.update(fp.resources.keys())
         for edge in fp.edges:
             edges[f"{edge.src}->{edge.dst}"] = {"src": edge.src, "dst": edge.dst}
-    if not services:  # no persisted windows: the hero graph
+    if not services and not resources:  # no persisted windows: the hero graph
         services = {"gateway", "orders", "payments"}
         edges = {"gateway->orders": {"src": "gateway", "dst": "orders"}, "orders->payments": {"src": "orders", "dst": "payments"},
                  "payments->db": {"src": "payments", "dst": "db"}}
     if "gateway" in services and "orders" in services:
         edges.setdefault("gateway->orders", {"src": "gateway", "dst": "orders"})
-    ids = sorted(services | {e["src"] for e in edges.values()} | {e["dst"] for e in edges.values()})
-    nodes = [{"id": i, "label": NODE_HINTS.get(i, {}).get("label", i), "kind": NODE_HINTS.get(i, {}).get("kind", "service" if i in services else "external"),
-              "instrumented": i in services or i == "db"} for i in ids]
+    ids = sorted(services | resources | {e["src"] for e in edges.values()} | {e["dst"] for e in edges.values()})
+    nodes = [{"id": i, "label": NODE_HINTS.get(i, {}).get("label", i),
+              "kind": NODE_HINTS.get(i, {}).get("kind", _resource_kind(i) if i in resources else ("service" if i in services else "external")),
+              "instrumented": i in services or i in resources or i == "db"} for i in ids]
     return {"nodes": nodes, "edges": [{"id": k, "source": v["src"], "target": v["dst"]} for k, v in sorted(edges.items())]}
 
 
@@ -401,12 +422,21 @@ def _readings(fp: Fingerprint | None, topology: dict[str, Any], breached: bool |
         r: dict[str, Any] = {}
         if i == "db":
             db = fp.db
-            r = _clean(qps=db.qps, latency=db.query_p99_ms, utilization=_pct(db.pool_busy_ratio))
-            r["health"] = "degraded" if hot else "healthy"
+            if db is None:
+                r = {"health": "unknown"}
+            else:
+                r = _clean(qps=db.qps, latency=db.query_p99_ms, utilization=_pct(db.pool_busy_ratio))
+                r["health"] = "degraded" if hot else "healthy"
         elif i in fp.services:
             s = fp.services[i]
             r = _clean(qps=s.qps, latency=s.p99_ms, errorRate=_pct(s.error_rate), retryRatio=s.retry_ratio)
             r["health"] = "degraded" if hot and i != "orders_v2" else "healthy"
+        elif i in fp.resources:
+            stats = fp.resources[i]
+            metrics = stats.model_dump(exclude_none=True)
+            r = {"resourceMetrics": {k: round(float(v), 2) for k, v in metrics.items()}}
+            own = [s for s in fp.slos if s.metric.startswith(f"resource.{i}.")]
+            r["health"] = ("degraded" if any(s.breached for s in own) else "healthy") if own else "unknown"
         else:
             r = {"health": "unknown"}
         out[i] = r

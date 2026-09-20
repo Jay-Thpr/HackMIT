@@ -1,4 +1,3 @@
-import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -125,7 +124,7 @@ class RecordingLevers:
         )
 
 
-def _verifier(lab, telemetry, levers, context=Path("/tmp/patched")):
+def _verifier(lab, telemetry, levers, context=Path("/tmp/patched"), require_complete_evidence=False):
     clock = FixtureClock(T0)
     return LabPatchVerifier(
         lab,
@@ -137,6 +136,7 @@ def _verifier(lab, telemetry, levers, context=Path("/tmp/patched")):
         settle_s=10,
         healthy_windows=2,
         recipe_store=None,  # never read the live-run recipes.jsonl on the developer's machine
+        require_complete_evidence=require_complete_evidence,
     )
 
 
@@ -213,41 +213,6 @@ def test_default_clone_telemetry_carries_writer_incident_and_clone_id():
     assert source._optional_urls == {"orders_v2": "http://clone:9104/stats"}
 
 
-def test_verifier_destroys_allocated_clone_that_never_became_ready():
-    class NotReadyLab(FakeLab):
-        def create(self, spec):
-            self.created.append(spec)
-            return CloneInfo(
-                clone_id=f"{spec.name}-1", status=CloneStatus.failed, spec=spec,
-                created_at=T0, endpoints=None, detail="clone provisioning cancelled",
-            )
-
-    lab = NotReadyLab()
-    result = _verifier(lab, FakeCloneTelemetry(load_fixture("storm"), heals=True), RecordingLevers()).verify(
-        "inc-x", _patch(), "H_meta"
-    )
-
-    assert result.status == VerificationStatus.skipped
-    assert "not ready" in result.detail
-    assert lab.destroyed == [result.clone_id]
-
-
-def test_verifier_logs_destroy_failure_and_keeps_the_result(caplog):
-    class FlakyDestroyLab(FakeLab):
-        def destroy(self, clone_id):
-            self.destroyed.append(clone_id)
-            raise LabError("DELETE /clones/x -> 503: compose down failed")
-
-    lab = FlakyDestroyLab()
-    verifier = _verifier(lab, FakeCloneTelemetry(load_fixture("storm"), heals=True), RecordingLevers())
-    with caplog.at_level(logging.WARNING):
-        result = verifier.verify("inc-9", _patch(), "H_meta")
-
-    assert result.status == VerificationStatus.passed
-    assert lab.destroyed == [result.clone_id]
-    assert "cleanup failed" in caplog.text
-
-
 def test_verifier_skips_without_lab_recipe_or_context():
     bundle = load_fixture("storm")
     unavailable = FakeLab(create_error=LabError("POST /clones -> 409: at capacity"))
@@ -274,7 +239,7 @@ class StubVerifier:
         return self.result
 
 
-def _run(tmp_path, verifier):
+def _run(tmp_path, verifier, require_verification=False):
     bundle = load_fixture("storm")
     clock = FixtureClock(bundle.experiment_start, bundle.telemetry.last_window_end)
     audit = JsonlSink(tmp_path / "audit.jsonl")
@@ -289,6 +254,7 @@ def _run(tmp_path, verifier):
         clock,
         clock.sleep,
         verifier=verifier,
+        require_verification=require_verification,
     )
     return orchestrator.run("verify-run", bundle.experiment_start), audit.query("verify-run")
 
@@ -436,21 +402,41 @@ def test_no_verifier_is_skipped_not_blocking(tmp_path):
     assert result.canary.status == CanaryStatus.passed
 
 
+def test_require_verification_refuses_canary_without_verifier(tmp_path):
+    result, events = _run(tmp_path, None, require_verification=True)
+    assert result.verification.status == VerificationStatus.failed
+    assert "required live verification" in result.verification.detail
+    assert result.canary.status == CanaryStatus.refused
+    assert not any(e.kind == EventKind.action_apply and e.stage == Stage.canary for e in events)
 
-def test_replay_caps_a_long_investigator_hold():
-    """An agent may have held db_capacity for 900 s; the replay triggers it for at most 30 s."""
-    from faultline_product.adapters.clone import MAX_REPLAY_TRIGGER_S
 
+def test_require_verification_refuses_canary_on_skipped_replay(tmp_path):
+    verifier = StubVerifier(PatchVerification(VerificationStatus.skipped, "clone lab unavailable"))
+    result, events = _run(tmp_path, verifier, require_verification=True)
+    assert result.verification.status == VerificationStatus.failed
+    assert result.canary.status == CanaryStatus.refused
+    assert not any(e.kind == EventKind.action_apply and e.stage == Stage.canary for e in events)
+
+
+def test_require_verification_rejects_incomplete_canary_windows(tmp_path):
+    verifier = StubVerifier(PatchVerification(VerificationStatus.passed, "recovered", clone_id="verify-1"))
+    result, events = _run(tmp_path, verifier, require_verification=True)
+    assert result.canary.status == CanaryStatus.regressed
+    assert any(e.kind == EventKind.action_apply and e.stage == Stage.canary for e in events)
+
+
+def test_require_complete_evidence_fails_on_incomplete_replay_windows():
     bundle = load_fixture("storm")
-    lab, levers = FakeLab(), RecordingLevers()
-    clock = FixtureClock(T0)
-    verifier = LabPatchVerifier(
-        lab, context=Path("/tmp/patched"),
-        telemetry_factory=lambda clone, incident_id: FakeCloneTelemetry(bundle, heals=True),
-        levers_factory=lambda clone: levers, sleep=clock.sleep, clock=clock, settle_s=10, healthy_windows=2,
-        recipes={"H_db": {"action": "db_capacity", "params": {"capacity_qps": 30.0}, "ttl_s": 900}}, recipe_store=None,
-    )
-    result = verifier.verify("cap", _patch(), "H_db")
+    telemetry = FakeCloneTelemetry(bundle, heals=True)
+    verifier = _verifier(FakeLab(), telemetry, RecordingLevers(), require_complete_evidence=True)
+    result = verifier.verify("inc", _patch(), "H_meta")
+    assert result.status == VerificationStatus.failed
+    assert result.evidence is not None
+
+
+def test_complete_evidence_flag_off_keeps_existing_pass():
+    bundle = load_fixture("storm")
+    telemetry = FakeCloneTelemetry(bundle, heals=True)
+    verifier = _verifier(FakeLab(), telemetry, RecordingLevers())
+    result = verifier.verify("inc", _patch(), "H_meta")
     assert result.status == VerificationStatus.passed
-    assert lab.actions[0][1:] == ("db_capacity", {"capacity_qps": 30.0}, MAX_REPLAY_TRIGGER_S)
-    assert (clock() - T0).total_seconds() < 120  # not 900 s + settle

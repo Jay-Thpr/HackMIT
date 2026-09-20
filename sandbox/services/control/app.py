@@ -3,8 +3,7 @@
   POST/DELETE /admin/retry_override   -> Orders /internal/retry_override (Orders also expires it itself)
   POST/DELETE /admin/shed             -> Envoy runtime fault.http.abort.abort_percent
   POST/DELETE /admin/db/failover      -> Payments /internal/db_target (Payments also expires it itself)
-  POST/DELETE /admin/canary           -> Envoy runtime routing.traffic_shift.orders (integer percent: Envoy
-                                         reads an integer runtime value as N/100, so 500 meant 100 %)
+  POST/DELETE /admin/canary           -> Envoy runtime routing.traffic_shift.orders (per 10000)
   GET /admin/levers, GET /healthz
 
 Dead-man switch: every POST needs ttl_s. Orders and Payments hold the expiry themselves, so
@@ -16,6 +15,7 @@ This service knows nothing about the hidden fault controller.
 """
 
 import asyncio
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -39,7 +39,7 @@ ENVOY_ADMIN = os.environ.get("ENVOY_ADMIN_URL", "http://envoy:9902")
 TOKEN = {"X-Sandbox-Token": os.environ.get("SANDBOX_TOKEN", "sandbox-internal")}
 
 SHED_KEY = "fault.http.abort.abort_percent"  # Envoy HTTP fault filter used as a load shedder
-CANARY_KEY = "routing.traffic_shift.orders"  # integer percent of traffic to orders-v2 (Envoy: integer runtime = N/100)
+CANARY_KEY = "routing.traffic_shift.orders"  # numerator over 10000 for orders-v2
 
 MAX_TTL = {s.id: s.max_ttl_s for s in CATALOG}
 PATHS = {"retry_cap": "retry_override", "shed": "shed", "db_failover": "db/failover", "canary_weight": "canary"}
@@ -71,7 +71,11 @@ _lock = asyncio.Lock()
 http = httpx.AsyncClient(timeout=3.0)
 
 
-async def envoy_runtime(key: str, value: int) -> None:
+def canary_runtime_value(weight: float) -> str:
+    return json.dumps({"numerator": round(10000 * weight), "denominator": "TEN_THOUSAND"}, separators=(",", ":"))
+
+
+async def envoy_runtime(key: str, value: int | str) -> None:
     r = await http.post(f"{ENVOY_ADMIN}/runtime_modify", params={key: str(value)})
     r.raise_for_status()
 
@@ -94,7 +98,7 @@ async def push(lever_id: str, params: dict[str, Any], ttl_s: float) -> None:
     elif lever_id == "shed":
         await envoy_runtime(SHED_KEY, round(100 * params["fraction"]))
     elif lever_id == "canary_weight":
-        await envoy_runtime(CANARY_KEY, round(100 * params["v2_weight"]))
+        await envoy_runtime(CANARY_KEY, canary_runtime_value(params["v2_weight"]))
 
 
 async def revert(lever_id: str) -> None:
@@ -116,7 +120,7 @@ async def revert(lever_id: str) -> None:
     elif lever_id == "shed":
         await envoy_runtime(SHED_KEY, 0)
     elif lever_id == "canary_weight":
-        await envoy_runtime(CANARY_KEY, 0)
+        await envoy_runtime(CANARY_KEY, canary_runtime_value(0))
 
 
 async def _reconcile_loop() -> None:
@@ -136,7 +140,7 @@ async def _reconcile_loop() -> None:
                             lv.active, lv.expires_at = True, t  # retry next tick
                 shed, canary = levers["shed"], levers["canary_weight"]
                 await envoy_runtime(SHED_KEY, round(100 * shed.params["fraction"]) if shed.active else 0)
-                await envoy_runtime(CANARY_KEY, round(100 * canary.params["v2_weight"]) if canary.active else 0)
+                await envoy_runtime(CANARY_KEY, canary_runtime_value(canary.params["v2_weight"]) if canary.active else canary_runtime_value(0))
         except Exception as e:  # noqa: BLE001 - never let the dead-man switch die
             log.warning("reconcile error: %s", e)
         await asyncio.sleep(1.0)

@@ -29,7 +29,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from faultline_contracts import AuditEvent, EventKind, Fingerprint
-from faultline_telemetry import ElasticsearchFingerprintStore, HttpElasticsearchClient
+from faultline_telemetry import (
+    ElasticsearchFingerprintStore,
+    HttpElasticsearchClient,
+    JsonlFingerprintStore,
+)
 
 from .paths import PRODUCT_ROOT
 from .ui_scenario import scenario_from_incident
@@ -38,7 +42,8 @@ UI_DIST = PRODUCT_ROOT / "ui" / "dist"
 
 
 class IncidentReader:
-    def __init__(self, audit_paths: list[Path], store: ElasticsearchFingerprintStore | None):
+    def __init__(self, audit_paths: list[Path],
+                 store: ElasticsearchFingerprintStore | JsonlFingerprintStore | None):
         self._paths = audit_paths
         self._store = store
 
@@ -181,7 +186,8 @@ def build_store() -> ElasticsearchFingerprintStore | None:
     )
 
 
-def create_app(audit_paths: list[Path], store: ElasticsearchFingerprintStore | None = None) -> FastAPI:
+def create_app(audit_paths: list[Path],
+               store: ElasticsearchFingerprintStore | JsonlFingerprintStore | None = None) -> FastAPI:
     reader = IncidentReader(audit_paths, store)
     app = FastAPI(title="Faultline UI API", version="1")
 

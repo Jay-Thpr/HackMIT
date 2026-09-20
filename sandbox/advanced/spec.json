@@ -1,0 +1,73 @@
+{
+  "schema_version": "faultline-advanced/1",
+  "cluster": "faultline-advanced",
+  "context": "kind-faultline-advanced",
+  "namespace": "faultline-advanced",
+  "clone_namespace_prefix": "faultline-advanced-clone-",
+  "max_clones": 1,
+  "clone_lifetime_s": 3600,
+  "window_s": 5,
+  "action_budget": 5,
+  "kind_image": "kindest/node:v1.32.2@sha256:f226345927d7e348497136874b6d207e0b32cc52154ad8323129352923a3142f",
+  "nodes": ["control-plane", "worker", "worker"],
+  "network_policy": "calico",
+  "calico_manifest": "https://raw.githubusercontent.com/projectcalico/calico/v3.29.3/manifests/calico.yaml",
+  "images": {
+    "postgres": "postgres:16.9-alpine",
+    "kafka": "apache/kafka:3.9.1",
+    "redis": "redis:7.4.2-alpine",
+    "app": "faultline-advanced-app:dev"
+  },
+  "kafka": {
+    "brokers": 3,
+    "topic": "orders",
+    "partitions": 6,
+    "replication_factor": 3,
+    "min_insync_replicas": 2,
+    "producer_acks": "all",
+    "enable_idempotence": true,
+    "consumer_group": "fulfillment",
+    "enable_auto_commit": false,
+    "offset_commit": "after_database_transaction",
+    "partition_key": "tenant_id",
+    "heap": "-Xms256m -Xmx512m",
+    "storage": "2Gi"
+  },
+  "postgres": {
+    "shards": 3,
+    "replicas_per_shard": 1,
+    "replication": "asynchronous_streaming",
+    "partition_algorithm": "sha256(tenant_id UTF-8), first 8 bytes unsigned big-endian, modulo 3",
+    "database": "commerce",
+    "user": "app",
+    "synchronous_commit": "on",
+    "storage": "2Gi"
+  },
+  "workload": {
+    "tenants": ["tenant-a", "tenant-b", "tenant-c", "tenant-d", "tenant-e", "tenant-f"],
+    "rps": 12,
+    "read_fraction": 0.5,
+    "duration_s": 0,
+    "seed": 7
+  },
+  "replicas": {"api": 2, "relay": 1, "worker": 3, "loadgen": 1, "redis": 1},
+  "resources": {
+    "kafka": {"requests": {"cpu": "200m", "memory": "512Mi"}, "limits": {"cpu": "1", "memory": "1Gi"}},
+    "postgres": {"requests": {"cpu": "100m", "memory": "128Mi"}, "limits": {"cpu": "500m", "memory": "512Mi"}},
+    "app": {"requests": {"cpu": "100m", "memory": "96Mi"}, "limits": {"cpu": "500m", "memory": "256Mi"}},
+    "redis": {"requests": {"cpu": "50m", "memory": "64Mi"}, "limits": {"cpu": "250m", "memory": "128Mi"}}
+  },
+  "controls": {
+    "tenant_admission": {"scope": "tenant", "max_ttl_s": 120},
+    "consumer_backoff": {"scope": "partition", "max_ttl_s": 120},
+    "read_route": {"scope": "shard", "max_ttl_s": 120},
+    "cache_coalescing": {"scope": "tenant", "max_ttl_s": 120},
+    "worker_cpu": {"scope": "deployment", "max_ttl_s": 120}
+  },
+  "qualification": {
+    "status": "not_run",
+    "cases": ["hot_partition", "replica_slowdown", "consumer_retry", "worker_cpu", "cache_stampede"],
+    "success_requires": ["measured_recovery", "complete_telemetry", "accepted_work_accounted_for", "no_duplicate_business_effects", "tenant_ordering", "unaffected_tenant_health", "actions_reverted"],
+    "claims": "Local orchestration and application behavior only; not independent-host or production resilience"
+  }
+}
