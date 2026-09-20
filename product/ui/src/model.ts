@@ -192,24 +192,25 @@ export function replay(scenario: Scenario, time: number): WorkspaceState {
   let confirmed: boolean | undefined
   for (const event of visibleEvents(scenario, time)) {
     if (event.phase) phase = event.phase
-    if (event.incident) lifecycle = event.incident
-    if (event.kind === 'detect') lifecycle = 'detected'
+    const explicit = event.incident !== undefined  // live scenarios state the incident phase; derived transitions below defer to it
+    if (event.kind === 'detect' && !explicit) lifecycle = 'detected'
     if (event.kind === 'clone' && event.environment && !environments.some(env => env.id === event.environmentId)) {
       environments.push({ id: event.environmentId, ...event.environment, createdAt: event.at, lifecycle: event.lifecycle ?? (scenario.live ? 'unknown' : 'starting'), lifecycleAt: event.at, level: nextLevel++, nodes: Object.fromEntries(scenario.topology.nodes.map(node => [node.id, { health: 'unknown' }])) })
-      if (lifecycle === 'monitoring' || lifecycle === 'detected') lifecycle = 'starting'
-      else if (cleanup !== 'not-started') { lifecycle = 'starting'; cleanup = 'in-progress' }  // a later clone (e.g. patch verification) after an earlier cleanup
+      if (cleanup !== 'not-started') cleanup = 'in-progress'  // a later clone (sequential investigators, patch verification) after an earlier teardown
+      if (!explicit && (lifecycle === 'monitoring' || lifecycle === 'detected' || lifecycle === 'cleanup' || lifecycle === 'complete')) lifecycle = 'starting'
     }
     const environment = environments.find(env => env.id === event.environmentId)
     if (environment && event.readings) environment.nodes = { ...environment.nodes, ...structuredClone(event.readings) }
     if (environment && event.lifecycle) {
       environment.lifecycle = event.lifecycle
       environment.lifecycleAt = event.at
-      if (event.lifecycle === 'destroying') { lifecycle = 'cleanup'; cleanup = 'in-progress' }
+      if (event.lifecycle === 'destroying') { cleanup = 'in-progress'; if (!explicit) lifecycle = 'cleanup' }
     }
     if (event.kind === 'action' && event.action) {
       actions.push({ ...event.action, start: event.at, environmentId: event.environmentId, targetId: event.targetId, status: 'active' })
       if (environment && environment.id !== 'production') { environment.lifecycle = 'investigating'; environment.lifecycleAt = event.at }
-      if (event.environmentId === 'production') lifecycle = 'confirming'  // real runs destroy the investigation clones before probing production
+      if (explicit) { /* stated by the event */ }
+      else if (event.environmentId === 'production') lifecycle = 'confirming'  // real runs destroy the investigation clones before probing production
       else if (cleanup === 'not-started' || lifecycle === 'starting') lifecycle = 'investigating'
     }
     if (event.kind === 'undo') {
@@ -229,9 +230,10 @@ export function replay(scenario: Scenario, time: number): WorkspaceState {
         archived.lifecycle = 'archived'
         archived.lifecycleAt = event.at
         cleanup = environments.every(env => env.id === 'production' || env.lifecycle === 'archived') ? 'complete' : 'in-progress'
-        lifecycle = cleanup === 'complete' ? 'complete' : 'cleanup'
+        if (!explicit) lifecycle = cleanup === 'complete' ? 'complete' : 'cleanup'
       }
     }
+    if (explicit) lifecycle = event.incident!
   }
   for (const action of actions) {
     if (action.status !== 'reverted' && time >= action.start + action.ttl) action.status = 'awaiting-reversion'
