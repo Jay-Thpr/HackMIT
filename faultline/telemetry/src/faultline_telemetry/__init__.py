@@ -11,7 +11,8 @@ from .analytics import (
 from .ambiguity import ambiguity_rows, export_ambiguity_window
 from .config import TelemetrySettings
 from .dotenv import load_repo_dotenv
-from .elasticsearch import HttpElasticsearchClient
+from .elasticsearch import HttpElasticsearchClient, MirroredElasticsearchClient
+from .factory import client_from_env
 from .esql import incident_timeline
 from .indices import ensure_index_templates
 from .fingerprint import fingerprint_from_stats
@@ -21,7 +22,7 @@ from .tokens import IncidentTokenComparison, compare_incident_tokens, fingerprin
 
 __all__ = [
     "ElasticsearchAuditSink", "ElasticsearchFingerprintStore", "ElasticsearchTelemetryAnalytics", "FINGERPRINT_INDEX", "FingerprintRecord", "HttpElasticsearchClient", "HttpSandboxStats",
-    "PollingTelemetrySource", "TelemetrySettings", "ambiguity_rows", "ensure_index_templates", "export_ambiguity_window", "fingerprint_from_stats",
+    "MirroredElasticsearchClient", "PollingTelemetrySource", "TelemetrySettings", "ambiguity_rows", "client_from_env", "ensure_index_templates", "export_ambiguity_window", "fingerprint_from_stats",
     "fingerprint_similarity", "incident_timeline", "load_repo_dotenv", "ReproductionSimilarity", "SimilarIncident",
     "IncidentTokenComparison", "compare_incident_tokens", "fingerprint_prompt_payload", "token_count",
 ]
