@@ -33,6 +33,7 @@ observable output without reading hidden fault state.
 | `source.py` | Polling `TelemetrySource`, with optional ES persistence |
 | `store.py` | Elasticsearch C1 fingerprint window/series reads |
 | `ambiguity.py` | Label-free canonical metric exports for passive ambiguity checks |
+| `tokens.py` | OpenAI-token measurement: raw public snapshots versus compressed C1 evidence per incident |
 
 ## Elastic Cloud
 
