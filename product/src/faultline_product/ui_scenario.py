@@ -84,6 +84,9 @@ def scenario_from_incident(
     baseline = _readings(healthy[-1] if healthy else None, topology)
     triage_event = next((e for e in events if e.kind == EventKind.triage and e.stage == 3), None)
     hypotheses = _hypotheses(triage_event)
+    # Retrieval is explanatory only. The UI renders these as read-only context;
+    # the judge still decides solely from the current experiment's measurements.
+    similar_incidents = ((triage_event.payload or {}).get("similar_incidents") or []) if triage_event else []
     hypothesis_ids = [h["id"] for h in hypotheses]
     node_ids = {n["id"] for n in topology["nodes"]}
     entry = "gateway" if "gateway" in node_ids else sorted(node_ids)[0]
@@ -186,7 +189,7 @@ def scenario_from_incident(
                         "detail": tr.get("reasoning") or " ".join(h["description"] for h in hypotheses) or e.summary,
                         "result": f"ambiguous: {p.get('ambiguous')}; hypotheses: {', '.join(p.get('hypotheses') or [])}"})
         elif e.kind == EventKind.experiment_start:
-            out.append({**base, "kind": "observe", "title": e.summary, "phase": phase, "tool": "orchestrator.experiment"})
+            out.append({**base, "kind": "observe", "title": e.summary, "phase": phase, "tool": "orchestrator.experiment", "incident": "confirming"})
         elif e.kind == EventKind.action_apply:
             lever, params, ttl = p.get("lever_id"), p.get("params") or {}, int(p.get("ttl_s") or 0)
             label = f"{lever} {params}" if params else str(lever)
@@ -247,10 +250,11 @@ def scenario_from_incident(
             observed = ", ".join(f"{k}={_fmt(v)}" for k, v in ev.items()) or e.summary
             out.append({**base, "id": f"{e.event_id}-replay-check", "sequence": seq, "kind": "observe", "environmentId": env, "actor": "math",
                         "tool": "suite.evaluate", "title": f"replay check {'passed' if passed else 'failed'}", "detail": e.summary, "result": observed,
+                        "readings": _readings(_last(verify_fps), topology, breached=not passed),  # the clone after the replay: recovered if it passed
                         "testResult": {"checkId": "replay", "passed": passed, "expected": "clone SLO healthy after the replayed trigger ends", "observed": observed}})
             out.append({**base, "id": f"{e.event_id}-verdict", "sequence": seq + 1, "kind": "observe", "title": e.summary, "phase": phase,
                         "tool": "canary.judge", "result": observed})
-            out.extend(_teardown(base, e.event_id, env, "the verification clone", base["at"], seq + 2))
+            out.extend(_teardown(base, e.event_id, env, "the verification clone", base["at"], seq + 2, incident="cleanup"))
             seq += 3
         elif e.kind in (EventKind.mitigation, EventKind.patch_opened, EventKind.canary_update, EventKind.refused,
                         EventKind.page_human, EventKind.report, EventKind.experiment_end):
@@ -260,6 +264,7 @@ def scenario_from_incident(
                     EventKind.experiment_end: "orchestrator.experiment"}[e.kind]
             result = None
             if e.kind == EventKind.patch_opened:
+                tool = {"github": "github.pull_request", "fallback": "patch.prebuilt"}.get(p.get("provider"), tool)
                 result = f"{p.get('provider')} · {p.get('reference')} · revision {p.get('revision')}"
             elif e.kind == EventKind.canary_update and p.get("evidence"):
                 result = ", ".join(f"{k}={_fmt(v)}" for k, v in (p.get("evidence") or {}).items())
@@ -302,11 +307,27 @@ def scenario_from_incident(
         "startedAt": events[0].ts.isoformat(),
         "endedAt": events[-1].ts.isoformat(),
     }
+    # Retrieval context is recorded at triage and displayed separately from the
+    # diagnosis. It must never decide the C2 verdict.
+    memory_event = next((e for e in events if e.kind == EventKind.triage and (e.payload or {}).get("similar_incidents")), None)
+    memory = []
+    if memory_event:
+        for item in (memory_event.payload or {}).get("similar_incidents") or []:
+            if not isinstance(item, dict) or not item.get("incident_id"):
+                continue
+            memory.append({
+                "incidentId": str(item["incident_id"]),
+                "score": float(item.get("score", 0)),
+                "diagnosis": item.get("diagnosis"),
+                "confirmed": bool(item.get("confirmed")),
+                "recordedAt": at(memory_event.ts),
+            })
     return {
         "id": incident_id,
         "live": True,
         "complete": complete,
         "report": report,
+        "memory": memory,
         "now": at(now) if now is not None else duration,
         "name": f"Incident {incident_id}",
         "subtitle": "Live incident · real audit log",
@@ -318,22 +339,26 @@ def scenario_from_incident(
         "topology": topology,
         "baseline": baseline,
         "hypotheses": hypotheses,
+        "similarIncidents": similar_incidents,
         "events": out,
     }
 
 
 # ---- helpers ----------------------------------------------------------------------------------
 
-def _teardown(base: dict[str, Any], event_id: str, env: str, label: str, at: int, seq: int) -> list[dict[str, Any]]:
+def _teardown(base: dict[str, Any], event_id: str, env: str, label: str, at: int, seq: int,
+              incident: str = "investigating") -> list[dict[str, Any]]:
     """Two UI events for a clone's recorded removal: `destroying` (the manager tears the project
-    down; the UI fades it over ~3 s) then `archive` (gone; its evidence stays in the trace)."""
+    down; the UI fades it over ~3 s) then `archive` (gone; its evidence stays in the trace).
+    `incident` states the incident phase during the teardown: an investigation clone going away
+    while other investigators still run (or before the production probe) is still "investigating";
+    only the verification clone's teardown is "cleanup", and only the report is "complete"."""
     return [
         {**base, "id": f"{event_id}-destroy", "sequence": seq, "at": at, "kind": "lifecycle", "environmentId": env,
-         "actor": "adapter", "lifecycle": "destroying", "tool": "lab.destroy.request",
+         "actor": "adapter", "lifecycle": "destroying", "tool": "lab.destroy.request", "incident": incident,
          "title": f"Removing {label}", "detail": "The clone lab tears the clone project down; its observations and test results are retained."},
         {**base, "id": f"{event_id}-archive", "sequence": seq + 1, "at": at + 3, "kind": "archive", "environmentId": env,
-         "actor": "adapter", "tool": "lab.destroy", "title": f"{label} archived; evidence retained",
-         "incident": "cleanup",  # only the report closes a real incident; more clones/probes may follow
+         "actor": "adapter", "tool": "lab.destroy", "title": f"{label} archived; evidence retained", "incident": incident,
          "detail": "No clone state is merged into production."},
     ]
 

@@ -9,7 +9,7 @@ import { useWorkspace } from '../store'
 
 const actorLabel: Record<WorkspaceEvent['actor'], string> = { model: 'Model proposal', math: 'Measured evaluation', adapter: 'Tool execution', 'investigator-a': 'Investigator A', 'investigator-b': 'Investigator B', orchestrator: 'Orchestrator' }
 
-function TraceStep({ event, selected, onSelect }: { event: WorkspaceEvent; selected: boolean; onSelect: () => void }) {
+function TraceStep({ event, selected, onSelect, live }: { event: WorkspaceEvent; selected: boolean; onSelect: () => void; live?: boolean }) {
   return <div className={`trace-step ${selected ? 'expanded' : ''}`}>
     <button className="trace-step-heading" onClick={onSelect} aria-expanded={selected}>
       <span className={`trace-glyph ${event.actor === 'math' ? 'math' : ''}`}>{event.kind === 'observe' ? <ScanLine size={13} /> : event.kind === 'action' ? <Terminal size={13} /> : isConfirmedVerdict(event) ? <Check size={13} /> : <FlaskConical size={13} />}</span>
@@ -23,7 +23,7 @@ function TraceStep({ event, selected, onSelect }: { event: WorkspaceEvent; selec
       {event.prediction && <div className="trace-prediction"><b>Predicted</b><p>{event.prediction}</p></div>}
       {event.result && <div className="trace-result"><b>Observed / returned</b><p>{event.result}</p></div>}
       {event.causeId && <small className="causal-link"><ArrowDownRight size={12} /> Follows evidence {event.causeId}</small>}
-      <span className="data-caption">Scripted example · not a live model call</span>
+      <span className="data-caption">{live ? `Recorded audit event · ${event.actor === 'model' ? 'model output' : event.actor === 'math' ? 'measured' : 'orchestrator record'}` : 'Scripted example · not a live model call'}</span>
     </div>}
   </div>
 }
@@ -60,7 +60,7 @@ export function Inspector({ scenario, workspace, environment }: { scenario: Scen
       <button role="tab" aria-selected={traceTab === 'trace'} onClick={() => set({ traceTab: 'trace' })}>Decision trace <span>{events.length}</span></button>
     </div>
     <div className="inspector-body">
-      {agent && <section className="agent-brief" aria-label="Agent activity"><span className="overline">{agent.phase} · {agent.targetId}</span><h3>{agent.event?.title ?? 'Waiting for evidence'}</h3><dl><div><dt>What it is doing</dt><dd>{agent.event?.detail}</dd></div><div><dt>Why this step</dt><dd>{agent.why}</dd></div><div><dt>What comes next</dt><dd>{agent.waiting}</dd></div></dl><span className="data-caption">Recorded simulation · {timeLabel(agent.event?.at ?? cursor)}</span></section>}
+      {agent && <section className="agent-brief" aria-label="Agent activity"><span className="overline">{agent.phase} · {agent.targetId}</span><h3>{agent.event?.title ?? 'Waiting for evidence'}</h3><dl><div><dt>What it is doing</dt><dd>{agent.event?.detail}</dd></div><div><dt>Why this step</dt><dd>{agent.why}</dd></div><div><dt>What comes next</dt><dd>{agent.waiting}</dd></div></dl><span className="data-caption">{scenario.live ? 'Recorded audit trail' : 'Recorded simulation'} · {timeLabel(agent.event?.at ?? cursor)}</span></section>}
 
       {suiteCheck && <section className="suite-detail" aria-label="Test result"><span className="overline">{suiteCheck.state}</span><h3>{suiteCheck.label}</h3><p>{suiteCheck.description}</p><TestCases group={suiteCheck} />{suiteCheck.event?.testResult ? <><div className="suite-assertion"><b>Expected</b><p>{suiteCheck.event.testResult.expected}</p></div><div className="suite-result"><b>Observed · {timeLabel(suiteCheck.event.at)}</b><p>{suiteCheck.event.testResult.observed}</p></div></> : <p>{suiteCheck.state === 'running' ? 'Running — no result yet.' : 'Waiting to run.'}</p>}</section>}
 
@@ -87,7 +87,7 @@ export function Inspector({ scenario, workspace, environment }: { scenario: Scen
         <div className="trace-filter">{selectedNode ? <span>Activity in {environment.label}</span> : <><label htmlFor="trace-filter">Environment</label><select id="trace-filter" value={filter} onChange={event => setFilter(event.target.value)}><option value="all">All environments</option><option value="production">Production</option>{createdClones.map(event => <option key={event.environmentId} value={event.environmentId}>{event.environment?.label}</option>)}</select></>}</div>
         <p className="trace-explanation">Follow what the agent tried and what it found. {scenario.live ? 'Every step is a recorded audit event.' : 'This trace is simulated.'}</p>
         {filtered.length === 0 && <p className="empty-copy">No activity here yet. Advance the replay or select another system.</p>}
-        {filtered.map(event => <TraceStep key={event.id} event={event} selected={event.id === (filtered.some(item => item.id === selectedEvent) ? selectedEvent : latest?.id)} onSelect={() => { if (event.targetId && workspace.environments.some(env => env.id === event.environmentId)) inspect(event.targetId, event.environmentId); set({ selectedEvent: event.id }) }} />)}
+        {filtered.map(event => <TraceStep key={event.id} live={scenario.live} event={event} selected={event.id === (filtered.some(item => item.id === selectedEvent) ? selectedEvent : latest?.id)} onSelect={() => { if (event.targetId && workspace.environments.some(env => env.id === event.environmentId)) inspect(event.targetId, event.environmentId); set({ selectedEvent: event.id }) }} />)}
       </>}
     </div>
     <div className="inspector-footer"><Clock3 size={12} /><span>Viewing evidence through {timeLabel(cursor)}</span><span>SIMULATED</span></div>

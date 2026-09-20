@@ -34,6 +34,7 @@ observable output without reading hidden fault state.
 | `store.py` | Elasticsearch C1 fingerprint window/series reads |
 | `ambiguity.py` | Label-free canonical metric exports for passive ambiguity checks |
 | `tokens.py` | OpenAI-token measurement: raw public snapshots versus compressed C1 evidence per incident |
+| `memory.py` | Operator-facing semantic incident-memory retrieval using Elastic's managed Jina embeddings; never diagnosis/verdict input |
 
 ## Elastic Cloud
 
@@ -44,3 +45,42 @@ write on `faultline-*` and read on `_query`) in the repo-root `.env` — see
 `load_repo_dotenv` without overriding real environment variables. Leave the URL
 unset to skip Elasticsearch persistence entirely. For local development, point
 the URL at `http://localhost:9200` with no API key.
+
+## Jina semantic incident memory
+
+`faultline-incident-memory` is a deliberately separate index for curated,
+human-readable incident reports. Its `content` field is Elasticsearch
+`semantic_text` configured with the Elastic Inference Service endpoint
+`.jina-embeddings-v3`: Elasticsearch calls Jina while indexing and while
+querying, so Faultline never handles a separate Jina credential or vector.
+
+`ElasticsearchIncidentMemory.search()` always requires an explicit environment
+filter. This memory is operator-facing context only: it cannot provide C1
+metrics, select an experiment, or affect the C2 math verdict.
+
+## Read-only Elastic diagnostics (`scripts/es_doctor.py`)
+
+```bash
+uv run python scripts/es_doctor.py [--incident-id ID] [--require-mirror]
+```
+
+Preflights the primary (`FAULTLINE_ELASTICSEARCH_*`) and display-mirror
+(`FAULTLINE_OBSERVABILITY_ELASTICSEARCH_*`, falling back to
+`FAULTLINE_ELASTICSEARCH_MIRROR_*`) projects with bounded read-only requests
+only: `GET /_index_template/{index}` and `size: 1` `POST /{index}/_search` for
+the latest C1 `window_end` (production-filtered) and C4 `ts`. It never indexes,
+refreshes, PUTs templates, touches Kibana/Agent Builder, or constructs the
+mirror worker — no outbox is created.
+
+Output is sanitized JSON (no URLs, keys, or incident IDs) plus an exit code:
+`0` all requested checks `present`, `1` some check needs attention (denied,
+missing, empty, partial, malformed, future timestamp), `2` required config
+absent/incomplete/invalid. A configured-but-broken mirror fails the run; an
+absent mirror fails only under `--require-mirror`. Timestamp age is reported as
+an observation, never as delivery lag, and template presence alone does not
+prove ingestion works.
+
+Note: the template `GET` may require privileges the runtime API key lacks — a
+`forbidden` template check means the key can't see templates, not that
+ingestion is broken. Only runtime `*_API_KEY` values are used; never escalate
+to `*_SETUP_API_KEY`.

@@ -24,8 +24,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from faultline_contracts import AuditEvent, EventKind, Fingerprint
 from faultline_telemetry import (
@@ -34,7 +35,8 @@ from faultline_telemetry import (
     JsonlFingerprintStore,
 )
 
-from .paths import PRODUCT_ROOT
+from .comparison_api import add_comparison_routes
+from .paths import PRODUCT_ROOT, REPOSITORY_ROOT
 from .ui_scenario import scenario_from_incident
 
 UI_DIST = PRODUCT_ROOT / "ui" / "dist"
@@ -95,6 +97,55 @@ class IncidentReader:
         clones = {cid: self.windows(incident_id, evs, cid) for cid in self.clone_ids(evs)}
         return scenario_from_incident(incident_id, evs, production, clones, now=now)
 
+    def supporting_telemetry(self, incident_id: str, evs: list[AuditEvent]) -> dict[str, Any]:
+        """Small, bounded Observability read for a UI evidence panel.
+
+        This is deliberately display-only: C1 and C4 remain the inputs to Faultline's
+        decision path. The query does not retrieve span bodies, SQL text, or log messages.
+        """
+        configured_url = os.environ.get("FAULTLINE_OBSERVABILITY_ELASTICSEARCH_URL")
+        configured_key = os.environ.get("FAULTLINE_OBSERVABILITY_ELASTICSEARCH_API_KEY")
+        if not configured_url or not configured_key:
+            return {"state": "not-configured", "incidentId": incident_id,
+                    "detail": "Set the Observability mirror URL and read-only API key to show trace and log summaries."}
+        if not evs:
+            raise ValueError(f"no audit events for {incident_id!r}")
+        start, end = evs[0].ts, evs[-1].ts + timedelta(minutes=1)
+        filters = [
+            {"range": {"@timestamp": {"gte": start.isoformat(), "lt": end.isoformat()}}},
+            {"bool": {"should": [
+                {"term": {"resource.attributes.deployment.environment": "production"}},
+                {"term": {"resource.attributes.deployment.environment.name": "production"}},
+            ], "minimum_should_match": 1}},
+        ]
+        trace_body = {"size": 0, "query": {"bool": {"filter": filters}}, "aggs": {
+            "services": {"terms": {"field": "resource.attributes.service.name", "size": 12}},
+            "traces": {"cardinality": {"field": "trace_id"}},
+        }}
+        headers = {"Authorization": f"ApiKey {configured_key}"}
+        try:
+            with httpx.Client(base_url=configured_url.rstrip("/"), headers=headers, timeout=5.0) as client:
+                traces = client.post("/traces-*/_search", json=trace_body)
+                traces.raise_for_status()
+                logs = client.post("/logs-*/_count", json={"query": {"bool": {"filter": filters}}})
+                logs.raise_for_status()
+            trace_data = traces.json()
+            total = trace_data.get("hits", {}).get("total", 0)
+            trace_count = total.get("value", 0) if isinstance(total, dict) else total
+            buckets = trace_data.get("aggregations", {}).get("services", {}).get("buckets", [])
+            return {
+                "state": "available", "incidentId": incident_id,
+                "start": start.isoformat(), "end": end.isoformat(),
+                "spans": int(trace_count),
+                "traces": int(trace_data.get("aggregations", {}).get("traces", {}).get("value", 0)),
+                "logs": int(logs.json().get("count", 0)),
+                "services": [{"name": str(row["key"]), "spans": int(row["doc_count"])} for row in buckets],
+                "detail": "Counts are scoped to the recorded incident window and production deployment environment.",
+            }
+        except (httpx.HTTPError, ValueError, TypeError):
+            return {"state": "unavailable", "incidentId": incident_id,
+                    "detail": "Observability evidence could not be read. Diagnosis and replay continue from C1 and C4."}
+
 
 async def scenario_updates(
     reader: IncidentReader,
@@ -136,8 +187,12 @@ def build_store() -> ElasticsearchFingerprintStore | None:
     )
 
 
-def create_app(audit_paths: list[Path],
-               store: ElasticsearchFingerprintStore | JsonlFingerprintStore | None = None) -> FastAPI:
+def create_app(
+    audit_paths: list[Path],
+    store: ElasticsearchFingerprintStore | JsonlFingerprintStore | None = None,
+    *,
+    comparison_dir: Path | None = None,
+) -> FastAPI:
     reader = IncidentReader(audit_paths, store)
     app = FastAPI(title="Faultline UI API", version="1")
 
@@ -170,6 +225,34 @@ def create_app(audit_paths: list[Path],
             raise HTTPException(404, f"no audit events for {incident_id!r}")
         return reader.scenario(incident_id, evs, now=datetime.now(timezone.utc))
 
+    @app.get("/api/incidents/{incident_id}/evidence.json")
+    def evidence_json(incident_id: str) -> dict[str, Any]:
+        """Portable, read-only C1/C2/C4 evidence bundle for judges and incident review."""
+        evs = reader.events(incident_id)
+        if not evs:
+            raise HTTPException(404, f"no audit events for {incident_id!r}")
+        return {"incident_id": incident_id, "scenario": reader.scenario(incident_id, evs, now=datetime.now(timezone.utc)),
+                "fingerprints": [fp.model_dump(mode="json") for fp in reader.windows(incident_id, evs)],
+                "audit_events": [event.model_dump(mode="json") for event in evs]}
+
+    @app.get("/api/incidents/{incident_id}/evidence.md", response_class=PlainTextResponse)
+    def evidence_markdown(incident_id: str) -> str:
+        evs = reader.events(incident_id)
+        if not evs:
+            raise HTTPException(404, f"no audit events for {incident_id!r}")
+        scenario = reader.scenario(incident_id, evs, now=datetime.now(timezone.utc))
+        report = scenario.get("report", {})
+        return "\n".join((f"# Faultline evidence: {incident_id}", "", f"- Outcome: {report.get('outcome', 'in progress')}",
+            f"- Diagnosis: {report.get('diagnosis') or 'not confirmed'}", f"- Production actions: {report.get('productionActions', 0)}", "", "## Audited timeline", "",
+            *[f"- {event.ts.isoformat()} · stage {event.stage} · {event.kind.value}: {event.summary}" for event in evs], ""))
+
+    @app.get("/api/incidents/{incident_id}/supporting-telemetry")
+    def supporting_telemetry(incident_id: str) -> dict[str, Any]:
+        evs = reader.events(incident_id)
+        if not evs:
+            raise HTTPException(404, f"no audit events for {incident_id!r}")
+        return reader.supporting_telemetry(incident_id, evs)
+
     @app.get("/api/incidents/{incident_id}/stream")
     def stream(incident_id: str) -> StreamingResponse:
         # No 404 here: the incident may not have written its first event yet (watch is still waiting
@@ -179,6 +262,8 @@ def create_app(audit_paths: list[Path],
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    add_comparison_routes(app, comparison_dir or REPOSITORY_ROOT / "runs" / "comparisons")
 
     if UI_DIST.exists():
         app.mount("/assets", StaticFiles(directory=UI_DIST / "assets"), name="assets")

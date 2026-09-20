@@ -59,6 +59,7 @@ search tool) before deployment:
 - `faultline.clone_vs_production`
 - `faultline.similar_incidents`
 - `faultline.incident_context`
+- `faultline.semantic_incident_memory`
 
 Each must be a parameterized, read-only query over only its intended evidence
 indices. Do not expose `faultline-audit` records containing action controls,
@@ -75,7 +76,7 @@ python faultline/brain/scripts/deploy_elastic_investigation_agent.py
 ```
 
 The script creates the `faultline-openai-investigation` OpenAI
-`chat_completion` inference endpoint, verifies the four tool IDs, then creates
+`chat_completion` inference endpoint, verifies the five tool IDs, then creates
 or updates the agent. `--dry-run` validates the configuration and both hero
 fixtures without credentials. `ELASTIC_AGENT_BUILDER_API_KEY` needs
 `manage_inference` plus Agent Builder management privileges; it is distinct

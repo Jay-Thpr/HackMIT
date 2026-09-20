@@ -10,7 +10,7 @@ Required environment variables:
   OPENAI_API_KEY     key stored by Elastic in the inference endpoint
   OPENAI_MODEL       an OpenAI chat model id selected by the team
 
-Owner 2 must create the four narrowly-scoped custom tools before this script is
+Owner 2 must create the five narrowly-scoped custom tools before this script is
 run. The script verifies their IDs exist, then creates or updates the agent.
 """
 
@@ -27,12 +27,23 @@ from faultline_contracts.fingerprint import Fingerprint
 from faultline_brain.elastic_investigation import (
     AGENT_ID,
     INFERENCE_ID,
+    INVESTIGATOR_AGENT_INSTRUCTIONS,
     OWNER2_TOOL_IDS,
+    REPORT_AGENT_INSTRUCTIONS,
+    ROLE_AGENT_IDS,
+    TRIAGE_AGENT_INSTRUCTIONS,
     agent_definition,
     assert_agent_boundary,
     fixture_evidence,
     openai_inference_definition,
+    proposal_agent_definition,
 )
+
+PROPOSAL_INSTRUCTIONS = {
+    "triage": TRIAGE_AGENT_INSTRUCTIONS,
+    "investigator": INVESTIGATOR_AGENT_INSTRUCTIONS,
+    "report": REPORT_AGENT_INSTRUCTIONS,
+}
 
 
 def request(method: str, url: str, api_key: str, body: dict[str, Any] | None = None) -> Any:
@@ -52,6 +63,41 @@ def require(*names: str) -> str:
     return value.rstrip("/") if any(name.endswith("_URL") for name in names) else value
 
 
+def ensure_inference_endpoint(
+    elasticsearch_url: str,
+    api_key: str,
+    endpoint: dict[str, Any],
+) -> str:
+    """Create the OpenAI endpoint once, or reuse an exact service/model match.
+
+    Elastic's create inference API rejects a second PUT for an existing ID.
+    Recreating it would also be destructive for callers using that ID, so an
+    incompatible existing endpoint fails closed instead.
+    """
+    endpoint_url = f"{elasticsearch_url}/_inference/chat_completion/{INFERENCE_ID}"
+    try:
+        existing = request("GET", endpoint_url, api_key)
+    except HTTPError as error:
+        if error.code != 404:
+            raise
+        request("PUT", endpoint_url, api_key, endpoint)
+        return "created"
+
+    rows = existing.get("endpoints", []) if isinstance(existing, dict) else []
+    if len(rows) != 1 or not isinstance(rows[0], dict):
+        raise SystemExit("existing inference endpoint returned an unexpected schema")
+    current = rows[0]
+    wanted = endpoint.get("service_settings", {})
+    if (
+        current.get("inference_id") != INFERENCE_ID
+        or current.get("task_type") != "chat_completion"
+        or current.get("service") != endpoint.get("service")
+        or current.get("service_settings", {}).get("model_id") != wanted.get("model_id")
+    ):
+        raise SystemExit("existing inference endpoint does not match the requested service/model")
+    return "reused"
+
+
 def fixture_boundary_check(root: Path) -> None:
     for name in ("fingerprint_storm.json", "fingerprint_degraded_db.json"):
         evidence = fixture_evidence(Fingerprint.model_validate_json((root / "contracts" / "fixtures" / name).read_text()))
@@ -60,16 +106,37 @@ def fixture_boundary_check(root: Path) -> None:
             raise RuntimeError(f"{name} leaks a hidden-world marker into investigation evidence")
 
 
+def assert_proposal_boundary(definition: dict[str, Any], role: str) -> None:
+    if definition.get("id") != ROLE_AGENT_IDS[role]:
+        raise ValueError("unexpected proposal agent id")
+    config = definition.get("configuration", {})
+    if config.get("instructions") != PROPOSAL_INSTRUCTIONS[role]:
+        raise ValueError("proposal agent instructions do not match the role")
+    if config.get("tools") != [] or config.get("skill_ids") != []:
+        raise ValueError("proposal agents must not carry tools or skills")
+    if config.get("enable_elastic_capabilities") is not False:
+        raise ValueError("proposal agents must disable Elastic capabilities")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--role", choices=("explanation", "triage", "investigator", "report"), default="explanation")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true")
+    mode.add_argument("--apply", action="store_true")
     args = parser.parse_args()
-    definition = agent_definition()
-    assert_agent_boundary(definition)
+    if args.role == "explanation":
+        definition = agent_definition()
+        assert_agent_boundary(definition)
+        agent_id = AGENT_ID
+    else:
+        definition = proposal_agent_definition(args.role)
+        assert_proposal_boundary(definition, args.role)
+        agent_id = definition["id"]
     root = Path(__file__).resolve().parents[3]
     fixture_boundary_check(root)
 
-    if args.dry_run:
+    if not args.apply:
         endpoint = openai_inference_definition("${OPENAI_API_KEY}", "${OPENAI_MODEL}")
         print(json.dumps({"inference_endpoint": endpoint, "agent": definition}, indent=2))
         return
@@ -79,14 +146,15 @@ def main() -> None:
     elastic_api_key = require("ELASTIC_AGENT_BUILDER_API_KEY", "ELASTIC_API_KEY")
     endpoint = openai_inference_definition(require("OPENAI_API_KEY"), require("OPENAI_MODEL"))
 
-    request("PUT", f"{elasticsearch_url}/_inference/chat_completion/{INFERENCE_ID}", elastic_api_key, endpoint)
-    available = request("GET", f"{kibana_url}/api/agent_builder/tools", elastic_api_key)
-    ids = {tool["id"] for tool in available.get("results", [])}
-    missing = set(OWNER2_TOOL_IDS) - ids
-    if missing:
-        raise SystemExit(f"Owner 2 read tools are missing: {', '.join(sorted(missing))}")
+    endpoint_status = ensure_inference_endpoint(elasticsearch_url, elastic_api_key, endpoint)
+    if args.role == "explanation":
+        available = request("GET", f"{kibana_url}/api/agent_builder/tools", elastic_api_key)
+        ids = {tool["id"] for tool in available.get("results", [])}
+        missing = set(OWNER2_TOOL_IDS) - ids
+        if missing:
+            raise SystemExit(f"Owner 2 read tools are missing: {', '.join(sorted(missing))}")
 
-    agent_url = f"{kibana_url}/api/agent_builder/agents/{AGENT_ID}"
+    agent_url = f"{kibana_url}/api/agent_builder/agents/{agent_id}"
     try:
         request("GET", agent_url, elastic_api_key)
     except HTTPError as error:
@@ -94,10 +162,16 @@ def main() -> None:
             raise
         request("POST", f"{kibana_url}/api/agent_builder/agents", elastic_api_key, definition)
     else:
-        request("PUT", agent_url, elastic_api_key, definition)
+        request("PUT", agent_url, elastic_api_key, {k: v for k, v in definition.items() if k != "id"})
     deployed = request("GET", agent_url, elastic_api_key)
-    assert_agent_boundary(deployed)
-    print(f"deployed {AGENT_ID} using inference endpoint {INFERENCE_ID}")
+    if args.role == "explanation":
+        assert_agent_boundary(deployed)
+    else:
+        assert_proposal_boundary(deployed, args.role)
+    print(
+        f"registered {agent_id}; inference endpoint {endpoint_status}; runtime requests must explicitly select inference "
+        f"endpoint {INFERENCE_ID}; live inference not verified"
+    )
 
 
 if __name__ == "__main__":

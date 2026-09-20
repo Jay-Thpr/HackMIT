@@ -16,7 +16,8 @@ from .elasticsearch import HttpElasticsearchClient
 from .factory import client_from_env
 from .mirror import MirroredElasticsearchClient
 from .esql import incident_timeline
-from .indices import ensure_index_templates
+from .indices import INCIDENT_MEMORY_INDEX, JINA_EMBEDDING_INFERENCE_ID, ensure_index_templates
+from .memory import ElasticsearchIncidentMemory, IncidentMemory, IncidentMemoryMatch
 from .fingerprint import fingerprint_from_stats
 from .local import CorruptStoreError, JsonlFingerprintStore
 from .source import HttpSandboxStats, PollingTelemetrySource
@@ -29,4 +30,5 @@ __all__ = [
     "fingerprint_from_distributed", "fingerprint_similarity", "incident_timeline", "load_repo_dotenv", "ReproductionSimilarity", "SimilarIncident",
     "CorruptStoreError", "JsonlFingerprintStore",
     "IncidentTokenComparison", "compare_incident_tokens", "fingerprint_prompt_payload", "token_count",
+    "ElasticsearchIncidentMemory", "INCIDENT_MEMORY_INDEX", "IncidentMemory", "IncidentMemoryMatch", "JINA_EMBEDDING_INFERENCE_ID",
 ]

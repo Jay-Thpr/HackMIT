@@ -8,6 +8,7 @@ Production is never touched; the clone is destroyed on the way out, pass or fail
 
 import time
 import json
+import logging
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +24,8 @@ from ..ports import PatchProposal, PatchVerification, PatchVerifier, Verificatio
 from .live_telemetry import FingerprintWriter, LiveTelemetrySource, TelemetryUnavailable
 from .sandbox import SandboxLeverAdapter
 
+log = logging.getLogger(__name__)
+
 # How each hero diagnosis is reproduced in a clone (sandbox/INTEGRATION.md "reproduction
 # recipes"). Investigators (Owner 3) can pass their own measured recipe instead.
 Recipe = dict[str, Any]
@@ -31,6 +34,7 @@ DEFAULT_RECIPES: dict[str, Recipe] = {
     "H_db": {"action": "db_capacity", "params": {"capacity_qps": 40}, "ttl_s": 20},
 }
 RECIPES_LOG = PRODUCT_ROOT / "state" / "recipes.jsonl"
+MAX_REPLAY_TRIGGER_S = 30
 
 
 def stored_recipes(path: Path = RECIPES_LOG) -> list[Recipe]:
@@ -157,12 +161,12 @@ class LabPatchVerifier(PatchVerifier):
             clone = self._lab.create(spec)
         except (LabError, httpx.HTTPError) as exc:
             return PatchVerification(VerificationStatus.skipped, f"clone lab unavailable: {exc}")
-        if clone.status != CloneStatus.ready or clone.endpoints is None:
-            return PatchVerification(
-                VerificationStatus.skipped, f"clone {clone.clone_id} not ready: {clone.detail}",
-                clone_id=clone.clone_id,
-            )
         try:
+            if clone.status != CloneStatus.ready or clone.endpoints is None:
+                return PatchVerification(
+                    VerificationStatus.skipped, f"clone {clone.clone_id} not ready: {clone.detail}",
+                    clone_id=clone.clone_id,
+                )
             suite = _unique_recipes(
                 [current_recipe]
                 + (stored_recipes(self._recipe_store) if self._recipe_store is not None else [])
@@ -198,13 +202,17 @@ class LabPatchVerifier(PatchVerifier):
         finally:
             try:
                 self._lab.destroy(clone.clone_id)
-            except (LabError, httpx.HTTPError):
-                pass
+            except (LabError, httpx.HTTPError) as exc:
+                log.warning("clone %s cleanup failed: %s", clone.clone_id, exc)
 
     def _run(self, clone: CloneInfo, recipe: Recipe, incident_id: str) -> PatchVerification:
         telemetry = self._telemetry_factory(clone, incident_id)
         levers = self._levers_factory(clone)
         telemetry.start()
+        # A stored recipe's ttl_s is how long its investigator held the cause (agents use up to
+        # 900 s); a replay only needs the trigger long enough to ignite the incident, then the
+        # question is whether the patched clone recovers on its own.
+        recipe = {**recipe, "ttl_s": min(int(recipe["ttl_s"]), MAX_REPLAY_TRIGGER_S)}
         try:
             hold_s = recipe["ttl_s"] + self._settle_s + self._healthy_windows * WINDOW_S
             # All clone traffic goes to the patched orders-v2 for the whole replay.

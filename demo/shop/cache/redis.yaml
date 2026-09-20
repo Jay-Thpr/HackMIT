@@ -1,0 +1,16 @@
+# Redis client settings for the checkout API's product/price cache.
+client:
+  host: cache
+  port: 6379
+  connect_timeout_ms: 500
+  socket_timeout_ms: 500
+  retry_on_timeout: true
+  max_retries: 3
+
+# What the API does when a key is missing or the cache is unreachable.
+miss_policy:
+  # Every miss goes straight to primary-db; concurrent misses for the same key each run
+  # the query (no request coalescing).
+  fallback: primary-db
+  coalesce_inflight: false
+  negative_ttl_s: 0

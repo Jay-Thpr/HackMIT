@@ -33,6 +33,7 @@ from faultline_contracts.triage import (
 )
 
 from .noise import NoiseModel
+from .planner import separates
 
 # Likelihood ratio applied per matching (vs. mismatching) directional expectation
 # when accumulating hypothesis support. This is a simple Bayesian-odds update over
@@ -47,6 +48,12 @@ AGREEMENT_ODDS = 2.0
 # should describe the settled response to the lever, rather than averaging that
 # response away with the transition immediately after it was applied.
 DURING_SETTLED_FRACTION = 0.5
+
+# Support is a normalized float, so leaders are compared with a tolerance rather
+# than by equality. Hypotheses within this distance of the best score are all
+# treated as leading: picking one of them by dictionary order would let the
+# order the model happened to list its hypotheses in decide the diagnosis.
+SUPPORT_TIE = 1e-9
 
 
 def phase_fingerprints(
@@ -177,7 +184,7 @@ def judge(
                 bucket[1] += 1
 
     support_by_id = _score_support(triage, tally)
-    diagnosis, leader_id, leader_confirmed = _confirm(
+    diagnosis, tested_ids, leader_confirmed = _confirm(
         triage, support_by_id, obs_index, healthy_baseline
     )
 
@@ -185,7 +192,7 @@ def judge(
         HypothesisSupport(
             hypothesis_id=hid,
             support=support_by_id[hid],
-            confirmed=leader_confirmed if hid == leader_id else None,
+            confirmed=(hid == diagnosis) if hid in tested_ids else None,
         )
         for hid in support_by_id
     ]
@@ -219,22 +226,42 @@ def _score_support(
     return {hid: value / total for hid, value in raw.items()}
 
 
-def _confirm(
-    triage: TriageResult,
-    support_by_id: dict[str, float],
+def _incident_returned(
+    experiment_id: str,
+    metric: str,
     obs_index: dict[tuple[str, Phase, str], Observation],
     healthy_baseline: NoiseModel,
-) -> tuple[str, str | None, bool]:
-    """The hypothesis with max support is the diagnosis only if at least one of
-    its own predictions has a confirms_if that passes against the measured
-    observations. Otherwise diagnosis is NONE_OF_THE_ABOVE and confirmed=False."""
-    if not support_by_id:
-        return NONE_OF_THE_ABOVE, None, False
+) -> bool:
+    """Whether `metric` was still away from healthy after the lever was released.
 
-    leader_id = max(support_by_id, key=lambda hid: support_by_id[hid])
+    Guards a `during`-phase `within_baseline` confirmation, which claims the
+    system returned to healthy *while the lever was held* -- i.e. that the lever
+    was suppressing the cause. The test of that claim is the release: if the
+    incident comes back, the lever was holding it down; if the system stays
+    healthy without the lever, something else was sustaining it and this
+    experiment confirms nothing. Pilot 1's false `H_db` came from a storm that
+    stayed healthy after failover was released.
 
+    Judged on measurement rather than on whether the hypothesis's own predicted
+    directions matched: an author who writes "flat" where their own cause
+    implies "up" should not thereby veto the evidence. Pilot 2's degraded case
+    was refused that way, with the incident returning at z = +48.
+    """
+    obs = obs_index.get((experiment_id, Phase.after_release, metric))
+    if obs is None:
+        return False  # nothing measured after release; the claim cannot be tested
+    return healthy_baseline.is_significant(metric, obs.measured)
+
+
+def _confirmation_passes(
+    triage: TriageResult,
+    hypothesis_id: str,
+    obs_index: dict[tuple[str, Phase, str], Observation],
+    healthy_baseline: NoiseModel,
+) -> bool:
+    """Whether one hypothesis passes a confirms_if it is entitled to claim."""
     for pred in triage.predictions:
-        if pred.hypothesis_id != leader_id:
+        if pred.hypothesis_id != hypothesis_id:
             continue
         confirms = pred.confirms_if
         if confirms is None:
@@ -242,23 +269,58 @@ def _confirm(
         obs = obs_index.get((pred.experiment_id, confirms.phase, confirms.metric))
         if obs is None:
             continue  # this experiment's confirms_if metric was never measured
+        if not separates(triage.predictions, pred.experiment_id):
+            continue  # every hypothesis predicts this response; it confirms none of them
 
         if confirms.expect == ConfirmExpect.within_baseline:
+            if confirms.phase == Phase.during and not _incident_returned(
+                pred.experiment_id, confirms.metric, obs_index, healthy_baseline
+            ):
+                continue  # healthy while held, still healthy once released: the lever proved nothing
             passed = not healthy_baseline.is_significant(confirms.metric, obs.measured)
         else:
             passed = obs.direction.value == confirms.expect.value
 
         if passed:
-            return leader_id, leader_id, True
+            return True
+    return False
 
-    return NONE_OF_THE_ABOVE, leader_id, False
+
+def _confirm(
+    triage: TriageResult,
+    support_by_id: dict[str, float],
+    obs_index: dict[tuple[str, Phase, str], Observation],
+    healthy_baseline: NoiseModel,
+) -> tuple[str, list[str], bool]:
+    """Confirm a diagnosis only when exactly one leading hypothesis passes its
+    own confirms_if.
+
+    Every hypothesis within SUPPORT_TIE of the best support is tested, because
+    tied support means the evidence has not chosen between them. If two of them
+    pass, the measurements did not discriminate and the answer is
+    NONE_OF_THE_ABOVE; if none does, likewise. Returns the diagnosis, the
+    hypotheses whose confirmation was actually tested, and whether one held.
+    """
+    if not support_by_id:
+        return NONE_OF_THE_ABOVE, [], False
+
+    best = max(support_by_id.values())
+    leaders = [hid for hid in support_by_id if support_by_id[hid] >= best - SUPPORT_TIE]
+    passed = [
+        hid
+        for hid in leaders
+        if _confirmation_passes(triage, hid, obs_index, healthy_baseline)
+    ]
+    if len(passed) == 1:
+        return passed[0], leaders, True
+    return NONE_OF_THE_ABOVE, leaders, False
 
 
 def _summarize(diagnosis: str, confirmed: bool, observations: list[Observation]) -> str:
     if diagnosis == NONE_OF_THE_ABOVE:
         return (
             f"No hypothesis confirmed across {len(observations)} observation(s); "
-            "leading hypothesis failed its own confirms_if check."
+            "no leading hypothesis passed a discriminating confirms_if check."
         )
     verb = "confirmed" if confirmed else "led but was not confirmed"
     return f"{diagnosis} {verb} across {len(observations)} observation(s)."

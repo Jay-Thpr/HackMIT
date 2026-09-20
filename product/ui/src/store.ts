@@ -2,7 +2,9 @@ import { create } from 'zustand'
 import { replay, type Scenario } from './model'
 import { scenarios as synthetic } from './scenarios'
 
-export type View = 'explanation' | 'investigation' | 'observability' | 'experiments' | 'replay'
+export type View = 'explanation' | 'investigation' | 'observability' | 'experiments' | 'replay' | 'elastic' | 'comparison'
+
+const initialView: View = typeof location !== 'undefined' && new URLSearchParams(location.search).has('compare') ? 'comparison' : 'investigation'
 
 interface UIState {
   scenarios: Scenario[]
@@ -21,7 +23,7 @@ interface UIState {
   follow: boolean
   reducedMotion: boolean
   focusRevision: number
-  dialog: 'experiment' | 'safety' | null
+  dialog: 'experiment' | 'safety' | 'report' | null
   setScenario: (id: string) => void
   addScenarios: (items: Scenario[], select?: string) => void
   updateScenario: (item: Scenario) => void
@@ -46,7 +48,7 @@ export const useWorkspace = create<UIState>((set, get) => ({
   speed: 1,
   environmentId: 'production',
   isolatedLayer: null,
-  view: 'investigation',
+  view: initialView,
   traceTab: 'evidence',
   follow: false,
   reducedMotion: prefersReducedMotion,

@@ -110,6 +110,15 @@ def test_scenario_without_windows_reads_unknown_not_zero():
     assert all(r["health"] == "unknown" for r in detect["readings"].values())
 
 
+def test_scenario_surfaces_similar_incidents_as_read_only_context():
+    source = next(e for e in _events() if e.kind.value == "triage" and e.stage == 3)
+    event = source.model_copy(update={"payload": {**source.payload, "similar_incidents": [
+        {"incident_id": "past-storm", "score": 0.91, "diagnosis": "H_meta", "confirmed": True}
+    ]}})
+    scenario = scenario_from_incident(event.incident_id, [event])
+    assert scenario["similarIncidents"] == [{"incident_id": "past-storm", "score": 0.91, "diagnosis": "H_meta", "confirmed": True}]
+
+
 @pytest.mark.parametrize("diagnosis,confirmed", [("H_meta", True), ("H_db", True), ("H_db", False), ("none_of_the_above", False)])
 def test_scenario_preserves_structured_verdict(diagnosis, confirmed):
     source = next(e for e in _events() if e.kind.value == "verdict")
@@ -141,6 +150,19 @@ def test_unknown_incident_raises():
         scenario_from_incident("nope", _events())
 
 
+def test_scenario_keeps_similar_incidents_separate_from_the_verdict():
+    source = next(e for e in _events() if e.kind.value == "triage")
+    payload = {**source.payload, "similar_incidents": [
+        {"incident_id": "older-storm", "score": 0.91, "diagnosis": "H_meta", "confirmed": True}
+    ]}
+    scenario = scenario_from_incident(source.incident_id, [source.model_copy(update={"payload": payload})])
+    assert scenario["memory"] == [{
+        "incidentId": "older-storm", "score": 0.91, "diagnosis": "H_meta", "confirmed": True,
+        "recordedAt": scenario["memory"][0]["recordedAt"],
+    }]
+    assert scenario["report"]["diagnosis"] is None
+
+
 def test_api_serves_incidents_events_and_scenario(tmp_path):
     client = TestClient(create_app([AUDIT, tmp_path / "missing.jsonl"]))
     assert client.get("/api/health").json()["elasticsearch"] is False
@@ -152,6 +174,8 @@ def test_api_serves_incidents_events_and_scenario(tmp_path):
     assert scenario["hypotheses"] and scenario["events"]
     assert client.get("/api/incidents/demo-storm-2/series").json() == []
     assert client.get("/api/incidents/nope/scenario").status_code == 404
+    telemetry = client.get("/api/incidents/demo-storm-2/supporting-telemetry").json()
+    assert telemetry["state"] == "not-configured" and "diagnosis" not in telemetry["detail"].lower()
 
 
 def test_scenario_marks_completion_and_now():

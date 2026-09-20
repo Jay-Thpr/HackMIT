@@ -1,0 +1,2 @@
+{"action_id":"70800decc3494d91be16e6346d275251","lever_id":"retry_cap","params":{"max_retries":0},"applied_at":"2026-09-20T09:11:43.728550Z","ttl_s":50,"status":"active","undo":{"lever_id":"retry_cap","payload":{"path":"retry_override"}}}
+{"action_id":"248864c6c91645b6a5089cb89c301e2f","lever_id":"db_failover","params":{},"applied_at":"2026-09-20T09:12:23.770291Z","ttl_s":60,"status":"active","undo":{"lever_id":"db_failover","payload":{"path":"db/failover"}}}

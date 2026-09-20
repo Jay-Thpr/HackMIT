@@ -1,0 +1,4 @@
+{"id":"0647036d71554faa8175707b28a2e2d8","at_s":0.175405,"kind":"observation","title":"Comparison observation window started","detail":"","environment":"observer","evidence":"operator","reference":null,"diagnosis":null,"action_id":null,"ttl_s":null}
+{"id":"ef99de05a74f4e12a796478639a2ab1a","at_s":60.155014,"kind":"detect","title":"Sustained checkout SLO breach","detail":"","environment":"observer","evidence":"measured","reference":null,"diagnosis":null,"action_id":null,"ttl_s":null}
+{"id":"646703a7c46544309b3954c370f744a0","at_s":61.093922,"kind":"tool","title":"Read available C1 telemetry history","detail":"","environment":"observer","evidence":"observed","reference":null,"diagnosis":null,"action_id":null,"ttl_s":null}
+{"id":"5267a923b06543b1baaeb7fe434d0c56","at_s":67.074874,"kind":"error","title":"Responder stopped: ValueError","detail":"","environment":"observer","evidence":"observed","reference":null,"diagnosis":null,"action_id":null,"ttl_s":null}
