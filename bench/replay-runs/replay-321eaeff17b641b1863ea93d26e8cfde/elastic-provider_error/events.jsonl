@@ -1,0 +1,2 @@
+{"id":"f1ef3b715df64587887cfc8a79abf1f8","at_s":60.0,"kind":"setup","title":"Run-scoped Elastic telemetry tool verified","detail":"","environment":"observer","evidence":"observed","reference":"faultline_comparison.f7d1ba3ef4574eb9b79321e71f523b63","diagnosis":null,"action_id":null,"ttl_s":null}
+{"id":"27321390bb894a6da58e688e25c4cc35","at_s":60.25,"kind":"error","title":"Responder stopped: RuntimeError","detail":"","environment":"observer","evidence":"observed","reference":null,"diagnosis":null,"action_id":null,"ttl_s":null}

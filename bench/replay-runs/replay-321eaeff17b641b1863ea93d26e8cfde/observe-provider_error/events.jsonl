@@ -1,0 +1,2 @@
+{"id":"853aa56fa62f43618fa777b48299143f","at_s":60.0,"kind":"tool","title":"Read available C1 telemetry history","detail":"","environment":"observer","evidence":"observed","reference":null,"diagnosis":null,"action_id":null,"ttl_s":null}
+{"id":"2c538dbd70364bb69210c664b29c5e63","at_s":60.25,"kind":"error","title":"Responder stopped: RuntimeError","detail":"","environment":"observer","evidence":"observed","reference":null,"diagnosis":null,"action_id":null,"ttl_s":null}

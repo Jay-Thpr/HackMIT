@@ -1,0 +1,69 @@
+{
+  "schema_version": "faultline-observer-replay/1",
+  "source": "offline-fake-provider",
+  "arm": "observe",
+  "scenario": "plain",
+  "expected_status": "completed",
+  "worker_result": {
+    "status": "completed"
+  },
+  "exit_code": 0,
+  "checks": {
+    "expected_worker_status": true,
+    "implementation_unchanged": true,
+    "provider_was_called": true,
+    "no_future_windows": true
+  },
+  "passed": true,
+  "source_telemetry_sha256": "e7e6d87c4e6a2e44a9bc5e686e5e77fbadb9020a666b585b132c9e4c791f37a4",
+  "implementation_sha256": "9c9f929d3c39cb312a49016acd74e9ad0fc54fbe0ef0405f260090140f01d274",
+  "origin": "2026-09-20T07:25:19.357185+00:00",
+  "start_s": 60,
+  "virtual_end_s": 300.0,
+  "virtual_horizon_s": 300,
+  "provider_calls": 8,
+  "telemetry_reads": [
+    {
+      "at": "2026-09-20T07:26:19.357185+00:00",
+      "window_count": 38,
+      "latest_window_end": "2026-09-20T07:26:19.357185+00:00"
+    },
+    {
+      "at": "2026-09-20T07:26:49.607185+00:00",
+      "window_count": 44,
+      "latest_window_end": "2026-09-20T07:26:49.357185+00:00"
+    },
+    {
+      "at": "2026-09-20T07:27:19.857185+00:00",
+      "window_count": 50,
+      "latest_window_end": "2026-09-20T07:27:19.357185+00:00"
+    },
+    {
+      "at": "2026-09-20T07:27:50.107185+00:00",
+      "window_count": 56,
+      "latest_window_end": "2026-09-20T07:27:49.357185+00:00"
+    },
+    {
+      "at": "2026-09-20T07:28:20.357185+00:00",
+      "window_count": 62,
+      "latest_window_end": "2026-09-20T07:28:19.357185+00:00"
+    },
+    {
+      "at": "2026-09-20T07:28:50.607185+00:00",
+      "window_count": 68,
+      "latest_window_end": "2026-09-20T07:28:49.357185+00:00"
+    },
+    {
+      "at": "2026-09-20T07:29:20.857185+00:00",
+      "window_count": 74,
+      "latest_window_end": "2026-09-20T07:29:19.357185+00:00"
+    },
+    {
+      "at": "2026-09-20T07:29:51.107185+00:00",
+      "window_count": 80,
+      "latest_window_end": "2026-09-20T07:29:49.357185+00:00"
+    }
+  ],
+  "artifact_directory": "/Users/jt/Desktop/HackMIT/.faultline/worktrees/comparison-lab/bench/replay-runs/replay-321eaeff17b641b1863ea93d26e8cfde/observe-plain",
+  "note": "Observer/worker contract test with real recorded or FakeWorld windows and scripted replies. Not model accuracy, recovery, cost or live latency evidence."
+}

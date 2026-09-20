@@ -1,0 +1,13 @@
+Traceback (most recent call last):
+  File "/Users/jt/Desktop/HackMIT/.faultline/worktrees/comparison-lab/bench/src/faultline_bench/comparison_runtime.py", line 267, in worker_main
+    run_observer(args.arm, telemetry, args.directory, args.run_id, protocol, log, deadline)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jt/Desktop/HackMIT/.faultline/worktrees/comparison-lab/bench/src/faultline_bench/comparison_runtime.py", line 232, in run_observer
+    result, tokens = openai_diagnose(client, protocol.model, windows, previous)
+                     ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jt/Desktop/HackMIT/.faultline/worktrees/comparison-lab/bench/src/faultline_bench/comparison_agents.py", line 107, in openai_diagnose
+    return validate_diagnosis(content, windows), (total or None)
+           ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/Users/jt/Desktop/HackMIT/.faultline/worktrees/comparison-lab/bench/src/faultline_bench/comparison_agents.py", line 84, in validate_diagnosis
+    raise ValueError("diagnosis cites unobserved metric keys: " + ", ".join(unknown))
+ValueError: diagnosis cites unobserved metric keys: db.pool_busy_ratio increases from ~0.8 pre-incident to ~0.99 at onset and remains high, db.qps multiplies by approximately 4x after incident onset, problem persists over several subsequent windows, svc.gateway.error_rate rises from 0.0 to >1.0 post-incident, svc.gateway.p99_ms jumps from ~100-190ms pre-incident to >2490ms, svc.orders.error_rate increases from 0.0 to as high as 0.98+ post-incident, svc.orders.p99_ms, svc.payments.p99_ms, db.query_p99_ms all jump to ~2490ms, svc.orders.retry_ratio climbs from 1.0 to as high as 4.08 at incident onset, svc.orders.timeout_rate rises from 0.0 to above 1.0 at incident onset

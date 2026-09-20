@@ -1,0 +1,2 @@
+{"id":"a372fa6ef0d747b68c9327c92023c503","at_s":60.0,"kind":"setup","title":"Run-scoped Elastic telemetry tool verified","detail":"","environment":"observer","evidence":"observed","reference":"faultline_comparison.e18cc12d05d5492495e8bfe0c762cb66","diagnosis":null,"action_id":null,"ttl_s":null}
+{"id":"58d18b21ff484f0c9dd2d613ce5a5659","at_s":60.25,"kind":"error","title":"Responder stopped: ValidationError","detail":"","environment":"observer","evidence":"observed","reference":null,"diagnosis":null,"action_id":null,"ttl_s":null}
