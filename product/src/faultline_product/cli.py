@@ -147,6 +147,14 @@ def build_parser() -> argparse.ArgumentParser:
     report = commands.add_parser("report", help="render an incident from the C4 audit log")
     report.add_argument("--incident", required=True)
 
+    ui = commands.add_parser("ui", help="serve the read-only incident API and the built UI")
+    ui.add_argument("--port", type=int, default=8010)
+    ui.add_argument("--host", default="127.0.0.1")
+    ui.add_argument(
+        "--extra-audit-log", type=Path, action="append", default=[],
+        help="additional C4 JSONL files to expose (e.g. integration/runs/audit-*.jsonl)",
+    )
+
     replay = commands.add_parser("replay", help="run the stored incident replay suite in one fresh clone")
     replay.add_argument("incident", help="incident id; stored recipes are replayed regardless of diagnosis")
     replay.add_argument("--lab-url", required=True, help="C6 clone manager URL")
@@ -178,6 +186,19 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "report":
             print(render_report(audit, args.incident))
+            return 0
+        if args.command == "ui":
+            import uvicorn
+
+            from .api import UI_DIST, build_store, create_app
+
+            paths = [args.audit_log, *args.extra_audit_log]
+            store = build_store()
+            print(f"[ui] audit logs: {', '.join(str(p) for p in paths)}")
+            print(f"[ui] elasticsearch readings: {'on' if store else 'off (set FAULTLINE_ELASTICSEARCH_URL)'}")
+            print(f"[ui] built UI: {'served from ' + str(UI_DIST) if UI_DIST.exists() else 'not built (cd product/ui && npm run build) — API only'}")
+            print(f"[ui] http://{args.host}:{args.port}/  ·  http://{args.host}:{args.port}/api/incidents")
+            uvicorn.run(create_app(paths, store), host=args.host, port=args.port, log_level="warning")
             return 0
         if args.command == "replay":
             return _run_replay(args)

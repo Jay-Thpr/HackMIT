@@ -59,6 +59,13 @@ Live `/stats` → C1 fingerprints are built by Owner 2's canonical
 window boundaries); Product only adds the polling loop, breach wait, and the optional
 `orders_v2` canary service on top, so the judge's baselines match what lands in Elasticsearch.
 
+Show any recorded incident in the UI (`product/ui`, built with `npm run build`):
+
+```bash
+uv run faultline ui --port 8010 --extra-audit-log ../integration/runs/audit-demo-storm-2.jsonl
+# http://127.0.0.1:8010/?live  ·  /api/incidents  ·  /api/incidents/<id>/scenario
+```
+
 Runtime orchestration depends on the shared `LeverAdapter`, `TelemetrySource`, and
 `AuditSink` contracts. Owner 2's live telemetry/Elasticsearch sink and Owner 4's
 TTL-backed sandbox adapter can replace the fixture implementations without changing

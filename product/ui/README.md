@@ -11,7 +11,25 @@ npm ci
 npm run dev -- --port 4173 --strictPort
 ```
 
-Open http://127.0.0.1:4173. No credentials, Docker stack, or backend processes are required.
+Open http://127.0.0.1:4173. No credentials, Docker stack, or backend processes are required for the
+synthetic examples.
+
+## Show a real incident
+
+The Product CLI serves a read-only API over the pipeline's audit log (and C1 readings from
+Elasticsearch when `FAULTLINE_ELASTICSEARCH_URL` is set), plus this UI once it is built:
+
+```sh
+npm run build                                                  # once; writes dist/ that the API serves
+cd .. && uv run faultline ui --port 8010 \
+  --extra-audit-log ../integration/runs/audit-demo-storm-2.jsonl   # any extra C4 JSONL files
+```
+
+Open http://127.0.0.1:8010/?live (newest incident) or `/?incident=<id>`. Real incidents are listed
+first in the architecture selector and marked **Live incident**; the two synthetic examples stay
+available and remain the default without a query string. In `npm run dev`, `/api` is proxied to
+:8010, so the same URLs work on 4173. Translation from audit events to this view model lives in
+`product/src/faultline_product/ui_scenario.py` (see `product/UI_DATA.md` for the event fields).
 
 ## Explore
 

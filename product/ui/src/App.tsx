@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { Activity, ArrowDownRight, ArrowRight, Box, ChevronDown, ChevronRight, CircleHelp, Compass, FlaskConical, Focus, GitBranch, Layers3, LayoutDashboard, ListFilter, Maximize2, MousePointer2, Network, Pause, Play, Plus, ShieldCheck, Sparkles, Waves } from 'lucide-react'
-import { scenarios } from './scenarios'
+import { loadLiveScenarios } from './live'
 import { replay, timeLabel, visibleEvents } from './model'
 import { useWorkspace, type View } from './store'
 import { useLayout } from './use-layout'
@@ -31,8 +31,8 @@ function Mark() { return <span className="brand-mark" aria-hidden="true"><i /><i
 
 export default function App() {
   const ui = useWorkspace()
-  const { scenarioId, cursor, playing, view, environmentId, isolatedLayer, selectedNode, follow, reducedMotion, set, focus, inspect, setScenario } = ui
-  const scenario = scenarios.find(item => item.id === scenarioId)!
+  const { scenarios, scenarioId, cursor, playing, view, environmentId, isolatedLayer, selectedNode, follow, reducedMotion, set, focus, inspect, setScenario } = ui
+  const scenario = scenarios.find(item => item.id === scenarioId) ?? scenarios[0]
   const sampleTime = Math.floor(cursor)
   const workspace = useMemo(() => replay(scenario, sampleTime), [scenario, sampleTime])
   const events = useMemo(() => visibleEvents(scenario, sampleTime), [scenario, sampleTime])
@@ -50,6 +50,8 @@ export default function App() {
   const latest = events.at(-1)
   const phases = [...new Set(scenario.events.flatMap(event => event.phase ? [event.phase] : []))]
   const phaseNumber = phases.indexOf(workspace.phase) + 1
+
+  useEffect(() => { void loadLiveScenarios() }, [])
 
   useEffect(() => {
     let last = performance.now()
@@ -91,7 +93,7 @@ export default function App() {
     </aside>
 
     <div className="main-shell">
-      <header className="topbar"><div className="breadcrumb"><span>Workspace</span><ChevronRight size={12} /><strong>{navigation.find(item => item.view === view)?.label}</strong></div><div className="topbar-actions"><span className="demo-badge"><i />Simulated data</span><span className="topbar-divider" /><button className="pause-all" onClick={() => set({ playing: false })} disabled={!playing}><Pause size={13} />Pause simulation</button></div></header>
+      <header className="topbar"><div className="breadcrumb"><span>Workspace</span><ChevronRight size={12} /><strong>{navigation.find(item => item.view === view)?.label}</strong></div><div className="topbar-actions"><span className="demo-badge"><i />{scenario.live ? 'Live incident' : 'Simulated data'}</span><span className="topbar-divider" /><button className="pause-all" onClick={() => set({ playing: false })} disabled={!playing}><Pause size={13} />Pause simulation</button></div></header>
       <main id="main-content">
         <section className="workspace-header"><div><div className="workspace-brief"><span className="case-id">{scenario.incident}</span><span className="case-state"><i />{workspace.phase}</span></div><h1>{view === 'investigation' ? (cursor < 12 ? 'Establishing a healthy reference' : workspace.verdict ?? scenario.incidentTitle) : title.title}</h1>{view !== 'investigation' && <p>{title.subtitle}</p>}</div><div className="workspace-header-actions">{view === 'investigation' && <button className="primary-button" onClick={() => { ui.togglePlay(); set({ follow: true }) }}>{playing ? <Pause size={14} /> : <Play size={14} />}{playing ? 'Pause investigation' : 'Follow investigation'}</button>}<button className="secondary-button" onClick={() => set({ dialog: 'experiment' })}><Plus size={15} />New experiment</button></div></section>
         <div className="context-bar"><div className="scenario-context"><Box size={15} /><select aria-label="Example architecture" value={scenarioId} onChange={event => { setScenario(event.target.value); setEntitySearch('') }}>{scenarios.map(item => <option value={item.id} key={item.id}>{item.name}</option>)}</select><span className="context-separator" /><span className="context-type">{scenario.subtitle}</span></div><div className="environment-context"><span>Environment</span><select aria-label="Selected environment" value={environment.id} onChange={event => focus(event.target.value)}>{workspace.environments.map(env => <option key={env.id} value={env.id}>{env.label}</option>)}</select></div></div>
@@ -110,7 +112,7 @@ export default function App() {
                 {error ? <div className="layout-error">{error}{fallback}</div> : layout ? <Suspense fallback={<div className="scene-loading"><Network size={25} /><span>Preparing the spatial workspace…</span></div>}><TopologyScene layout={layout} workspace={workspace} scenario={scenario} fallback={fallback} /></Suspense> : <div className="scene-loading"><Network size={25} /><span>Mapping dependencies…</span></div>}
                 <div className="map-legend"><span><i className="scene-key issue" />Issue</span><span><i className="scene-key attention" />Recovering</span><span><i className="scene-key infrastructure" />Healthy</span></div>
                 {showEntities && <div className="entity-picker"><label htmlFor="entity-search">Find & inspect an entity</label><input id="entity-search" autoFocus placeholder="Service or dependency…" value={entitySearch} onChange={event => setEntitySearch(event.target.value)} />{scenario.topology.nodes.filter(node => node.label.toLowerCase().includes(entitySearch.toLowerCase())).map(node => <button key={node.id} onClick={() => { inspect(node.id, environment.id); set({ traceTab: 'trace', follow: false }); setShowEntities(false) }}><Box size={13} />{node.label}<ArrowRight size={12} /></button>)}</div>}
-                <div className="map-status"><span className={`map-mode ${playing ? 'is-playing' : ''}`}><i />{playing ? 'SIMULATION PLAYING' : 'REPLAY PAUSED'}</span><span>Traffic is illustrative, not individual requests</span></div>
+                <div className="map-status"><span className={`map-mode ${playing ? 'is-playing' : ''}`}><i />{playing ? 'SIMULATION PLAYING' : 'REPLAY PAUSED'}</span><span>{scenario.live ? 'Readings are 5 s C1 windows; traffic animation is illustrative' : 'Traffic is illustrative, not individual requests'}</span></div>
                 <div className="camera-tools"><button className={follow ? 'active' : ''} aria-pressed={follow} onClick={() => set({ follow: !follow })}><Compass size={13} />{follow ? 'Following key events' : 'Follow key events'}</button><button aria-pressed={reducedMotion} onClick={() => set({ reducedMotion: !reducedMotion })}><MousePointer2 size={12} />{reducedMotion ? 'Reduced motion' : 'Full motion'}</button></div>
               </div>
               <div className="map-environments" aria-label="System layers"><button className={isolatedLayer === null ? 'selected' : ''} aria-pressed={isolatedLayer === null} onClick={() => { focus('production'); set({ isolatedLayer: null }); setEvidenceOpen(false) }}><Layers3 size={13} /><strong>All layers</strong></button>{workspace.environments.map((env, index) => <button className={isolatedLayer === env.id ? 'selected' : ''} aria-label={`Focus ${env.label} layer`} aria-pressed={isolatedLayer === env.id} key={env.id} onClick={() => focus(env.id)}><span style={{ background: env.color }} /><strong>{env.label}</strong><small>{index === 0 ? 'Base level' : `Level ${index}`}</small>{env.id !== 'production' && <GitBranch size={12} />}</button>)}</div>
@@ -126,7 +128,7 @@ export default function App() {
           {view === 'replay' && <ReplayLibrary scenario={scenario} />}
           <div className="panel page-timeline"><Timeline scenario={scenario} /></div>
         </>}
-        <footer className="page-footer"><span><Mark />Faultline <span>·</span> The model proposes. Measurement decides.</span><span>Interactive design prototype <ArrowDownRight size={12} /></span></footer>
+        <footer className="page-footer"><span><Mark />Faultline <span>·</span> The model proposes. Measurement decides.</span><span>{scenario.live ? 'Real audit log · readings from Elasticsearch' : <>Interactive design prototype <ArrowDownRight size={12} /></>}</span></footer>
       </main>
     </div>
     <Dialogs scenario={scenario} workspace={workspace} />

@@ -189,3 +189,19 @@ test('agent marker opens its purpose and current work', async ({page}) => {
   await expect(page.locator('.selected-entity strong')).toHaveText('Investigator A')
   await page.screenshot({path:'test-results/agent-inspector.png',fullPage:true})
 })
+
+test('loads a real incident from the Product API when requested', async ({ page }) => {
+  // The spec runs against the Vite dev server, which proxies /api to `faultline ui` on :8010.
+  // Skips cleanly when no API is running so the prototype suite stays self-contained.
+  const index = await page.request.get('/api/incidents').catch(() => null)
+  test.skip(!index || !index.ok(), 'Product API (faultline ui) not running on :8010')
+  const incidents: { id: string }[] = await index!.json()
+  test.skip(!incidents.length, 'no incidents in the audit log')
+  await page.goto(`/?incident=${encodeURIComponent(incidents[0].id)}`)
+  await expect(page.getByText('Live incident', { exact: true })).toBeVisible()
+  await expect(page.locator('select[aria-label="Example architecture"]')).toHaveValue(incidents[0].id)
+  await expect(page.locator('.map-canvas canvas')).toBeVisible()
+  await expect(page.getByText('Live incident · real audit log')).toBeVisible()
+  await page.locator('select[aria-label="Example architecture"]').selectOption('commerce')
+  await expect(page.getByText('Simulated data', { exact: true })).toBeVisible()
+})

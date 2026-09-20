@@ -4,9 +4,11 @@ version = "0.1.0"
 description = "Warp-facing Faultline incident orchestration CLI"
 requires-python = ">=3.11"
 dependencies = [
+    "fastapi>=0.115,<0.116",
     "faultline-brain",
     "faultline-contracts",
     "faultline-telemetry",
+    "uvicorn>=0.34,<0.35",
 ]
 
 [project.scripts]

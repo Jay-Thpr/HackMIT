@@ -64,6 +64,7 @@ export interface WorkspaceEvent {
 
 export interface Scenario {
   id: string
+  live?: boolean  // built from a real audit log by the Product API, not a scripted example
   name: string
   subtitle: string
   incident: string

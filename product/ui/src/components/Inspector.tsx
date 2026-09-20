@@ -83,7 +83,7 @@ export function Inspector({ scenario, workspace, environment }: { scenario: Scen
         <div className="evidence-boundary"><span className="overline">HOW WE CHECK THE CAUSE</span><p>A clone can reproduce the symptoms without proving the cause. We still need to test the prediction in production.</p><button className="text-button" onClick={() => set({ traceTab: 'trace' })}>See the test history <ArrowRight size={13} /></button></div>
       </> : <>
         <div className="trace-filter">{selectedNode ? <span>Activity in {environment.label}</span> : <><label htmlFor="trace-filter">Environment</label><select id="trace-filter" value={filter} onChange={event => setFilter(event.target.value)}><option value="all">All environments</option><option value="production">Production</option>{createdClones.map(event => <option key={event.environmentId} value={event.environmentId}>{event.environment?.label}</option>)}</select></>}</div>
-        <p className="trace-explanation">Follow what the agent tried and what it found. This trace is simulated.</p>
+        <p className="trace-explanation">Follow what the agent tried and what it found. {scenario.live ? 'Every step is a recorded audit event.' : 'This trace is simulated.'}</p>
         {filtered.length === 0 && <p className="empty-copy">No activity here yet. Advance the replay or select another system.</p>}
         {filtered.map(event => <TraceStep key={event.id} event={event} selected={event.id === (filtered.some(item => item.id === selectedEvent) ? selectedEvent : latest?.id)} onSelect={() => { if (event.targetId && workspace.environments.some(env => env.id === event.environmentId)) inspect(event.targetId, event.environmentId); set({ selectedEvent: event.id }) }} />)}
       </>}
