@@ -110,6 +110,7 @@ class LabInvestigation(Investigation):
         agent=None,
         budget: int = 3,
         recipe_sink: Callable[[dict], None] | None = None,
+        agent_factory=None,
     ):
         self._lab = lab
         self._recipes = recipes or DEFAULT_RECIPES
@@ -122,6 +123,7 @@ class LabInvestigation(Investigation):
         self._sleep = sleep
         self._clock = clock
         self._agent = agent
+        self._agent_factory = agent_factory
         self._budget = budget
         self._recipe_sink = recipe_sink if recipe_sink is not None else _append_recipe
 
@@ -277,6 +279,7 @@ class LabInvestigation(Investigation):
             result = AgenticCloneInvestigator(
                 _CleanupTolerantLab(self._lab), observe, self._agent,
                 budget=self._budget, wait=self._sleep,
+                agent_for_clone=(lambda clone: self._agent_factory(incident_id, hypothesis, clone, production_incident)) if self._agent_factory else None,
             ).investigate(
                 hypothesis, spec, production_incident, healthy,
                 triage=triage, production_probe=production_probe, run_probe=run_probe,

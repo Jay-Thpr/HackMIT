@@ -318,7 +318,8 @@ class Orchestrator:
             EventKind.triage,
             Actor.llm,
             f"ambiguous: {' vs '.join(ids)}",
-            {"hypotheses": ids, "ambiguous": triage.ambiguous, "triage": triage.model_dump(mode="json"),
+            {"hypotheses": ids, "ambiguous": triage.ambiguous,
+             "triage": triage.model_dump(mode="json"), "source": self._brain.triage_source(),
              "similar_incidents": similar},
         )
         self._renderer.event("triage", f"ambiguous: {' vs '.join(ids)}")

@@ -363,10 +363,12 @@ class AgenticCloneInvestigator:
         budget: int = 3,
         wait: Callable[[float], None] | None = None,
         catalog: list[LabActionSpec] = LAB_CATALOG,
+        agent_for_clone: Callable[[CloneInfo], Any] | None = None,
     ):
         self._lab = lab
         self._observe = observe
         self._agent = agent
+        self._agent_for_clone = agent_for_clone
         self._budget = budget
         self._wait = wait or (lambda _seconds: None)
         self._catalog = catalog
@@ -392,8 +394,9 @@ class AgenticCloneInvestigator:
         stopped_reason: str | None = None
         handle: LabActionHandle | None = None
         try:
+            agent = self._agent_for_clone(clone) if self._agent_for_clone else self._agent
             for _attempt in range(self._budget):
-                proposal = self._agent.propose(
+                proposal = agent.propose(
                     hypothesis,
                     self._catalog,
                     production_incident if isinstance(production_incident, Fingerprint) else production_incident[-1],

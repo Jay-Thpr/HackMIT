@@ -558,6 +558,19 @@ def test_triage_records_similar_past_incidents_with_their_recorded_diagnosis(tmp
     assert "[triage] looks like past-1 (0.93, was H_meta), unknown-9 (0.40)" in output
 
 
+def test_triage_audit_keeps_source_and_similar_incidents(tmp_path):
+    orchestrator, audit, bundle = _orchestrator(tmp_path)
+    orchestrator._similar = StubSimilar([("past-7", 0.81)])
+
+    orchestrator.run("merged", bundle.experiment_start)
+
+    triage = next(e for e in audit.query("merged") if e.stage == Stage.triage and e.kind == EventKind.triage)
+    assert triage.payload["source"] == "fixture"
+    assert triage.payload["similar_incidents"] == [
+        {"incident_id": "past-7", "score": 0.81, "diagnosis": None, "confirmed": None}
+    ]
+
+
 def test_similar_incident_search_failure_never_blocks_triage(tmp_path):
     output = []
     orchestrator, audit, bundle = _orchestrator(tmp_path, output=output)

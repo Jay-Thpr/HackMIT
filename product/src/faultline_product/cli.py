@@ -8,16 +8,26 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from faultline_brain import DEFAULT_MODEL
-from faultline_contracts import JsonlSink, LeverError, utcnow
+from faultline_contracts import (
+    Actor,
+    AuditEvent,
+    EventKind,
+    JsonlSink,
+    LeverError,
+    Stage,
+    utcnow,
+)
 from faultline_contracts.clone import MAX_CLONES
 from faultline_telemetry import (
     ElasticsearchAuditSink,
     ElasticsearchFingerprintStore,
     ElasticsearchTelemetryAnalytics,
+    HttpElasticsearchClient,
     client_from_env,
     ensure_index_templates,
     load_repo_dotenv,
 )
+from faultline_telemetry.evidence import ElasticsearchEvidenceReader
 
 from .adapters import (
     CommandPager,
@@ -93,6 +103,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     watch.add_argument("--brain", choices=("fixture", "live"))
     watch.add_argument("--openai-model", default=DEFAULT_MODEL)
+    watch.add_argument("--reasoning-provider", choices=("direct", "agent-builder"), default="direct")
+    watch.add_argument("--elastic-evidence", action="store_true", help="attach scoped primary-Elasticsearch evidence to Agent Builder proposals")
     watch.add_argument(
         "--canary-context",
         type=Path,
@@ -147,6 +159,8 @@ def build_parser() -> argparse.ArgumentParser:
     investigate.add_argument("--detect-sustain", type=float, default=60)
     investigate.add_argument("--brain", choices=("fixture", "live"))
     investigate.add_argument("--openai-model", default=DEFAULT_MODEL)
+    investigate.add_argument("--reasoning-provider", choices=("direct", "agent-builder"), default="direct")
+    investigate.add_argument("--elastic-evidence", action="store_true", help="attach scoped primary-Elasticsearch evidence to Agent Builder proposals")
 
     experiment = commands.add_parser("experiment", help="run a fixture experiment and judge it")
     experiment.add_argument("--fixture", choices=("storm",), default="storm")
@@ -163,9 +177,15 @@ def build_parser() -> argparse.ArgumentParser:
     experiment.add_argument("--detect-sustain", type=float, default=60)
     experiment.add_argument("--brain", choices=("fixture", "live"))
     experiment.add_argument("--openai-model", default=DEFAULT_MODEL)
+    experiment.add_argument("--reasoning-provider", choices=("direct", "agent-builder"), default="direct")
+    experiment.add_argument("--elastic-evidence", action="store_true", help="attach scoped primary-Elasticsearch evidence to Agent Builder proposals")
 
     report = commands.add_parser("report", help="render an incident from the C4 audit log")
     report.add_argument("--incident", required=True)
+    report.add_argument("--elastic-evidence", action="store_true", help="append scoped primary-Elasticsearch evidence summary")
+    report.add_argument("--explain", action="store_true", help="append an Agent Builder evidence explanation (requires --elastic-evidence)")
+    report.add_argument("--elasticsearch-url", help="primary Elasticsearch endpoint for --elastic-evidence")
+    report.add_argument("--elasticsearch-api-key", help="primary Elasticsearch API key (env: FAULTLINE_ELASTICSEARCH_API_KEY)")
 
     ui = commands.add_parser("ui", help="serve the read-only incident API and the built UI")
     ui.add_argument("--port", type=int, default=8010)
@@ -193,6 +213,24 @@ def main(argv: list[str] | None = None) -> int:
     elasticsearch_api_key = getattr(args, "elasticsearch_api_key", None) or os.environ.get(
         "FAULTLINE_ELASTICSEARCH_API_KEY"
     )
+    reasoning_provider = getattr(args, "reasoning_provider", "direct")
+    elastic_evidence = getattr(args, "elastic_evidence", False)
+    brain_mode = getattr(args, "brain", None) or (
+        "live" if getattr(args, "telemetry", "fixture") == "sandbox" else "fixture"
+    )
+    if reasoning_provider == "agent-builder" and brain_mode != "live":
+        print("faultline: error: --reasoning-provider agent-builder requires --brain live")
+        return 2
+    if getattr(args, "explain", False) and not elastic_evidence:
+        print("faultline: error: --explain requires --elastic-evidence")
+        return 2
+    if elastic_evidence:
+        if args.command != "report" and reasoning_provider != "agent-builder":
+            print("faultline: error: --elastic-evidence requires --reasoning-provider agent-builder")
+            return 2
+        if not elasticsearch_url:
+            print("faultline: error: --elastic-evidence requires a primary Elasticsearch URL (FAULTLINE_ELASTICSEARCH_URL)")
+            return 2
     es_client = None
     if elasticsearch_url and getattr(args, "telemetry", None) == "sandbox":
         es_client = _persistence_client(elasticsearch_url, elasticsearch_api_key)
@@ -206,9 +244,19 @@ def main(argv: list[str] | None = None) -> int:
         audit = PagingAuditSink(audit, CommandPager(shlex.split(pager_command)), log=log)
     live_telemetry = None
     writer = None
+    evidence_client = None
     try:
         if args.command == "report":
-            print(render_report(audit, args.incident))
+            reader = None
+            explanation_client = None
+            if elastic_evidence:
+                evidence_client = HttpElasticsearchClient(elasticsearch_url, api_key=elasticsearch_api_key)
+                reader = ElasticsearchEvidenceReader(evidence_client)
+            if getattr(args, "explain", False):
+                from faultline_brain.agent_builder import AgentBuilderClient
+
+                explanation_client = AgentBuilderClient.from_env(role="report")
+            print(render_report(audit, args.incident, evidence_reader=reader, explanation_client=explanation_client))
             return 0
         if args.command == "ui":
             import uvicorn
@@ -229,7 +277,6 @@ def main(argv: list[str] | None = None) -> int:
         if (args.telemetry == "sandbox") != (args.levers == "sandbox"):
             print("faultline: error: sandbox telemetry and levers must be selected together")
             return 2
-        brain_mode = args.brain or ("live" if args.telemetry == "sandbox" else "fixture")
         if args.telemetry == "sandbox" and brain_mode != "live":
             print("faultline: error: sandbox mode requires --brain live")
             return 2
@@ -242,6 +289,22 @@ def main(argv: list[str] | None = None) -> int:
         if resume and not audit.query(incident_id):
             print(f"faultline: error: nothing to resume; no audit events for {incident_id!r}")
             return 2
+        proposal_client = None
+        provider_sink = None
+        investigator_client = None
+        investigator_sink = None
+        if reasoning_provider == "agent-builder":
+            provider_sink = _reasoning_sink(audit, incident_id, Stage.triage)
+            proposal_client = _proposal_client(args, "triage", provider_sink)
+            investigator_sink = _reasoning_sink(audit, incident_id, Stage.experiment)
+            investigator_client = _proposal_client(args, "investigator", investigator_sink)
+        evidence_reader = None
+        if elastic_evidence:
+            if es_client is not None:
+                evidence_reader = ElasticsearchEvidenceReader(es_client)
+            else:
+                evidence_client = HttpElasticsearchClient(elasticsearch_url, api_key=elasticsearch_api_key)
+                evidence_reader = ElasticsearchEvidenceReader(evidence_client)
         if args.telemetry == "sandbox":
             host = args.sandbox_host
             writer = ElasticsearchFingerprintStore(es_client) if es_client else None
@@ -295,6 +358,9 @@ def main(argv: list[str] | None = None) -> int:
                 api_key=os.environ.get("OPENAI_API_KEY"),
                 model=args.openai_model,
                 triage_fallback=bundle.triage,
+                proposal_client=proposal_client,
+                provider_sink=provider_sink,
+                evidence_reader=evidence_reader,
             )
         else:
             brain = FixtureBrain(bundle.triage, bundle.experiment, bundle.verdict)
@@ -307,7 +373,13 @@ def main(argv: list[str] | None = None) -> int:
             verifier=_patch_verifier(args, writer),
             checkout=_patch_checkout(args),
             max_revisions=getattr(args, "max_revisions", 1),
-            investigation=_investigation(args, writer),
+            investigation=_investigation(
+                args,
+                writer,
+                proposal_client=investigator_client,
+                provider_sink=investigator_sink,
+                evidence_reader=evidence_reader,
+            ),
             investigation_gate=getattr(args, "investigate_gate", False),
             similar=ElasticSimilarIncidents(ElasticsearchTelemetryAnalytics(es_client)) if es_client else None,
             ship=not getattr(args, "no_ship", False),
@@ -351,6 +423,8 @@ def main(argv: list[str] | None = None) -> int:
             if live_telemetry is not None:
                 live_telemetry.stop()
         finally:
+            if evidence_client is not None:
+                evidence_client.close()
             if es_client is not None:
                 es_client.close()
 
@@ -415,7 +489,31 @@ def _patch_checkout(args):
     )
 
 
-def _investigation(args, writer=None):
+def _reasoning_sink(audit, incident_id, stage):
+    def sink(metadata: dict) -> None:
+        audit.write(
+            AuditEvent(
+                incident_id=incident_id,
+                stage=stage,
+                kind=EventKind.triage,
+                actor=Actor.llm,
+                summary="reasoning provider update",
+                payload={"reasoning_provider": True, **metadata},
+            )
+        )
+
+    return sink
+
+
+def _proposal_client(args, role: str, provenance_sink=None):
+    if getattr(args, "reasoning_provider", "direct") != "agent-builder":
+        return None
+    from faultline_brain.agent_builder import AgentBuilderClient
+
+    return AgentBuilderClient.from_env(role=role, provenance_sink=provenance_sink)
+
+
+def _investigation(args, writer=None, *, proposal_client=None, provider_sink=None, evidence_reader=None):
     if getattr(args, "no_investigate", False):
         return None
     if getattr(args, "levers", "fixture") != "sandbox":
@@ -426,21 +524,51 @@ def _investigation(args, writer=None):
     from faultline_contracts.clone import HttpCloneLab
 
     agent = None
+    agent_factory = None
     brain = getattr(args, "brain", None) or (
         "live" if getattr(args, "telemetry", "fixture") == "sandbox" else "fixture"
     )
     if brain == "live":
         api_key = os.environ.get("OPENAI_API_KEY")
+        model = getattr(args, "openai_model", DEFAULT_MODEL)
+        direct_agent = None
         if api_key:
             try:
                 from openai import OpenAI
             except ImportError as exc:
-                raise RuntimeError("install with: uv sync --extra llm") from exc
-            from faultline_brain import InvestigatorAgent
+                if proposal_client is None:
+                    raise RuntimeError("install with: uv sync --extra llm") from exc
+                if provider_sink:
+                    provider_sink({"provider": "openai", "role": "investigator", "status": "unavailable", "reason": "ImportError"})
+            else:
+                from faultline_brain import InvestigatorAgent
 
-            agent = InvestigatorAgent(
-                OpenAI(api_key=api_key), model=getattr(args, "openai_model", DEFAULT_MODEL)
+                direct_agent = InvestigatorAgent(OpenAI(api_key=api_key), model=model)
+        if proposal_client is not None:
+            from faultline_brain import InvestigatorAgent
+            from faultline_brain.agent_builder import FallbackInvestigatorAgent
+
+            primary = InvestigatorAgent(proposal_client, model=model)
+            agent = FallbackInvestigatorAgent(
+                primary, direct_agent, provenance_sink=provider_sink
             )
+            if evidence_reader is not None:
+                from .adapters.evidence import EvidenceInvestigatorAgent
+
+                def agent_factory(incident_id, hypothesis, clone, production_incident):
+                    def sink(metadata):
+                        if provider_sink:
+                            provider_sink({**metadata, "hypothesis_id": hypothesis.id, "clone_id": clone.clone_id})
+                    return FallbackInvestigatorAgent(
+                        EvidenceInvestigatorAgent(
+                            proposal_client, evidence_reader, incident_id, hypothesis.id, clone,
+                            model=model, clock=utcnow, provenance_sink=sink,
+                        ),
+                        direct_agent,
+                        provenance_sink=sink,
+                    )
+        elif direct_agent is not None:
+            agent = direct_agent
         else:
             from faultline_brain import SeedInvestigator
 
@@ -451,6 +579,7 @@ def _investigation(args, writer=None):
         max_clones=getattr(args, "max_clones", 1),
         agent=agent,
         budget=getattr(args, "investigate_budget", 3),
+        agent_factory=agent_factory,
     )
 
 
