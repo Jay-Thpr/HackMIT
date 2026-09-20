@@ -125,7 +125,8 @@ OTLP http/protobuf to the compose project's `otel-collector` (`otel/collector.ya
 Envoy `:9902/stats/prometheus`, tags every signal `deployment.environment=production|clone-<slot>`, and
 drops `/internal/*` `/admin/*` `/stats` `/healthz` `/rate` spans, `*fault*` metric names and all
 `db.statement`/`db.query.text` attributes before exporting. Sink is the local `debug` exporter unless
-`FAULTLINE_OTLP_ENDPOINT` (Elastic Cloud OTLP intake, not the ES URL) is set in `.env`;
+`FAULTLINE_ELASTICSEARCH_URL` is set in `.env` (exports to `<url>/_otlp`, Elasticsearch 9.x native
+OTLP intake, authenticated with `FAULTLINE_ELASTICSEARCH_API_KEY`);
 `OTEL_SDK_DISABLED=true` turns instrumentation off entirely. Compose reads `sandbox/.env` only —
 `ln -sf ../.env sandbox/.env` to share the root file. The running production containers keep the old
 image; this activates when the project is next recreated.

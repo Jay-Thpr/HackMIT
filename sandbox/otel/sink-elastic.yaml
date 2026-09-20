@@ -1,10 +1,11 @@
-# Elastic Cloud OTLP intake (used when FAULTLINE_OTLP_ENDPOINT is set). confmap merges maps and
-# replaces lists, so only the exporters of each pipeline change.
+# Elasticsearch native OTLP intake at <FAULTLINE_ELASTICSEARCH_URL>/_otlp (used when the URL is set;
+# otlphttp appends /v1/traces, /v1/metrics itself). confmap merges maps and replaces lists, so only
+# the exporters of each pipeline change.
 exporters:
-  otlphttp/elastic:
-    endpoint: "${env:FAULTLINE_OTLP_ENDPOINT}"
+  otlp_http/elastic:
+    endpoint: "${env:FAULTLINE_ELASTICSEARCH_URL}/_otlp"
     headers: {Authorization: "ApiKey ${env:FAULTLINE_ELASTICSEARCH_API_KEY}"}
 service:
   pipelines:
-    traces:  {exporters: [otlphttp/elastic]}
-    metrics: {exporters: [otlphttp/elastic]}
+    traces:  {exporters: [otlp_http/elastic]}
+    metrics: {exporters: [otlp_http/elastic]}

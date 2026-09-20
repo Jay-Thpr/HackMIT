@@ -1,5 +1,5 @@
 # Faultline OTel collector: OTLP in, fairness-filtered, sink chosen by a second --config file
-# (sink.yaml or sink-elastic.yaml, selected by compose interpolation of FAULTLINE_OTLP_ENDPOINT).
+# (sink.yaml or sink-elastic.yaml, selected by compose interpolation of FAULTLINE_ELASTICSEARCH_URL).
 receivers:
   otlp:
     protocols:

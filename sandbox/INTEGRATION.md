@@ -115,8 +115,8 @@ curl -s localhost:9901/admin/levers
   `/stats`, `/healthz`, `/rate` out of the telemetry; `transform/fairness` strips `db.statement` /
   `db.query.text` (the hidden fault rides inside SQL). Spans carry `deployment.environment`
   (`production` or `clone-<slot>`).
-* Sink: `FAULTLINE_OTLP_ENDPOINT` unset → local `debug` exporter (collector container logs); set →
-  OTLP http to Elastic Cloud APM with `FAULTLINE_ELASTICSEARCH_API_KEY`. Kill switch:
+* Sink: `FAULTLINE_ELASTICSEARCH_URL` unset → local `debug` exporter (collector container logs); set →
+  OTLP http to `<url>/_otlp` (Elasticsearch 9.x native OTLP intake) with `FAULTLINE_ELASTICSEARCH_API_KEY`. Kill switch:
   `OTEL_SDK_DISABLED=true` disables instrumentation in the services. Production picks this up only
   when the production project is next recreated — the running containers still have the old image.
 
