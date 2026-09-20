@@ -116,7 +116,10 @@ curl -s localhost:9901/admin/levers
   `db.query.text` (the hidden fault rides inside SQL). Spans carry `deployment.environment`
   (`production` or `clone-<slot>`).
 * Sink: `FAULTLINE_ELASTICSEARCH_URL` unset → local `debug` exporter (collector container logs); set →
-  OTLP http to `<url>/_otlp` (Elasticsearch 9.x native OTLP intake) with `FAULTLINE_ELASTICSEARCH_API_KEY`. Kill switch:
+  elasticsearch exporter bulk-indexing into `*-generic.otel-default` with `FAULTLINE_ELASTICSEARCH_API_KEY`
+  (the Agent Builder key works; it must be present in `.env` as that exact name). Run
+  `uv run python scripts/otel_es_setup.py` once per Elastic project to install the `faultline-otel`
+  index template. Kill switch:
   `OTEL_SDK_DISABLED=true` disables instrumentation in the services. Production picks this up only
   when the production project is next recreated — the running containers still have the old image.
 * Clone tee: the lab manager sets `FAULTLINE_OTEL_TEE=1`, so clone collectors also write OTLP JSON

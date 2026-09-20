@@ -125,8 +125,12 @@ OTLP http/protobuf to the compose project's `otel-collector` (`otel/collector.ya
 Envoy `:9902/stats/prometheus`, tags every signal `deployment.environment=production|clone-<slot>`, and
 drops `/internal/*` `/admin/*` `/stats` `/healthz` `/rate` spans, `*fault*` metric names and all
 `db.statement`/`db.query.text` attributes before exporting. Sink is the local `debug` exporter unless
-`FAULTLINE_ELASTICSEARCH_URL` is set in `.env` (exports to `<url>/_otlp`, Elasticsearch 9.x native
-OTLP intake, authenticated with `FAULTLINE_ELASTICSEARCH_API_KEY`);
+`FAULTLINE_ELASTICSEARCH_URL` is set in `.env` (elasticsearch exporter bulk-indexes into the
+`*-generic.otel-default` data streams, authenticated with `FAULTLINE_ELASTICSEARCH_API_KEY` — the
+Agent Builder key works; run `uv run python scripts/otel_es_setup.py` once per Elastic project,
+before the first export, to install the `faultline-otel` index template vectordb projects lack). Production must be recreated once
+(`docker compose up -d --force-recreate`) for the export to start — the pre-OTel image has no
+collector and no `opentelemetry-instrument`;
 `OTEL_SDK_DISABLED=true` turns instrumentation off entirely. Compose reads `sandbox/.env` only —
 `ln -sf ../.env sandbox/.env` to share the root file. The running production containers keep the old
 image; this activates when the project is next recreated.
@@ -196,7 +200,7 @@ services/orders      retry loop + runtime override          services/payments  p
 services/loadgen     open-loop Poisson client               services/control   :9901 levers
 services/faultctl    :9900 hidden faults + reset            services/common    stats + probe (shared with scripts)
 services/lab         :9910 clone manager (C6, host process) clone.override.yml clone-only network settings
-otel/                collector.yaml + sink.yaml/sink-elastic.yaml (OTLP → debug or Elastic Cloud)
+otel/                collector.yaml + sink*.yaml (OTLP → debug or Elastic Cloud) + es-index-template.json
 scripts/diag.py      live diagnostics                       scripts/validate.py scripted checks
 scripts/validate_lab.py  clone lab checks (fairness, api, storm, degraded, cpu)
 scripts/sweep_lab.py     benchmark cell sweep (rps × trigger), concurrent clones, LabPatchVerifier path

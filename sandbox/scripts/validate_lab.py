@@ -29,6 +29,8 @@ from faultline_contracts.levers import ActionStatus
 
 LAB_URL = "http://127.0.0.1:9910"
 PRODUCTION_PROJECT = "faultline-sandbox"
+BANNED_SUBSTRINGS = ("io_profile", "fault", "/internal", "/admin", "world", "trigger",
+                     "db.statement", "db.query.text", "faultctl")
 results: list[tuple[str, bool, str]] = []
 
 
@@ -160,8 +162,7 @@ class Run:
             strings |= self._record_strings(rec)
         check("collector emitted spans from orders and payments",
               {"orders", "payments"} <= services, f"services={sorted(services)}")
-        banned = ("io_profile", "fault", "/internal", "/admin", "world", "trigger",
-                  "db.statement", "db.query.text", "faultctl")
+        banned = BANNED_SUBSTRINGS
         leaked = sorted(s for s in strings if any(b in s.lower() for b in banned))
         check("emitted telemetry carries no hidden state", not leaked, f"leaked={leaked[:10]}")
         check("telemetry tagged deployment.environment=clone-<slot>",
@@ -238,15 +239,18 @@ class Run:
         for line in self._root_env():
             os.environ.setdefault(*line)
         url, key = os.environ.get("FAULTLINE_ELASTICSEARCH_URL"), os.environ.get("FAULTLINE_ELASTICSEARCH_API_KEY")
+        url = url.rstrip("/") if url else url
         if not (url and key):
             print("SKIP  elastic: FAULTLINE_ELASTICSEARCH_API_KEY not set", flush=True)
             return
-        body = {"size": 0,
+        # Verified against the otel-mode docs: resource.attributes.* are keywords; @timestamp is
+        # date_nanos. Ingest lag is on the order of seconds — poll up to 60s.
+        body = {"size": 200,
                 "query": {"bool": {"filter": [
                     {"term": {"resource.attributes.deployment.environment": env}},
                     {"range": {"@timestamp": {"gte": self.clone.created_at.isoformat()}}}]}},
                 "aggs": {"svc": {"terms": {"field": "resource.attributes.service.name"}}}}
-        deadline = time.monotonic() + 30
+        deadline = time.monotonic() + 60
         detail = ""
         while True:
             try:
@@ -258,26 +262,47 @@ class Run:
                 total = total["value"] if isinstance(total, dict) else total
                 svcs = {b["key"] for b in data.get("aggregations", {}).get("svc", {}).get("buckets", [])}
                 if total > 0 and {"orders", "payments"} <= svcs:
-                    return check("elastic received clone traces (orders+payments)", True, f"total={total} svcs={sorted(svcs)}")
+                    check("elastic received clone traces (orders+payments)", True, f"total={total} svcs={sorted(svcs)}")
+                    strings = set()
+                    for hit in data["hits"]["hits"]:
+                        strings |= self._elastic_strings(hit.get("_source") or {})
+                    leaked = sorted(s for s in strings if any(b in s.lower() for b in BANNED_SUBSTRINGS))
+                    check("elastic traces carry no hidden state", not leaked, f"leaked={leaked[:10]}")
+                    return
                 detail = f"total={total} svcs={sorted(svcs)}"
             except httpx.HTTPStatusError as e:
-                # ES 9.x field mapping is a guess; retry once with a query_string and report real fields.
-                if e.response.status_code == 400 and "fields" not in detail:
-                    body = {"size": 1, "query": {"query_string": {"query": f'"{env}"'}}}
-                    try:
-                        r = httpx.post(f"{url}/traces-*/_search", json=body,
-                                       headers={"Authorization": f"ApiKey {key}"}, timeout=15)
-                        doc = (r.json().get("hits", {}).get("hits") or [{}])[0].get("_source", {})
-                        detail = f"typed query 400; query_string fields={sorted(doc)[:20]}"
-                    except httpx.HTTPError as e2:
-                        detail = f"typed query 400; fallback failed: {e2}"
-                else:
-                    detail = f"HTTP {e.response.status_code}: {e.response.text[:120]}"
+                detail = f"HTTP {e.response.status_code}: {e.response.text[:120]}"
             except httpx.HTTPError as e:
                 detail = str(e)[:120]
             if time.monotonic() > deadline:
                 return check("elastic received clone traces (orders+payments)", False, detail)
             time.sleep(3)
+
+    @staticmethod
+    def _elastic_strings(src: dict[str, Any]) -> set[str]:
+        """Every attribute key, string value and span name in an otel-mode ES document."""
+        out: set[str] = set()
+
+        def walk(node: Any) -> None:
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    out.add(k)
+                    walk(v)
+            elif isinstance(node, list):
+                for v in node:
+                    walk(v)
+            elif isinstance(node, str):
+                out.add(node)
+
+        for container in (src.get("attributes"),
+                          (src.get("resource") or {}).get("attributes"),
+                          (src.get("scope") or {}).get("attributes")):
+            walk(container)
+        for ev in src.get("events") or []:
+            walk((ev or {}).get("attributes"))
+        if src.get("name"):
+            out.add(src["name"])
+        return out
 
     @staticmethod
     def _root_env() -> list[tuple[str, str]]:

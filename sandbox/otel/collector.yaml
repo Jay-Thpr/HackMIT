@@ -17,7 +17,6 @@ processors:
   resource/env:
     attributes:
       - {key: deployment.environment, value: "${env:OTEL_DEPLOYMENT_ENVIRONMENT}", action: upsert}
-      - {key: deployment.environment.name, value: "${env:OTEL_DEPLOYMENT_ENVIRONMENT}", action: upsert}
   # Fairness: drop control-plane spans and any statement text (the hidden fault is delivered through SQL).
   filter/fairness:
     error_mode: ignore
