@@ -2,7 +2,18 @@
 
 A dark, open spatial investigation workspace with white unnamed nodes, fine wire connections, and orange-red agent activity. Production and clones occupy separate horizontal levels. This is an interactive design preview with synthetic data, not a connection to production.
 
-## Run locally
+## Run as one local app
+
+From `product/`, the integrated local command builds this UI and serves it with the Product API:
+
+```sh
+uv run faultline app
+```
+
+Open http://127.0.0.1:8010. It is local and read-only: synthetic scenarios work without any
+services, while audit, fingerprint, and comparison recordings can be supplied as local files.
+
+## Work on the UI alone
 
 Use Node 24 and installed Google Chrome for browser checks.
 

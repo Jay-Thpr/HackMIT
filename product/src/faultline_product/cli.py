@@ -4,6 +4,8 @@ import logging
 import math
 import os
 import shlex
+import shutil
+import subprocess
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -65,6 +67,69 @@ from .renderer import TerminalRenderer
 from .report import render_report
 
 log = logging.getLogger(__name__)
+
+
+def _serve_ui(args: argparse.Namespace, *, build: bool) -> int:
+    """Serve the read-only local application from one Product command.
+
+    ``faultline app`` owns the only build step: it turns the React workspace into
+    static files, then mounts those files behind the Product API.  The server has
+    no infrastructure-control routes, and defaults to local JSONL evidence rather
+    than loading cloud credentials.
+    """
+    import uvicorn
+
+    from .api import UI_DIST, build_store, create_app
+
+    ui_root = REPOSITORY_ROOT / "product" / "ui"
+    if build:
+        npm = shutil.which("npm")
+        if npm is None:
+            print("faultline: error: npm is required to build the local UI")
+            return 2
+        if not (ui_root / "node_modules").is_dir():
+            if args.skip_ui_install:
+                print("faultline: error: UI dependencies are missing; run npm ci in product/ui or omit --skip-ui-install")
+                return 2
+            try:
+                subprocess.run([npm, "ci"], cwd=ui_root, check=True)
+            except subprocess.CalledProcessError as exc:
+                print(f"faultline: error: UI dependency install failed ({exc.returncode})")
+                return exc.returncode or 2
+        if not args.skip_ui_build:
+            try:
+                subprocess.run([npm, "run", "build"], cwd=ui_root, check=True)
+            except subprocess.CalledProcessError as exc:
+                print(f"faultline: error: UI build failed ({exc.returncode})")
+                return exc.returncode or 2
+
+    paths = [args.audit_log, *args.extra_audit_log]
+    fingerprints_log = getattr(args, "fingerprints_log", None)
+    if fingerprints_log:
+        from faultline_telemetry import JsonlFingerprintStore
+
+        store = JsonlFingerprintStore(fingerprints_log)
+        readings = f"local {fingerprints_log}"
+    elif getattr(args, "with_elasticsearch", False):
+        store = build_store()
+        readings = "elasticsearch" if store else "off (no Elasticsearch configuration)"
+    else:
+        store = None
+        readings = "off (local app defaults to JSONL-only evidence)"
+
+    comparison_dir = getattr(args, "comparison_dir", None)
+    print(f"[app] audit logs: {', '.join(str(p) for p in paths)}")
+    print(f"[app] fingerprint readings: {readings}")
+    print(f"[app] comparisons: {comparison_dir or REPOSITORY_ROOT / 'runs' / 'comparisons'}")
+    print(f"[app] UI: {'served from ' + str(UI_DIST) if UI_DIST.exists() else 'API only; no UI build found'}")
+    print(f"[app] http://{args.host}:{args.port}/  ·  http://{args.host}:{args.port}/api/incidents")
+    uvicorn.run(
+        create_app(paths, store, comparison_dir=comparison_dir),
+        host=args.host,
+        port=args.port,
+        log_level="warning",
+    )
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -207,6 +272,37 @@ def build_parser() -> argparse.ArgumentParser:
         help="read C1 windows from this local JSONL store instead of Elasticsearch",
     )
 
+    app = commands.add_parser(
+        "app",
+        help="build and serve the complete local Faultline application",
+    )
+    app.add_argument("--port", type=int, default=8010)
+    app.add_argument("--host", default="127.0.0.1")
+    app.add_argument(
+        "--extra-audit-log", type=Path, action="append", default=[],
+        help="additional C4 JSONL files to expose alongside --audit-log",
+    )
+    app.add_argument(
+        "--fingerprints-log", type=Path,
+        help="read C1 windows from this local JSONL store; keeps the local app independent of Elasticsearch",
+    )
+    app.add_argument(
+        "--comparison-dir", type=Path,
+        help="directory of recorded responder comparisons (default: <repo>/runs/comparisons)",
+    )
+    app.add_argument(
+        "--with-elasticsearch", action="store_true",
+        help="read C1 windows from configured Elasticsearch when --fingerprints-log is not supplied",
+    )
+    app.add_argument(
+        "--skip-ui-build", action="store_true",
+        help="serve the existing UI build without invoking npm",
+    )
+    app.add_argument(
+        "--skip-ui-install", action="store_true",
+        help="fail if UI dependencies are absent instead of running npm ci",
+    )
+
     replay = commands.add_parser("replay", help="run the stored incident replay suite in one fresh clone")
     replay.add_argument("incident", help="incident id; stored recipes are replayed regardless of diagnosis")
     replay.add_argument("--lab-url", required=True, help="C6 clone manager URL")
@@ -237,7 +333,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     # Prepared mode must use an explicitly supplied API key; loading a repo dotenv here
     # would make a preflight appear configured and could start external work unexpectedly.
-    if args.command != "prepared-watch":
+    if args.command not in {"prepared-watch", "app"}:
         load_repo_dotenv(Path.cwd())
     audit = JsonlSink(args.audit_log)
     elasticsearch_url = getattr(args, "elasticsearch_url", None) or os.environ.get(
@@ -271,7 +367,7 @@ def main(argv: list[str] | None = None) -> int:
                              clone_id=getattr(args, "clone_id", None))
     pager_webhook = args.pager_webhook or os.environ.get("FAULTLINE_PAGER_WEBHOOK")
     pager_command = args.pager_command or os.environ.get("FAULTLINE_PAGER_COMMAND")
-    if args.command != "prepared-watch":
+    if args.command not in {"prepared-watch", "app"}:
         if pager_webhook:
             audit = PagingAuditSink(audit, WebhookPager(pager_webhook), log=log)
         elif pager_command:
@@ -292,24 +388,8 @@ def main(argv: list[str] | None = None) -> int:
                 explanation_client = AgentBuilderClient.from_env(role="report")
             print(render_report(audit, args.incident, evidence_reader=reader, explanation_client=explanation_client))
             return 0
-        if args.command == "ui":
-            import uvicorn
-
-            from .api import UI_DIST, build_store, create_app
-
-            paths = [args.audit_log, *args.extra_audit_log]
-            if getattr(args, "fingerprints_log", None):
-                from faultline_telemetry import JsonlFingerprintStore
-
-                store = JsonlFingerprintStore(args.fingerprints_log)
-            else:
-                store = build_store()
-            print(f"[ui] audit logs: {', '.join(str(p) for p in paths)}")
-            print(f"[ui] fingerprint readings: {'local ' + str(args.fingerprints_log) if getattr(args, 'fingerprints_log', None) else ('elasticsearch' if store else 'off')}")
-            print(f"[ui] built UI: {'served from ' + str(UI_DIST) if UI_DIST.exists() else 'not built (cd product/ui && npm run build) — API only'}")
-            print(f"[ui] http://{args.host}:{args.port}/  ·  http://{args.host}:{args.port}/api/incidents")
-            uvicorn.run(create_app(paths, store), host=args.host, port=args.port, log_level="warning")
-            return 0
+        if args.command in {"ui", "app"}:
+            return _serve_ui(args, build=args.command == "app")
         if args.command == "replay":
             return _run_replay(args)
         if args.command == "prepared-watch":
