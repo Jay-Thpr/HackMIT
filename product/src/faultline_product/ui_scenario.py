@@ -292,11 +292,27 @@ def scenario_from_incident(
         "startedAt": events[0].ts.isoformat(),
         "endedAt": events[-1].ts.isoformat(),
     }
+    # Retrieval context is recorded at triage and displayed separately from the
+    # diagnosis. It must never decide the C2 verdict.
+    memory_event = next((e for e in events if e.kind == EventKind.triage and (e.payload or {}).get("similar_incidents")), None)
+    memory = []
+    if memory_event:
+        for item in (memory_event.payload or {}).get("similar_incidents") or []:
+            if not isinstance(item, dict) or not item.get("incident_id"):
+                continue
+            memory.append({
+                "incidentId": str(item["incident_id"]),
+                "score": float(item.get("score", 0)),
+                "diagnosis": item.get("diagnosis"),
+                "confirmed": bool(item.get("confirmed")),
+                "recordedAt": at(memory_event.ts),
+            })
     return {
         "id": incident_id,
         "live": True,
         "complete": complete,
         "report": report,
+        "memory": memory,
         "now": at(now) if now is not None else duration,
         "name": f"Incident {incident_id}",
         "subtitle": "Live incident · real audit log",
