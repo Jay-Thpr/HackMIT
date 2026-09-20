@@ -59,29 +59,32 @@ export function ExperimentLab({ scenario, workspace }: { scenario: Scenario; wor
 export function ReplayLibrary({ scenario }: { scenario: Scenario }) {
   const { cursor, seek, set, scenarios, setScenario } = useWorkspace()
   const [query, setQuery] = useState('')
-  const [outcome, setOutcome] = useState<'all' | 'ready' | 'mitigated' | 'escalated' | 'in-progress'>('all')
+  type ReplayFilter = 'all' | 'example' | 'ready' | 'mitigated' | 'escalated' | 'in-progress'
+  const [outcome, setOutcome] = useState<ReplayFilter>('all')
   const shown = visibleEvents(scenario, cursor)
   const verdict = shown.filter(event => event.kind === 'verdict' && event.environmentId === 'production').at(-1)
   const finalVerdict = scenario.events.filter(event => event.kind === 'verdict' && event.environmentId === 'production').at(-1)
   const live = scenarios.filter(item => item.live)
+  const examples = scenarios.filter(item => !item.live)
   const report = scenario.report
-  const outcomeOf = (item: Scenario): 'ready' | 'mitigated' | 'escalated' | 'in-progress' => {
+  const outcomeOf = (item: Scenario): Exclude<ReplayFilter, 'all'> => {
+    if (!item.live) return 'example'
     const text = item.report?.outcome ?? ''
     if (!item.complete) return 'in-progress'
     if (text.startsWith('incident report ready')) return 'ready'
     if (text.startsWith('incident mitigated')) return 'mitigated'
     return 'escalated'
   }
-  const outcomeLabel = { ready: 'Ready', mitigated: 'Mitigated', escalated: 'Escalated', 'in-progress': 'In progress' }
+  const outcomeLabel = { example: 'Example', ready: 'Ready', mitigated: 'Mitigated', escalated: 'Escalated', 'in-progress': 'In progress' }
   const matches = (item: Scenario) => {
     if (outcome !== 'all' && outcomeOf(item) !== outcome) return false
     const needle = query.trim().toLowerCase()
     if (!needle) return true
-    return [item.id, item.report?.diagnosis ?? '', item.report?.outcome ?? '', item.report?.patch ?? ''].some(field => field.toLowerCase().includes(needle))
+    return [item.id, item.name, item.incident, item.incidentTitle, item.report?.diagnosis ?? '', item.report?.outcome ?? '', item.report?.patch ?? ''].some(field => field.toLowerCase().includes(needle))
   }
-  const filtered = live.filter(matches)
-  const counts = { all: live.length, ready: 0, mitigated: 0, escalated: 0, 'in-progress': 0 } as Record<string, number>
-  for (const item of live) counts[outcomeOf(item)]++
+  const filtered = scenarios.filter(matches)
+  const counts = { all: scenarios.length, example: 0, ready: 0, mitigated: 0, escalated: 0, 'in-progress': 0 } as Record<ReplayFilter, number>
+  for (const item of scenarios) counts[outcomeOf(item)]++
   const position = live.findIndex(item => item.id === scenario.id)
   const neighbour = (step: number) => live[position + step]
   const review = (id: string) => {
@@ -121,18 +124,18 @@ export function ReplayLibrary({ scenario }: { scenario: Scenario }) {
           <a className="secondary-button" href={`/api/incidents/${encodeURIComponent(scenario.id)}/evidence.json`} download>Export evidence</a>
         </div>
       </div>
-    </section> : <section className="panel replay-hero"><span className="overline">INCIDENT MEMORY</span><h2>Review an investigation.</h2><p>Replay the incident to see what the agent changed, what happened next, and how it reached a conclusion. The report reveals only conclusions whose evidence exists at the selected point on the timeline.</p><span className="quiet-badge">{live.length ? `${live.length} recorded incident${live.length === 1 ? '' : 's'} from the audit log — pick one below` : 'Design preview · no recorded incidents loaded'}</span></section>}
+    </section> : <section className="panel replay-hero"><span className="overline">INCIDENT MEMORY</span><h2>Review an investigation.</h2><p>Replay the incident to see what the agent changed, what happened next, and how it reached a conclusion. The report reveals only conclusions whose evidence exists at the selected point on the timeline.</p><span className="quiet-badge">{examples.length} example investigation{examples.length === 1 ? '' : 's'}{live.length ? ` · ${live.length} recorded incident${live.length === 1 ? '' : 's'}` : ' · no recorded incidents loaded'}</span></section>}
 
-    {live.length > 0 && <section className="replay-browse" aria-label="Recorded incidents">
+    {scenarios.length > 0 && <section className="replay-browse" aria-label="Available investigations">
       <div className="replay-browse-controls">
         <label className="search-input"><Search size={14} /><input aria-label="Find an incident" placeholder="Find by id, diagnosis, outcome or patch…" value={query} onChange={event => setQuery(event.target.value)} /></label>
-        <div className="replay-filters" role="tablist" aria-label="Filter by outcome">{(['all', 'ready', 'mitigated', 'escalated', 'in-progress'] as const).map(key => <button key={key} role="tab" aria-selected={outcome === key} className={outcome === key ? 'selected' : ''} onClick={() => setOutcome(key)}>{key === 'all' ? 'All' : outcomeLabel[key]}<small>{counts[key]}</small></button>)}</div>
+        <div className="replay-filters" role="tablist" aria-label="Filter investigations">{(['all', 'example', 'ready', 'mitigated', 'escalated', 'in-progress'] as const).map(key => <button key={key} role="tab" aria-selected={outcome === key} className={outcome === key ? 'selected' : ''} onClick={() => setOutcome(key)}>{key === 'all' ? 'All' : outcomeLabel[key]}<small>{counts[key]}</small></button>)}</div>
       </div>
-      <ol className="replay-list">{filtered.map(item => <li key={item.id} className={item.id === scenario.id ? 'is-selected' : ''} aria-label={`Incident ${item.id}`} aria-current={item.id === scenario.id ? 'true' : undefined}>
+      <ol className="replay-list">{filtered.map(item => <li key={item.id} className={item.id === scenario.id ? 'is-selected' : ''} aria-label={`${item.live ? 'Incident' : 'Example investigation'} ${item.name} ${item.id}`} aria-current={item.id === scenario.id ? 'true' : undefined}>
         <button className="replay-list-main" onClick={() => review(item.id)}>
-          <span className="replay-list-id">{item.id}</span>
-          <span className="replay-list-title">{headline(item)}</span>
-          <span className="replay-list-meta"><span className={`replay-outcome ${outcomeOf(item)}`}>{outcomeLabel[outcomeOf(item)]}</span>{started(item)} · {timeLabel(item.duration)} · {item.report?.productionActions ?? 0} actions</span>
+          <span className="replay-list-id">{item.live ? item.id : item.incident}</span>
+          <span className="replay-list-title">{item.live ? headline(item) : `${item.name} · ${item.incidentTitle}`}</span>
+          <span className="replay-list-meta"><span className={`replay-outcome ${outcomeOf(item)}`}>{outcomeLabel[outcomeOf(item)]}</span>{item.live ? `${started(item)} · ${timeLabel(item.duration)} · ${item.report?.productionActions ?? 0} actions` : `${timeLabel(item.duration)} · ${item.events.length} scripted steps`}</span>
         </button>
         <button className="icon-button" aria-label={`Play ${item.id} from the start`} title="Play from the start" onClick={() => playFromStart(item.id)}><Play size={14} /></button>
       </li>)}</ol>

@@ -153,10 +153,22 @@ test('pages explain their jobs and offer meaningful empty-state actions', async 
   await page.keyboard.press('Escape')
   await navigation.getByRole('button', { name: 'Incident replay', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Review an investigation.' })).toBeVisible()
-  await expect(page.getByText(/no recorded incidents loaded/)).toBeVisible()  // says so rather than implying saved history
+  await expect(page.getByText(/2 example investigations · no recorded incidents loaded/)).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Available investigations' }).getByRole('listitem')).toHaveCount(2)
   await page.getByRole('button', { name: 'Play from the start', exact: true }).click()
   await expect(page.getByRole('region', { name: 'Incident lifecycle' })).toHaveAttribute('data-phase', 'monitoring')
   await expect(page.getByRole('button', { name: 'Pause demo', exact: true })).toBeVisible()
+})
+
+test('incident replay includes the Commerce platform investigation and selects it across the workspace', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('combobox', { name: 'Example architecture', exact: true }).selectOption('pipeline')
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Incident replay', exact: true }).click()
+  const commerce = page.getByRole('listitem', { name: 'Example investigation Commerce platform commerce', exact: true })
+  await expect(commerce).toContainText('Commerce platform')
+  await commerce.locator('.replay-list-main').click()
+  await expect(page.getByRole('combobox', { name: 'Example architecture', exact: true })).toHaveValue('commerce')
+  await expect(commerce).toHaveAttribute('aria-current', 'true')
 })
 
 test('renders the real WebGL scene and a clearly marked, interactive prototype', async ({ page }) => {
@@ -536,12 +548,24 @@ for (const [diagnosis, confirmed, label] of [
     const confirmedCards = page.locator('.hypothesis-card').filter({ hasText: 'CONFIRMED IN PRODUCTION' })
     await expect(confirmedCards).toHaveCount(confirmed ? 1 : 0)
     if (confirmed) await expect(confirmedCards).toContainText(label)
+    const headerOverlap = await page.locator('.hypothesis-top').evaluateAll(headers => headers.map(header => {
+      const badge = header.querySelector('.hypothesis-letter')!.getBoundingClientRect()
+      const status = header.querySelector('.overline')!.getBoundingClientRect()
+      return badge.right > status.left
+    }))
+    expect(headerOverlap).toEqual([false, false])
     await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Why this incident?', exact: true }).click()
     await expect(page.locator('.why-intro h2')).toHaveText(confirmed ? `Confirmed cause: ${label}.` : 'No cause confirmed.')
     await expect(page.locator('.why-conclusion h2')).toHaveText(confirmed ? `Confirmed cause: ${label}.` : 'No cause confirmed.')
     await expect(page.getByText('Recovery held after retries were restored.', { exact: true })).toHaveCount(0)
     await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Incident replay', exact: true }).click()
     await expect(page.locator('.report-preview h3')).toHaveText(`${diagnosis}: ${confirmed ? 'confirmed' : 'not confirmed'}`)
+    const replayActions = await page.locator('.replay-actions > *').evaluateAll(actions => actions.map(action => {
+      const box = action.getBoundingClientRect()
+      return { top: Math.round(box.top), height: Math.round(box.height) }
+    }))
+    expect(new Set(replayActions.map(action => action.top)).size).toBe(1)
+    expect(new Set(replayActions.map(action => action.height)).size).toBe(1)
     await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Why this incident?', exact: true }).click()
     await page.getByRole('button', { name: 'Restart simulation', exact: true }).click()
     await expect(page.locator('.why-conclusion h2')).toHaveText('The cause is not confirmed yet.')
