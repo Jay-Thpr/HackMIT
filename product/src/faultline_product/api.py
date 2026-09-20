@@ -24,6 +24,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -89,6 +90,55 @@ class IncidentReader:
         production = self.windows(incident_id, evs)
         clones = {cid: self.windows(incident_id, evs, cid) for cid in self.clone_ids(evs)}
         return scenario_from_incident(incident_id, evs, production, clones, now=now)
+
+    def supporting_telemetry(self, incident_id: str, evs: list[AuditEvent]) -> dict[str, Any]:
+        """Small, bounded Observability read for a UI evidence panel.
+
+        This is deliberately display-only: C1 and C4 remain the inputs to Faultline's
+        decision path. The query does not retrieve span bodies, SQL text, or log messages.
+        """
+        configured_url = os.environ.get("FAULTLINE_OBSERVABILITY_ELASTICSEARCH_URL")
+        configured_key = os.environ.get("FAULTLINE_OBSERVABILITY_ELASTICSEARCH_API_KEY")
+        if not configured_url or not configured_key:
+            return {"state": "not-configured", "incidentId": incident_id,
+                    "detail": "Set the Observability mirror URL and read-only API key to show trace and log summaries."}
+        if not evs:
+            raise ValueError(f"no audit events for {incident_id!r}")
+        start, end = evs[0].ts, evs[-1].ts + timedelta(minutes=1)
+        filters = [
+            {"range": {"@timestamp": {"gte": start.isoformat(), "lt": end.isoformat()}}},
+            {"bool": {"should": [
+                {"term": {"resource.attributes.deployment.environment": "production"}},
+                {"term": {"resource.attributes.deployment.environment.name": "production"}},
+            ], "minimum_should_match": 1}},
+        ]
+        trace_body = {"size": 0, "query": {"bool": {"filter": filters}}, "aggs": {
+            "services": {"terms": {"field": "resource.attributes.service.name", "size": 12}},
+            "traces": {"cardinality": {"field": "trace_id"}},
+        }}
+        headers = {"Authorization": f"ApiKey {configured_key}"}
+        try:
+            with httpx.Client(base_url=configured_url.rstrip("/"), headers=headers, timeout=5.0) as client:
+                traces = client.post("/traces-*/_search", json=trace_body)
+                traces.raise_for_status()
+                logs = client.post("/logs-*/_count", json={"query": {"bool": {"filter": filters}}})
+                logs.raise_for_status()
+            trace_data = traces.json()
+            total = trace_data.get("hits", {}).get("total", 0)
+            trace_count = total.get("value", 0) if isinstance(total, dict) else total
+            buckets = trace_data.get("aggregations", {}).get("services", {}).get("buckets", [])
+            return {
+                "state": "available", "incidentId": incident_id,
+                "start": start.isoformat(), "end": end.isoformat(),
+                "spans": int(trace_count),
+                "traces": int(trace_data.get("aggregations", {}).get("traces", {}).get("value", 0)),
+                "logs": int(logs.json().get("count", 0)),
+                "services": [{"name": str(row["key"]), "spans": int(row["doc_count"])} for row in buckets],
+                "detail": "Counts are scoped to the recorded incident window and production deployment environment.",
+            }
+        except (httpx.HTTPError, ValueError, TypeError):
+            return {"state": "unavailable", "incidentId": incident_id,
+                    "detail": "Observability evidence could not be read. Diagnosis and replay continue from C1 and C4."}
 
 
 async def scenario_updates(
@@ -163,6 +213,13 @@ def create_app(audit_paths: list[Path], store: ElasticsearchFingerprintStore | N
         if not evs:
             raise HTTPException(404, f"no audit events for {incident_id!r}")
         return reader.scenario(incident_id, evs, now=datetime.now(timezone.utc))
+
+    @app.get("/api/incidents/{incident_id}/supporting-telemetry")
+    def supporting_telemetry(incident_id: str) -> dict[str, Any]:
+        evs = reader.events(incident_id)
+        if not evs:
+            raise HTTPException(404, f"no audit events for {incident_id!r}")
+        return reader.supporting_telemetry(incident_id, evs)
 
     @app.get("/api/incidents/{incident_id}/stream")
     def stream(incident_id: str) -> StreamingResponse:

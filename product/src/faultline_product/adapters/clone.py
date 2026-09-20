@@ -34,6 +34,7 @@ DEFAULT_RECIPES: dict[str, Recipe] = {
     "H_db": {"action": "db_capacity", "params": {"capacity_qps": 40}, "ttl_s": 20},
 }
 RECIPES_LOG = PRODUCT_ROOT / "state" / "recipes.jsonl"
+MAX_REPLAY_TRIGGER_S = 30
 
 
 def stored_recipes(path: Path = RECIPES_LOG) -> list[Recipe]:
@@ -206,6 +207,10 @@ class LabPatchVerifier(PatchVerifier):
         telemetry = self._telemetry_factory(clone, incident_id)
         levers = self._levers_factory(clone)
         telemetry.start()
+        # A stored recipe's ttl_s is how long its investigator held the cause (agents use up to
+        # 900 s); a replay only needs the trigger long enough to ignite the incident, then the
+        # question is whether the patched clone recovers on its own.
+        recipe = {**recipe, "ttl_s": min(int(recipe["ttl_s"]), MAX_REPLAY_TRIGGER_S)}
         try:
             hold_s = recipe["ttl_s"] + self._settle_s + self._healthy_windows * WINDOW_S
             # All clone traffic goes to the patched orders-v2 for the whole replay.

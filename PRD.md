@@ -13,6 +13,27 @@ Faultline is an autonomous experimental debugger for distributed systems. It plu
 3. **Aimed chaos, then one production test.** Every fault Faultline injects is a bet two theories disagree on. The clones pick the gentlest production probe that separates them; it runs for seconds, with a TTL, and measurement against noise decides. If nothing passes its own confirmation test, Faultline says *none of the above* and pages a human.
 4. **Patch, attack the patch, ship.** Reversible mitigation stays in place; Devin writes the durable fix; in a fresh clone Faultline replays the reproduced incident and an investigator runs *educated chaos* against the patch, trying to break it. Only a fix that survives goes to a self-verified 5 % canary. Irreversible remediations (split a hot shard, resize a tier) are never done autonomously: Faultline writes the case and a human signs.
 
+### Branch implementation update: Agent Builder runtime
+
+Unmerged `brain/agent-builder-runtime` now implements opt-in Agent Builder triage, clone proposals and read-only report explanation with explicit inference selection and validated outputs. Scoped primary Elasticsearch C1 windows, metadata-only C4 context and bounded prior-incident retrieval can be attached with `--elastic-evidence`; references, truncation, missing data and retrieval failures remain explicit. Retrieval is application-controlled, not agent-selected tool execution. Direct OpenAI remains the default and fallback; the judge and infrastructure action boundaries are unchanged.
+
+Live checks (2026-09-20): `faultline-triage`, `faultline-clone-investigator` and the distinct tool-free `faultline-report` are registered and verified against the explicit OpenAI `gpt-4.1` endpoint. Proposal-only triage and investigator calls passed their existing schema/semantic checks using frozen primary Elasticsearch evidence; this did not execute experiments or establish a diagnosis. Citation membership alone failed to prevent inaccurate report prose, so reports now accept metric/reference selections and render the actual recorded values and timestamps. The revised live report passed that grounding check. Invalid stored negative metrics are rejected with partial-coverage reporting; their upstream cause remains uninvestigated. No model tools, fallback or infrastructure actions ran. Main through `0ce99f6` is incorporated; the older main snapshot below remains historical. Running-responder mirror verification is blocked because no local responder was found. Recipe indexing, autonomous retrieval tools, raw-OTel incident/clone correlation and richer live UI evidence remain follow-up work.
+
+### Implementation status (2026-09-20, main `98e994c`)
+
+The four beats and stage table describe the target product, not a claim that every gate is implemented. Historical run records below retain their original scope and are not a fresh deployment check.
+
+| Area | Implemented on main | Remaining / qualification |
+| --- | --- | --- |
+| Incident loop | Direct-OpenAI triage, directional planner, noise-model judge, agentic clone investigations, production confirmation, mitigation, Devin revisions and measured canary | Clone reproduction gating is opt-in (`--investigate-gate`), not a mandatory gate; lab failure can fall back to the production-only loop |
+| Clone-informed planning | Clone reproduction, recovery and prediction scoring; persisted recipes | Production probe is selected before investigation; clone evidence does not yet replace the prediction matrix or re-rank candidates using measured separation |
+| Patch verification | Stored incident replay suite and clone verification | Agentic patch-attack investigator is not built; replay is not equivalent to adversarial patch search |
+| Elastic | Primary C1/C4 storage, asynchronous durable display mirror, raw OTLP Observability routing, bounded read-tool definitions and explanation-agent configuration | Live deployment/permissions/ingestion need verification; report/triage/investigator Agent Builder runtime integration is not built |
+| Product UI | Read-only incident API, real-incident translation and SSE updates alongside synthetic scenarios | No infrastructure execution or approval endpoints; incomplete inventory/progress coverage remains explicit |
+| Benchmark | Simulator suite and live-sandbox driver | Live clone-ablation arm and completed frozen live evaluation remain outstanding in the handoff; historical ambiguity evidence identifies a passive discriminator |
+| Taxonomy | Prompt-level sustaining-cause taxonomy | C2 `considered: list[ClassVerdict]` is still proposed, not in the contract |
+| Clone lifecycle | Existing C6 manager and per-action TTLs | PR #33 (`8fe32b1`) adds bounded clone lifetimes and cleanup-safe capacity accounting; not merged into this main snapshot |
+
 **Progress update (2026-09-20 ~04:00; v6.2, direction change for the Brain's reasoning layer, no new subsystem):**
 
 - **Investigators are agentic and live.** Stage 4a no longer runs a fixed recipe table. `faultline_brain.investigator_agent.InvestigatorAgent` (OpenAI strict structured output) owns one hypothesis, reads the C6 catalog, the production fingerprint, the healthy baseline and its own attempt history, and proposes `{action, params, ttl_s, observe_after_s, predicted directions, rationale, stop}`; `AgenticCloneInvestigator` executes apply → observe → similarity → undo → reset under a budget (default 3), then recovery and the production-probe prediction check on the attempt that reproduced. Every hypothesis triage produces is investigated (no "no recipe" skip). Qualifying live run `live-storm-035001` (`integration/runs/audit-live-storm-035001.jsonl`): H_meta and H_db both reproduced and recovered in clones, H_meta survives (7/8 predicted directions), H_db falsified (1/5), production verdict `H_meta confirmed`, no clone left behind. Attempts are in the stage-4 audit payload (`attempts`) for the investigator panels. **DoD item 11 done.**
@@ -20,7 +41,7 @@ Faultline is an autonomous experimental debugger for distributed systems. It plu
 - **Reproduction recipes persist.** Each reproduction appends `{incident_id, hypothesis_id, recipe, attempts, ts}` to `product/state/recipes.jsonl` (replay-suite input, D3).
 - **Seed fallback, labelled.** If the LLM exhausts its budget without reproducing, one retry runs the documented `SeedInvestigator` recipe (INTEGRATION.md reproduction recipes) in a fresh clone; its attempts are kept and marked. In `live-storm-035001` H_meta needed it (LLM tried `retry_policy`×2, `db_capacity`; seed `db_latency 800/20` hit 8/8); in earlier runs the LLM reproduced H_meta unaided (`db_latency` 2000–5000 ms). Say "seeded recipe" on stage if it shows.
 - **Brain reasoning layer → OpenAI behind Elastic Agent Builder (decided).** See "LLM vs. measurement": the Brain's LLM roles (triage, investigator proposals, report explanation) are to run as an OpenAI model behind Elastic Cloud's Agent Builder, reasoning over the context Faultline already stores in Elasticsearch through closed read-only tools. Direct OpenAI calls stay as the fallback path. Measurement still decides.
-- **Open blockers found live:** (1) stage 6b `patch_ref` clones fail with `opentelemetry-instrument: not found` — the fallback branch `faultline/fallback-retry-cap` predates the OTel `requirements.txt`; rebase it (or have the lab overlay only `app.py` onto the production image). (2) Verification hit a lab 503 while investigation clones still held slots; destroy investigator clones before 6b or run with `--max-clones 1`. (3) Patch-attack investigator (B3) not built; blocked on (1).
+- **Historical blockers from the cited run (not rechecked by this documentation update):** (1) stage 6b `patch_ref` clones fail with `opentelemetry-instrument: not found` — the fallback branch `faultline/fallback-retry-cap` predates the OTel `requirements.txt`; rebase it (or have the lab overlay only `app.py` onto the production image). (2) Verification hit a lab 503 while investigation clones still held slots; destroy investigator clones before 6b or run with `--max-clones 1`. (3) Patch-attack investigator (B3) not built; blocked on (1).
 
 What changed in v6.1 (2026-09-19 15:45; refinements, no new subsystem):
 
@@ -260,6 +281,8 @@ Coverage: the performance and availability class (bad changes, overload, slow de
 
 The LLM proposes and explains; measurement decides. This keeps diagnoses checkable and answers the judge's "isn't this just an LLM guessing?"
 
+The job table below is the target responsibility split. Current runtime uses direct OpenAI for triage and investigator proposals, a directional planner before clone investigation, and deterministic audit-backed reporting. Agent Builder migration, clone-measured replanning and the agentic patch-attack loop remain planned.
+
 | Job | Owner |
 | --- | --- |
 | Summarize telemetry fingerprint and logs | LLM (OpenAI API) |
@@ -276,11 +299,11 @@ The LLM proposes and explains; measurement decides. This keeps diagnoses checkab
 | Predictions for the production probe | Measured in clones (LLM fallback if no clone ran) |
 | Mitigation choice, Devin request, report | LLM + Devin |
 
-**Where the LLM runs (v6.2 decision): OpenAI behind Elastic Cloud Agent Builder.** Every LLM job above is a *reasoning-over-context* job, and the context already lives in Elasticsearch: `faultline-fingerprints` (C1, production and per-clone), `faultline-audit` (C4: experiments, verdicts, actions), reproduction recipes, similar past incidents, and the raw OTel traces. So the Brain's model should sit behind Elastic Agent Builder as an OpenAI `chat_completion` inference endpoint (`faultline-openai-investigation` already exists, see `faultline_brain.elastic_investigation`), reasoning over that context through **closed, parameterized, read-only tools** (`faultline.incident_timeline`, `faultline.clone_vs_production`, `faultline.similar_incidents`, `faultline.incident_context`) rather than over a JSON blob we hand-assemble per call. Rules that do not change:
+**Where the LLM runs (v6.2 target): OpenAI behind Elastic Cloud Agent Builder.** This is the intended migration, not the current runtime. C1 fingerprints and C4 audit evidence have Elasticsearch persistence; reproduction recipes currently persist locally in `product/state/recipes.jsonl`. Main contains the four fixed evidence-tool definitions (`faultline.incident_timeline`, `faultline.clone_vs_production`, `faultline.similar_incidents`, `faultline.incident_context`) and a separate explanation-only agent/inference configuration in `faultline_brain.elastic_investigation`. Configuration code does not establish that an endpoint, connector or agent is deployed. The current explanation agent explicitly cannot propose hypotheses, choose experiments or issue diagnoses; reasoning roles need separately reviewed role definitions rather than silently broadening that agent. Rules for the intended migration:
 
 - The agent proposes and explains; C2 strict schemas still validate the output and the noise-model judge still decides. An Agent Builder response that is not a valid `TriageDraft` / `LabProposal` is rejected exactly like a direct OpenAI response.
 - No generic index-search tool, ever: the tool list is the fairness boundary (no C5/controller documents, no world labels, no trigger timing). `assert_agent_boundary()` enforces it.
-- Direct `OpenAI()` calls (`triage.py`, `investigator_agent.py`) remain the fallback when Agent Builder or Elastic Cloud is unavailable; same prompts, same schemas.
+- Direct `OpenAI()` calls (`triage.py`, `investigator_agent.py`) are the current path. Retain them as an explicit, audited fallback when Agent Builder is introduced; invalid or unavailable retrieved evidence must never manufacture confirmation.
 - Rollout order: (1) report explanation (already read-only), (2) triage with `similar_incidents` in the context, (3) investigator proposals with `clone_vs_production` in the loop. Each step is behind a flag; the live loop must keep passing on the direct path first.
 
 Sponsor story: Elastic is the memory and the retrieval surface, OpenAI is the reasoning, Faultline's math is the verdict.
@@ -296,11 +319,11 @@ Sponsor story: Elastic is the memory and the retrieval surface, OpenAI is the re
 
 **Noise.** Record several healthy windows; per metric, noise σ = max(measured std, 10% of typical value). A change counts only if it exceeds \~3σ in the predicted direction.
 
-**Planner.** For each candidate lever: separation = number of metrics where hypotheses predict different directions, weighted by how far each is expected to move in σ units. Score = separation − λ · blast radius (% of user requests affected). Pick the smallest intervention that clears the noise, e.g. retry cap (0% of successful requests dropped) before shedding 50%.
+**Planner (implemented).** Separation is the count of shared `(phase, metric)` predictions on which hypotheses disagree. Score = separation − 0.1 × blast radius (%); candidates are ranked by score, separation, blast radius and stable experiment id. The orchestrator selects the production probe before clone investigation. This is direction-based ranking, not separation measured in σ. **Planned:** use clone-measured responses to compare candidate probes; that requires evidence provenance and an explicit replanning step before production.
 
 **Support.** Uniform prior; each experiment updates support from agreement between predicted and measured directions. Declare a diagnosis only when the leader passes its confirmation test; if none passes, none-of-the-above.
 
-The UI shows two panels side by side: *LLM reasoning* and *measured evidence*. At stage 4b it also shows the **planner's candidate table**: one row per lever with expected separation (σ, measured in clones or LLM-predicted with that marked), blast radius (% of user requests), score, and the winner highlighted. This is the moment that separates Faultline from chaos tooling: not "it can inject faults" but "it picks the cheapest intervention per bit of information."
+The UI separates LLM proposals from measured evidence. The existing planner audit table carries `experiment_id`, `lever_id`, directional `separation`, `score`, `blast_radius_pct` and `selected`. Display separation as a disagreement count, not σ or a clone-measured magnitude. A future clone-informed table must label measured versus predicted evidence explicitly.
 
 ## Architecture
 
@@ -313,7 +336,6 @@ flowchart LR
   O --> EV2[Envoy]
   EV2 --> P[Payments]
   P --> DB[(Postgres)]
-  P --> FC[Fraud check]
   O & P --> OC[OTel Collector]
   OC --> ES[(Elasticsearch)]
   ES --> FL[Faultline]
@@ -323,7 +345,7 @@ flowchart LR
 
 **Target system (Docker Compose):**
 
-- Services: Gateway/Envoy, Orders, Payments, fraud-check stub, Postgres (limited CPU), load generator. FastAPI, trivial business logic.
+- Services: Gateway/Envoy, Orders (plus an optional patched orders-v2), Payments, primary/standby Postgres and load generator. The current sandbox has no fraud-check service; it belongs to the optional easy-case scenario.
 - Envoy in front of Orders and between Orders and Payments: timeouts, traffic weights, shedding, canary split. Retries live in Orders' own code (the thing Devin patches), with a runtime override endpoint for the retry-cap lever.
 - Fault controller (hidden from Faultline): DB delay trigger, batch-job load (World B), CPU limit (none-of-the-above).
 - **Clone runtime:** isolated Compose replicas of the target (own project, network and ports), each with its own lab API (C6): create/reset/destroy, workload replay, lab primitives, patched-version slot.
@@ -333,16 +355,16 @@ flowchart LR
 
 Docker Compose runs the target system and an OpenTelemetry Collector. **Elastic Cloud is the managed remote Elasticsearch deployment** the Collector and Faultline connect to; it is not a Docker container. A local Elasticsearch container remains an optional offline-development fallback, but the demo uses an Elastic Cloud URL and API key so the team can demonstrate real Elastic queries.
 
-- **Elastic Cloud (core):** our managed Elasticsearch and Kibana deployment. It holds the raw OpenTelemetry data plus Faultline's `faultline-fingerprints` (C1) and `faultline-audit` (C4) indices, giving us durable searchable evidence without operating a production search cluster ourselves.
+- **Elastic Cloud (core):** the primary Elasticsearch project is authoritative for Faultline C1/C4 reads. A separately configured Observability project receives native OTel signals and an asynchronous, non-authoritative mirror of C1/C4 evidence. Mirror delivery must not block primary writes or become a second source of truth.
 - **OpenTelemetry Collector / Elastic OpenTelemetry ingestion (core):** receives traces, metrics and logs from the Docker services over OTLP, batches them, and sends them to Elastic Cloud. This creates one standard ingestion path and lets us add a differently instrumented target system later without rewriting Faultline.
 - **Elasticsearch Query DSL (core):** runs the exact, structured queries behind `incident_timeline`, `clone_vs_production`, `experiment_history`, and `similar_incidents`. Time, environment, incident and clone filters make every result reproducible and keep production evidence separate from clone data and hidden benchmark-controller state.
 - **ES|QL (demo):** produces readable, bounded time-series summaries for the CLI and chart, such as DB p99, QPS and retry ratio over one incident. Its pipe-based syntax makes the analysis visibly inspectable by judges and demonstrates that Elastic is doing analysis rather than acting as a JSON bucket.
 - **Kibana Discover (demo support):** saved views expose raw OTLP signals alongside the C1 and C4 indices. This gives the distributed-systems owner a quick ingestion check and lets judges inspect the evidence behind a Faultline decision.
 - **`semantic_text` plus hybrid search (polish; never verdict input):** searches separately indexed human-readable log-highlight templates, audit details and incident summaries using both exact terms and semantic similarity. It helps a human find related incidents when wording differs, while the Brain's diagnosis remains based only on measured C1 evidence and the noise model.
 
-**OTel plan.** Python auto-instrumentation (FastAPI, httpx, asyncpg) in the shared app image via env, not code changes; `faultctl` and `control` are **not** instrumented. One `otel-collector` service per compose project (production and each clone) with an OTLP receiver, a `resource` processor setting `deployment.environment=production|clone-<slot>`, a `filter` processor dropping `/internal/*` and `/admin/*` spans, exporting to Elastic Cloud's OTLP endpoint with the API key. Owner 2 writes the collector config and env; Owner 1 lands it in `sandbox/` and re-runs two `sweep_lab.py` cells (rps 80, World A + B) to confirm the storm still ignites and heals with instrumentation on. Data streams: Elastic's default `traces-*`/`metrics-*`/`logs-*`; the Kibana APM service map is the demo view.
+**OTel implementation on main.** Instrumented application services send traces, metrics and logs through one Collector per production/clone Compose project. Fairness filtering excludes control-plane signals and hidden SQL/fault details. Main includes managed OTLP routing to Observability plus legacy/local exporter options. The canonical judge input remains `/stats` → C1; raw OTel is inspectable evidence, not an already-implemented replacement C1 builder. Saved Discover evidence exists for the original Elasticsearch project; native APM/Observability views must be verified on the configured Observability deployment rather than inferred from code or the older screenshots.
 
-**Credentials and environment.** The Elastic Cloud deployment runs on sponsor credits. Endpoint + API key live in the root `.env` as `FAULTLINE_ELASTICSEARCH_URL` / `FAULTLINE_ELASTICSEARCH_API_KEY` (auto-loaded by the CLI and the smoke script; `.env` is gitignored, `.env.example` is the template). The Collector reads the same two values. The local `faultline-es` container on `:9200` with no key is the offline fallback; **the demo laptop keeps it running as a hot spare.** Smoke: `cd faultline/telemetry && uv run python scripts/es_smoke.py`.
+**Credentials and environment.** Follow main's `.env.example` and `sandbox/INTEGRATION.md` for separate primary Elasticsearch, Observability/mirror, managed OTLP and Agent Builder settings. Runtime secrets remain server-side and untracked. Setup/management credentials and runtime read credentials need separate scopes. No live deployment, credential validity, local hot spare or ingestion health is implied by this document. The Elasticsearch smoke script exists but is an explicit operator verification step, not part of documentation maintenance.
 
 **Faultline:**
 
@@ -357,18 +379,18 @@ Docker Compose runs the target system and an OpenTelemetry Collector. **Elastic 
 | Clone adapter | C6 client: create/reset/destroy clones, run lab actions, replay workload |
 | Investigators | One agent per hypothesis running the investigator loop in its clone (**built, live**: `InvestigatorAgent` proposes C6 actions with predictions; `AgenticCloneInvestigator` measures; same Agent Builder target as triage) |
 | Orchestrator | State machine for the 8 stages; launches clone investigations; routes Devin patches through clone verification; audit log in Elasticsearch |
-| CLI | `faultline watch`, `investigate`, `experiment`, `report` |
-| UI | Latency/load chart, hypotheses + evidence panels, planner candidate table, audit log, live investigator/clone panels |
+| CLI | `faultline watch`, `investigate`, `experiment`, `report`, `replay`, `ui` |
+| UI | Spatial React workspace with synthetic examples and read-only audit-backed real incidents, optional ES C1 readings and SSE updates; no infrastructure actions |
 
 **Fairness rules:** fault-controller state, world labels and trigger timing are never visible to Faultline or its investigators; clones are built only from observable/configurable state; C6 actions only reach clones. On the OTel Demo, filter flagd attributes out of telemetry and never use flag flips as levers. OTel resource and span attributes never carry world/fault labels, `io_profile`, or trigger timing; the collector drops fault-controller and admin spans.
 
 ## Product UI: spatial investigation workspace
 
-Design direction agreed with the team: design for the finished, architecture-agnostic product, not a bespoke visualization of the checkout sandbox. This section supersedes earlier chart-first UI descriptions; the chart and evidence remain essential, but sit alongside a topology-first workspace. The first implementation is an explicitly labelled, disconnected interactive prototype in `product/ui/`; synthetic examples are not live measurements, benchmark results, or executed infrastructure actions.
+The target remains an architecture-agnostic, topology-first investigation workspace with chart and evidence alongside it. Main now supports both explicitly synthetic examples and read-only real incidents from C4 audit plus optional Elasticsearch C1 readings, with SSE updates through `faultline ui`. Synthetic examples remain the default and are not measurements or executed actions. The design requirements below include unimplemented capabilities; they are not a checklist of shipped behavior.
 
 ### Visual and interaction language
 
-- Light, clean laboratory aesthetic: warm off-white surfaces, dark legible type, restrained sage/teal and violet accents, soft shadows, abstract solid nodes with icon badges. Health uses both text/icons and color. No bloom dependency, flashing alarms, decorative camera orbit, or constant layout drift.
+- The shipped workspace uses a dark spatial presentation with white nodes, fine connections and orange-red agent activity. The earlier light-laboratory palette is superseded by this implementation. Health and evidence should remain legible without relying on color alone; no decorative camera orbit or constant layout drift.
 - Default nodes represent logical services and observed dependencies, not necessarily containers. Expand to versions, instances, replicas, or shards only when explicit inventory identifies them. Unknown instance counts remain unknown. Telemetry determines observed connections; optional inventory supplies kinds, grouping, expected-but-idle resources, and display hints. Do not infer datastore identity or map the single C1 `db` aggregate onto multiple databases by guessing names.
 - Compute a stable directed layout from arbitrary ids and edges. Handle cycles, disconnected components, unknown peer nodes, and queues without inventing or deleting edges. Use ELK layered layout off the main thread on topology changes, not metric updates. Depth encodes isolated environments; request direction remains visible in each plane. The layout may resemble a pyramid when the topology does, but must not force every system into one.
 - Clones extrude behind the source graph, labelled with environment, hypothesis, and investigator. Align corresponding entities by source identity, not name alone. A clone is not assumed identical forever: show missing dependencies, simulated externals, changed versions, and partial reproduction coverage. Selecting a clone brings it into focus; a flat comparison view removes occlusion. Clone destruction archives its evidence, never implies production merged with it.
@@ -394,9 +416,9 @@ Keep navigation compact: evidence and decision trace are tabs of an investigatio
 
 Frontend foundation: React + TypeScript + Vite; React Three Fiber / drei for the spatial scene; ELK for layout; Zustand for interaction state; uPlot for time series. Prefer HTML for controls and accessible detail, WebGL for the map. Batch particles and cap device pixel ratio; stop animation when paused, reduced-motion is enabled, or the tab is hidden. Library versions must be pinned and compatible; performance claims require profiling on the actual target machine.
 
-The UI consumes normalized entities, relationships, environments, telemetry windows, and events. An event needs a stable id, time/sequence, actor, environment, optional target/parent/causal ids, kind, lifecycle state, human-readable rationale and structured payload. This is a frontend view model, not an unapproved change to C1–C6. Simulated playback must derive past state from events at the selected time and avoid exposing future verdicts. Real integration later uses the canonical Owner 2 telemetry builder/store, C4 audit, and explicit runtime progress; never scrape target internals or embed API keys in a frontend bundle.
+The UI consumes normalized entities, relationships, environments, telemetry windows, and events. An event needs a stable id, time/sequence, actor, environment, optional target/parent/causal ids, kind, lifecycle state, human-readable rationale and structured payload. This is a frontend view model, not an unapproved change to C1–C6. Simulated playback must derive past state from events at the selected time and avoid exposing future verdicts. Current read-only integration uses the canonical Owner 2 store, C4 audit and a Product-owned scenario translator; it does not execute actions. Never scrape target internals or embed API keys in a frontend bundle.
 
-Needed before live integration: fine-grained clone/tool lifecycle events, explicit target identity and topology provenance, complete planner candidate scores and their source, healthy baselines with coverage, and authenticated action/approval endpoints. Existing verdict observations already include baseline, measured, sigma, and z. The current single-DB/service-aggregate C1 shape does not supply per-instance or per-shard inventory. Missing data stays missing; unknown health must not appear healthy. Direction-only predictions are arrows/labels, not fabricated numeric confidence bands.
+Remaining for richer live coverage: fine-grained clone/tool lifecycle events, explicit target identity and topology provenance, planner evidence-source labels, and healthy baselines with coverage. Authenticated action/approval endpoints are a separate future scope, not a prerequisite for the existing read-only incident view. Verdict observations already include baseline, measured, sigma and z. The current single-DB/service-aggregate C1 shape does not supply per-instance or per-shard inventory. Missing data stays missing; unknown health must not appear healthy. Direction-only predictions are arrows/labels, not fabricated numeric confidence bands.
 
 ### First prototype acceptance criteria
 
@@ -528,6 +550,8 @@ Build the core loop to 100% before any layer; the plan assumes 4 people and a Su
 
 ### Work split from 19:30 Sat: four parallel lanes
 
+This is the historical work allocation, not the current completion tracker. Use the implementation-status snapshot above: the live driver, replay suite, read-only UI/SSE and Elastic routing/tool definitions have since landed; clone-measured replanning, Agent Builder runtime migration, patch attack and the clone benchmark arm remain separate work.
+
 Status at 19:30: contracts, sandbox (levers, faults, clone lab), telemetry (`/stats` → C1, Elastic Cloud), brain (noise/judge/planner/triage/investigator math), bench (arms on `FakeWorld`), product (orchestrator, CLI, adapters, stage 4a wiring) are all built; the v5 loop is proven live on both hero worlds (fixture triage). The OTel-in-sandbox change is in flight in Lane A. Everything below is what remains, split into four lanes of roughly equal wall-clock (≈ 6 h each, excluding unattended runs) with minimal file overlap. Each lane lists **P** = prerequisites (what must be true before starting) and **→** = what it unblocks.
 
 **Shared-stack rule (all lanes).** One Docker daemon, one production project (`faultline-sandbox`). Lane A owns production recreates and announces them in chat first; Lanes B and D use clones (`:9910`), which coexist with production; Lane C needs production undisturbed for minutes at a time (live loop) and for hours (benchmark). Nobody runs `compose down` / `up --build` on production during a Lane C run.
@@ -566,6 +590,8 @@ The project is done when a judge watching the demo can see all thirteen of these
 13. Kibana shows the raw OTel traces of the incident the demo just diagnosed, tagged production vs. clone, next to the C1/C4 indices Faultline wrote. *(Built: dashboard `faultline-evidence` — production and clone-N trace searches over `traces-generic.otel-default` side by side, `faultline-fingerprints` and `faultline-audit` below; `faultline/telemetry/scripts/kibana_setup.py` recreates it, screenshot `faultline/telemetry/docs/kibana-traces-production-vs-clone.png`. The project is serverless Elasticsearch, so there is no APM service map; Discover is the view.)*
 
 **Build checks:**
+
+These entries preserve the evidence recorded at the time. An unchecked item can have newer implementation on main without a new qualifying run; a checked historical run does not prove the current deployment is healthy. Consult the implementation snapshot before using this checklist as a build plan.
 
 - [x] Storm gate passed: storm persists 60 s+ after trigger ends; retry cap ends it permanently, in 5 of 5 tries.
 - [x] Clones start healthy and inherit no hidden state (fairness test); C6 actions cannot reach production (`sandbox/scripts/validate_lab.py fairness`, 8/8).

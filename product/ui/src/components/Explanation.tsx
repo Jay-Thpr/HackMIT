@@ -1,8 +1,41 @@
 import { ArrowRight } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { diagnosisSummary, metricLabel, timeLabel, visibleEvents, type Scenario, type WorkspaceState } from '../model'
 import { useWorkspace } from '../store'
 import { suiteChecks } from '../suite'
 import { MetricChart } from './MetricChart'
+
+type SupportingTelemetry = {
+  state: 'available' | 'not-configured' | 'unavailable'
+  detail: string
+  spans?: number
+  traces?: number
+  logs?: number
+  services?: { name: string; spans: number }[]
+}
+
+function SupportingTelemetryPanel({ scenario }: { scenario: Scenario }) {
+  const [evidence, setEvidence] = useState<SupportingTelemetry | null>(null)
+  useEffect(() => {
+    if (!scenario.live) { setEvidence(null); return }
+    let active = true
+    fetch(`/api/incidents/${encodeURIComponent(scenario.id)}/supporting-telemetry`)
+      .then(response => response.ok ? response.json() as Promise<SupportingTelemetry> : null)
+      .then(result => { if (active && result) setEvidence(result) })
+      .catch(() => { if (active) setEvidence({ state: 'unavailable', detail: 'Observability evidence could not be read.' }) })
+    return () => { active = false }
+  }, [scenario.id, scenario.live])
+  if (!scenario.live) return <section className="supporting-evidence"><span className="overline">SUPPORTING TELEMETRY</span><p>Live trace and log summaries appear here for recorded incidents. They are context for a person, not an input to the verdict.</p></section>
+  if (!evidence) return <section className="supporting-evidence"><span className="overline">SUPPORTING TELEMETRY</span><p>Loading the bounded trace and log summary…</p></section>
+  if (evidence.state !== 'available') return <section className="supporting-evidence"><span className="overline">SUPPORTING TELEMETRY</span><p>{evidence.detail}</p></section>
+  return <section className="supporting-evidence" aria-label="Supporting telemetry"><div><span className="overline">SUPPORTING TELEMETRY</span><p>{evidence.detail}</p></div><dl><div><dt>Spans</dt><dd>{evidence.spans}</dd></div><div><dt>Traces</dt><dd>{evidence.traces}</dd></div><div><dt>Logs</dt><dd>{evidence.logs}</dd></div></dl>{evidence.services?.length ? <p className="telemetry-services">Observed services: {evidence.services.map(service => `${service.name} (${service.spans})`).join(' · ')}</p> : <p className="telemetry-services">No production spans were returned for this recorded window.</p>}<small>Trace and log summaries never change Faultline’s diagnosis.</small></section>
+}
+
+function IncidentMemory({ scenario, cursor }: { scenario: Scenario; cursor: number }) {
+  const records = (scenario.memory ?? []).filter(item => item.recordedAt <= cursor)
+  if (!records.length) return <section className="incident-memory"><span className="overline">INCIDENT MEMORY</span><p>{scenario.live ? 'No similar incidents were returned at triage.' : 'Similar recorded incidents appear here during a live investigation.'}</p></section>
+  return <section className="incident-memory" aria-label="Incident memory"><div><span className="overline">INCIDENT MEMORY</span><p>Similar incidents are retrieval context only. They do not choose the diagnosis.</p></div><div className="memory-results">{records.map(item => <article key={item.incidentId}><strong>{item.incidentId}</strong><span>{Math.round(item.score * 100)}% similar</span><p>{item.confirmed && item.diagnosis ? `Recorded outcome: ${item.diagnosis}` : 'No confirmed outcome recorded.'}</p></article>)}</div></section>
+}
 
 export function Explanation({ scenario, workspace }: { scenario: Scenario; workspace: WorkspaceState }) {
   const { cursor, set, focus } = useWorkspace()
@@ -17,7 +50,8 @@ export function Explanation({ scenario, workspace }: { scenario: Scenario; works
     <section className="why-intro"><div><span className="overline">WHAT WE KNOW · {timeLabel(cursor)}</span><h2>{workspace.verdict ? conclusion : incident ? 'We see the failure. We are still testing the cause.' : 'Start with a healthy reference.'}</h2><p>{workspace.verdict ?? (incident ? `${scenario.targetId} is showing high latency and errors. Those symptoms alone cannot tell us whether retries are sustaining the overload or the dependency has lost capacity.` : 'There is no incident recorded yet. These measurements show how the system normally behaves.')}</p></div><button className="secondary-button" onClick={() => go('production')}>Watch the agents in 3D <ArrowRight size={14} /></button></section>
     <section className="why-signals" aria-label="Production symptoms">{[['Dependency latency', metricLabel(reading?.latency, 'ms'), `Healthy reference: ${metricLabel(scenario.baseline[scenario.targetId]?.latency, 'ms')}`], ['Error rate', metricLabel(reading?.errorRate, '%'), 'Requests reporting an error'], ['Issued load', metricLabel(reading?.qps, 'qps'), 'Includes repeated requests']].map(([label,value,note]) => <div key={label}><span>{label}</span><strong>{value}</strong><small>{note}</small></div>)}</section>
     <section className="why-chart panel"><div className="panel-title"><div><span className="overline">WHAT CHANGED IN PRODUCTION</span><h3>{scenario.targetId}</h3></div><span className="chart-legend"><i className="latency-line" />Latency · ms<i className="load-line" />Load · qps</span></div><MetricChart scenario={scenario} cursor={cursor} environmentId="production" nodeId={scenario.targetId} /><p className="chart-footnote">Shaded spans show interventions. Only evidence available at this replay time is shown. {scenario.live ? 'Readings come from recorded C1 windows and C4 audit events.' : 'All values are simulated.'}</p></section>
-    {scenario.live && <section className="why-hypothesis panel"><span className="overline">ELASTIC RETRIEVAL · READ ONLY</span><h2>Similar incidents</h2>{scenario.similarIncidents?.length ? <><p>Historical matches provide context only. Their labels never decide this incident’s verdict.</p><dl>{scenario.similarIncidents.map(match => <div key={match.incident_id}><dt>Looks like {match.incident_id}</dt><dd>Similarity {Math.round(match.score * 100)}%{match.diagnosis ? ` · prior verdict: ${match.diagnosis}` : ''}{match.confirmed === true ? ' · confirmed' : ''}{match.matching_metrics?.length ? ` · metrics: ${match.matching_metrics.join(', ')}` : ''}{match.recipe ? ` · replay: ${match.recipe}` : ''}</dd></div>)}</dl></> : <p className="chart-footnote">No matching fingerprints were returned for this incident.</p>}</section>}
+    <section className="why-chart panel"><div className="panel-title"><div><span className="overline">WHAT CHANGED IN PRODUCTION</span><h3>{scenario.targetId}</h3></div><span className="chart-legend"><i className="latency-line" />Latency · ms<i className="load-line" />Load · qps</span></div><MetricChart scenario={scenario} cursor={cursor} environmentId="production" nodeId={scenario.targetId} /><p className="chart-footnote">Shaded spans show interventions. Only evidence available at this replay time is shown. {scenario.live ? 'Readings come from recorded C1 windows and C4 audit events.' : 'All values are simulated.'}</p></section>
+    <div className="evidence-context"><IncidentMemory scenario={scenario} cursor={cursor} /><SupportingTelemetryPanel scenario={scenario} /></div>
     <section className="why-method"><span className="overline">WHY INTRODUCE A FAILURE?</span><h2>To find out which explanation survives a test.</h2><p>A chart can show that the system is overloaded without explaining why. We introduce one controlled change in a clean clone, then check whether it produces the same symptoms. Next, we cap retries and remove the cap. The two possible causes predict different responses.</p><ol className="why-flow"><li><b>Reproduce</b><span>Can the suspected cause create these symptoms?</span></li><li><b>Probe</b><span>What changes when we limit retries?</span></li><li><b>Release</b><span>Does recovery last when retries return?</span></li><li><b>Confirm</b><span>Does production respond as predicted?</span></li></ol><p className="why-boundary">Clone experiments use isolated state and reversible changes. A matching clone result keeps a theory in play; it does not prove what caused the production incident.</p></section>
     <div className="why-comparisons">{proposed ? scenario.hypotheses.map(hypothesis => {
       const envId = events.find(event => event.kind === 'clone' && event.environment?.hypothesisId === hypothesis.id)?.environmentId

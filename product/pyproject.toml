@@ -5,6 +5,7 @@ description = "Warp-facing Faultline incident orchestration CLI"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115,<0.116",
+    "httpx>=0.28,<0.29",
     "faultline-brain",
     "faultline-contracts",
     "faultline-telemetry",
