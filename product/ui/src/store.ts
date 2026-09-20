@@ -2,9 +2,9 @@ import { create } from 'zustand'
 import { replay, type Scenario } from './model'
 import { scenarios as synthetic } from './scenarios'
 
-export type View = 'explanation' | 'investigation' | 'observability' | 'experiments' | 'replay' | 'elastic' | 'comparison'
+export type View = 'explanation' | 'investigation' | 'observability' | 'replay' | 'elastic'
 
-const initialView: View = typeof location !== 'undefined' && new URLSearchParams(location.search).has('compare') ? 'comparison' : 'investigation'
+const initialView: View = 'investigation'
 
 interface UIState {
   scenarios: Scenario[]
