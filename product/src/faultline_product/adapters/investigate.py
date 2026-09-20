@@ -404,8 +404,10 @@ class LabInvestigation(Investigation):
         t_incident_end = self._clock()
         incident_baseline = source.series(t_incident_end - timedelta(seconds=4 * WINDOW_S), t_incident_end)
 
-        handle = levers.apply(probe.lever_id, probe.params, probe.hold_s + 30)
-        self._sleep(probe.hold_s)
+        handle = levers.apply(probe.lever_id, probe.params, probe.hold_s + 45)
+        # a clone storm needs ~10s to drain after the lever engages; hold a little longer so
+        # the during windows measure the lever's sustained effect, not the drain transient
+        self._sleep(probe.hold_s + 15)
         t_release = self._clock()
         levers.undo(handle)
         self._sleep(self._probe_watch_s)
