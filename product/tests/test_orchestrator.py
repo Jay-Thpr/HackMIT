@@ -13,7 +13,7 @@ from faultline_product.ports import CanaryTarget
 from faultline_product.renderer import TerminalRenderer
 
 
-def _orchestrator(tmp_path, *, experiment=None, telemetry=None, budget=5, levers=None, output=None):
+def _orchestrator(tmp_path, *, experiment=None, telemetry=None, budget=5, levers=None, output=None, **kw):
     bundle = load_fixture("storm")
     telemetry = telemetry or bundle.telemetry
     clock = FixtureClock(bundle.experiment_start, bundle.telemetry.last_window_end)
@@ -33,10 +33,28 @@ def _orchestrator(tmp_path, *, experiment=None, telemetry=None, budget=5, levers
             clock,
             clock.sleep,
             budget,
+            **kw,
         ),
         audit,
         bundle,
     )
+
+
+def test_no_ship_stops_after_patch_and_keeps_mitigation(tmp_path):
+    orchestrator, audit, bundle = _orchestrator(tmp_path, ship=False)
+    result = orchestrator.run("noship", bundle.experiment_start)
+    events = audit.query("noship")
+    kinds = [e.kind for e in events]
+    assert result.patch is not None and result.canary is None and result.verification is None
+    assert EventKind.patch_opened in kinds and EventKind.canary_update not in kinds
+    report = next(e for e in events if e.kind == EventKind.report)
+    assert report.payload["canary_status"] == "skipped"
+    assert report.payload["clone_verification"] == "skipped"
+    assert report.payload["mitigation_held"] == "retry_cap"
+    # the mitigation is left holding production (only the experiment's release is recorded)
+    undos = [e for e in events if e.kind == EventKind.action_undo]
+    assert all(e.stage == Stage.experiment for e in undos)
+    assert any(e.kind == EventKind.page_human and "awaits review" in e.summary for e in events)
 
 
 def test_refuses_large_blast_radius(tmp_path):

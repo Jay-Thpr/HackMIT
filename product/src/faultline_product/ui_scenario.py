@@ -250,6 +250,7 @@ def scenario_from_incident(
                     EventKind.experiment_end: "orchestrator.experiment"}[e.kind]
             result = None
             if e.kind == EventKind.patch_opened:
+                tool = {"github": "github.pull_request", "fallback": "patch.prebuilt"}.get(p.get("provider"), tool)
                 result = f"{p.get('provider')} · {p.get('reference')} · revision {p.get('revision')}"
             elif e.kind == EventKind.canary_update and p.get("evidence"):
                 result = ", ".join(f"{k}={_fmt(v)}" for k, v in (p.get("evidence") or {}).items())

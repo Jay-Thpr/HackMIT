@@ -38,7 +38,9 @@ from .adapters import (
     LabInvestigation,
     LabPatchVerifier,
     FixtureLeverAdapter,
+    GitHubPatchAdapter,
     LiveTelemetrySource,
+    PatchFallbackChain,
     SandboxLeverAdapter,
     SandboxCanaryDeployer,
     TelemetryUnavailable,
@@ -69,6 +71,12 @@ def build_parser() -> argparse.ArgumentParser:
                        help="continue an incident already in the audit log: keep its action budget and release leftover levers")
     watch.add_argument("--devin", action="store_true", help="ask Devin for the durable fix (needs DEVIN_API_KEY + DEVIN_ORG_ID)")
     watch.add_argument("--devin-acu-limit", type=int, default=5, help="max ACUs a Faultline-created Devin session may spend")
+    watch.add_argument("--github-pr", action="store_true",
+                       help="open the prebuilt durable fix as a GitHub pull request with the measured evidence "
+                            "(needs GITHUB_TOKEN; used when --devin is off or Devin returns no PR)")
+    watch.add_argument("--no-ship", action="store_true",
+                       help="diagnose-and-mitigate: stop once the mitigation holds and the fix is proposed; "
+                            "skip checkout, clone verification and the production canary")
     watch.add_argument("--levers", choices=("fixture", "sandbox"), default="fixture")
     watch.add_argument("--control-url")
     watch.add_argument("--telemetry", choices=("fixture", "sandbox"), default="fixture")
@@ -302,6 +310,7 @@ def main(argv: list[str] | None = None) -> int:
             investigation=_investigation(args, writer),
             investigation_gate=getattr(args, "investigate_gate", False),
             similar=ElasticSimilarIncidents(ElasticsearchTelemetryAnalytics(es_client)) if es_client else None,
+            ship=not getattr(args, "no_ship", False),
             renderer=renderer,
             telemetry=telemetry,
             brain=brain,
@@ -371,6 +380,14 @@ def _patch_adapter(args):
         summary="Prebuilt patch: bounded retries with exponential backoff and jitter",
     )
     use_devin = getattr(args, "devin", False)
+    github = None
+    if getattr(args, "github_pr", False):
+        github = GitHubPatchAdapter(os.getenv("GITHUB_TOKEN"), "github.com/Jay-Thpr/HackMIT", fallback)
+        if not github.enabled:
+            print("[patch] --github-pr set but GITHUB_TOKEN missing or patch file absent; using the fallback patch")
+            github = None
+        elif not use_devin:
+            return github
     if use_devin or getattr(args, "levers", "fixture") == "sandbox":
         adapter = DevinAdapter(
             api_key=os.getenv("DEVIN_API_KEY") if use_devin else None,
@@ -384,7 +401,7 @@ def _patch_adapter(args):
                 "[patch] --devin set but DEVIN_API_KEY/DEVIN_ORG_ID missing "
                 "(v3 needs a cog_ service-user key and the org id); using the fallback patch"
             )
-        return adapter
+        return PatchFallbackChain(adapter, github) if github is not None else adapter
     return FixtureDevinAdapter()
 
 

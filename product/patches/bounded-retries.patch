@@ -1,0 +1,524 @@
+diff --git a/demo/shop/api/checkout.py b/demo/shop/api/checkout.py
+index 5f074d3..b45549c 100644
+--- a/demo/shop/api/checkout.py
++++ b/demo/shop/api/checkout.py
+@@ -1,8 +1,9 @@
+ """POST /checkout: reserve inventory, charge payment, write the order.
+ 
+-Each downstream hop runs through ``_call`` which applies ``DEFAULT_POLICY``. A slow
+-dependency therefore costs (1 + max_retries) attempts per checkout at this hop alone, and
+-the gateway in front of us retries the whole checkout again on 503/504.
++Each downstream hop runs through ``_call`` which applies ``DEFAULT_POLICY``: one retry at
++most, taken from the retry budget, only while the request deadline can still fit it. The
++remaining deadline is propagated downstream so inventory and payments never work on a
++checkout the caller has already abandoned.
+ """
+ 
+ from __future__ import annotations
+@@ -21,15 +22,20 @@ app = FastAPI(title="shop-api")
+ 
+ INVENTORY_URL = "http://inventory:8001/reserve"
+ PAYMENTS_URL = "http://payments:8002/charge"
++DEADLINE_HEADER = "x-request-deadline-ms"
+ 
+ 
+-async def _call(client: httpx.AsyncClient, url: str, body: dict, policy: RetryPolicy = DEFAULT_POLICY) -> dict:
++async def _call(
++    client: httpx.AsyncClient, url: str, body: dict, started_at: float, policy: RetryPolicy = DEFAULT_POLICY
++) -> dict:
+     attempt = 0
+     while True:
+         attempt += 1
+         status, timed_out = None, False
++        timeout = policy.attempt_timeout(started_at)
++        headers = {DEADLINE_HEADER: str(int(timeout * 1000))}
+         try:
+-            response = await client.post(url, json=body, timeout=policy.attempt_timeout_s)
++            response = await client.post(url, json=body, timeout=timeout, headers=headers)
+             status = response.status_code
+             if status < 500:
+                 response.raise_for_status()
+@@ -38,16 +44,17 @@ async def _call(client: httpx.AsyncClient, url: str, body: dict, policy: RetryPo
+             timed_out = True
+         except httpx.HTTPStatusError as exc:
+             raise HTTPException(exc.response.status_code, exc.response.text) from exc
+-        if not policy.should_retry(attempt, status, timed_out):
+-            raise HTTPException(503, f"{url} unavailable after {attempt} attempts")
++        if not policy.should_retry(attempt, status, timed_out, started_at):
++            raise HTTPException(503, f"{url} unavailable after {attempt} attempt(s)")
+         await asyncio.sleep(policy.delay_s(attempt))
+ 
+ 
+ @app.post("/checkout")
+ async def checkout(order: dict) -> dict:
+     t0 = time.monotonic()
++    DEFAULT_POLICY.budget.credit()
+     async with httpx.AsyncClient() as client:
+-        reservation = await _call(client, INVENTORY_URL, {"sku": order["sku"], "qty": order["qty"]})
+-        charge = await _call(client, PAYMENTS_URL, {"amount": order["amount"], "reservation": reservation["id"]})
++        reservation = await _call(client, INVENTORY_URL, {"sku": order["sku"], "qty": order["qty"]}, t0)
++        charge = await _call(client, PAYMENTS_URL, {"amount": order["amount"], "reservation": reservation["id"]}, t0)
+     log.info("checkout ok in %.0f ms", (time.monotonic() - t0) * 1000)
+     return {"order_id": charge["order_id"], "reservation": reservation["id"]}
+diff --git a/demo/shop/api/retry_policy.py b/demo/shop/api/retry_policy.py
+index 4937a84..c93322b 100644
+--- a/demo/shop/api/retry_policy.py
++++ b/demo/shop/api/retry_policy.py
+@@ -1,29 +1,67 @@
+ """Outbound retry policy for the checkout API's downstream calls (inventory, payments, cache).
+ 
+ Every downstream client asks ``RetryPolicy.should_retry`` before re-issuing a request and
+-``RetryPolicy.delay_s`` for how long to wait. The defaults below are the pre-incident
+-production values.
++``RetryPolicy.delay_s`` for how long to wait.
++
++Bounded (Faultline durable fix): at most one retry per call, drawn from a retry budget (a
++token bucket fed by request volume, ``budget_ratio`` tokens per request) so a slow dependency
++cannot multiply load; the wait between attempts is exponential backoff with full jitter.
++Retries are also refused once the request's deadline cannot fit another attempt.
+ """
+ 
+ from __future__ import annotations
+ 
+ import os
+-from dataclasses import dataclass
++import random
++import time
++from dataclasses import dataclass, field
++
++
++@dataclass
++class RetryBudget:
++    ratio: float = float(os.environ.get("API_RETRY_BUDGET_RATIO", "0.1"))
++    burst: float = float(os.environ.get("API_RETRY_BUDGET_BURST", "10"))
++    tokens: float = field(default=None)  # type: ignore[assignment]
++
++    def __post_init__(self) -> None:
++        if self.tokens is None:
++            self.tokens = self.burst
++
++    def credit(self) -> None:
++        self.tokens = min(self.burst, self.tokens + self.ratio)
++
++    def take(self) -> bool:
++        if self.tokens < 1.0:
++            return False
++        self.tokens -= 1.0
++        return True
+ 
+ 
+ @dataclass(frozen=True)
+ class RetryPolicy:
+-    max_retries: int = int(os.environ.get("API_MAX_RETRIES", "3"))
++    max_retries: int = min(int(os.environ.get("API_MAX_RETRIES", "1")), 1)
+     attempt_timeout_s: float = float(os.environ.get("API_ATTEMPT_TIMEOUT_MS", "500")) / 1000.0
++    request_deadline_s: float = float(os.environ.get("API_REQUEST_DEADLINE_MS", "1500")) / 1000.0
++    backoff_base_s: float = float(os.environ.get("API_BACKOFF_BASE_MS", "50")) / 1000.0
++    backoff_max_s: float = float(os.environ.get("API_BACKOFF_MAX_MS", "400")) / 1000.0
++    budget: RetryBudget = field(default_factory=RetryBudget)
+ 
+-    def should_retry(self, attempt: int, status: int | None, timed_out: bool) -> bool:
++    def should_retry(self, attempt: int, status: int | None, timed_out: bool, started_at: float) -> bool:
+         if attempt > self.max_retries:
+             return False
+-        return timed_out or status is None or status >= 500
++        if not (timed_out or status is None or status >= 500):
++            return False
++        remaining = self.request_deadline_s - (time.monotonic() - started_at)
++        if remaining < self.backoff_base_s + self.attempt_timeout_s:
++            return False  # another attempt cannot finish inside the deadline
++        return self.budget.take()
+ 
+     def delay_s(self, attempt: int) -> float:
+-        del attempt
+-        return 0.0
++        return random.uniform(0.0, min(self.backoff_max_s, self.backoff_base_s * 2 ** (attempt - 1)))
++
++    def attempt_timeout(self, started_at: float) -> float:
++        remaining = self.request_deadline_s - (time.monotonic() - started_at)
++        return max(0.05, min(self.attempt_timeout_s, remaining))
+ 
+ 
+ DEFAULT_POLICY = RetryPolicy()
+diff --git a/demo/shop/cache/redis.yaml b/demo/shop/cache/redis.yaml
+index 740a7f2..a436dd6 100644
+--- a/demo/shop/cache/redis.yaml
++++ b/demo/shop/cache/redis.yaml
+@@ -2,15 +2,19 @@
+ client:
+   host: cache
+   port: 6379
+-  connect_timeout_ms: 500
+-  socket_timeout_ms: 500
++  connect_timeout_ms: 200
++  socket_timeout_ms: 200
+   retry_on_timeout: true
+-  max_retries: 3
++  # One retry, with backoff. A slow cache must fail fast to primary-db, not stack attempts.
++  max_retries: 1
++  backoff_ms: { base: 20, max: 100, jitter: full }
+ 
+ # What the API does when a key is missing or the cache is unreachable.
+ miss_policy:
+-  # Every miss goes straight to primary-db; concurrent misses for the same key each run
+-  # the query (no request coalescing).
+   fallback: primary-db
+-  coalesce_inflight: false
+-  negative_ttl_s: 0
++  # Concurrent misses for the same key share one primary-db query (stampede protection),
++  # and a miss is remembered briefly so a hot missing key cannot hammer the primary.
++  coalesce_inflight: true
++  negative_ttl_s: 2
++  # Serve a stale value for up to this long while the refresh is in flight.
++  stale_while_revalidate_s: 30
+diff --git a/demo/shop/gateway/envoy.yaml b/demo/shop/gateway/envoy.yaml
+index c7da499..3b0103a 100644
+--- a/demo/shop/gateway/envoy.yaml
++++ b/demo/shop/gateway/envoy.yaml
+@@ -14,16 +14,24 @@ static_resources:
+                   virtual_hosts:
+                     - name: api
+                       domains: ["*"]
++                      # Retries at the edge multiply every retry the API already does downstream.
++                      # The API owns retries for /checkout; the gateway only retries connection
++                      # failures, within a retry budget, under an end-to-end deadline.
++                      retry_budget:
++                        budget_percent: { value: 10 }
++                        min_retry_concurrency: 3
+                       routes:
+                         - match: { prefix: "/checkout" }
+                           route:
+                             cluster: api
+-                            timeout: 0s
++                            timeout: 2s
+                             retry_policy:
+-                              retry_on: 5xx,reset,connect-failure,retriable-status-codes
+-                              retriable_status_codes: [503, 504]
+-                              num_retries: 3
+-                              per_try_timeout: 2s
++                              retry_on: reset,connect-failure
++                              num_retries: 1
++                              per_try_timeout: 1500ms
++                              retry_back_off:
++                                base_interval: 50ms
++                                max_interval: 400ms
+                         - match: { prefix: "/" }
+                           route:
+                             cluster: api
+@@ -37,6 +45,10 @@ static_resources:
+       type: STRICT_DNS
+       connect_timeout: 1s
+       lb_policy: ROUND_ROBIN
++      circuit_breakers:
++        thresholds:
++          - priority: DEFAULT
++            max_retries: 16
+       load_assignment:
+         cluster_name: api
+         endpoints:
+diff --git a/demo/shop/inventory/db.py b/demo/shop/inventory/db.py
+index 5f347dc..d418e3d 100644
+--- a/demo/shop/inventory/db.py
++++ b/demo/shop/inventory/db.py
+@@ -1,20 +1,27 @@
+ """Inventory's connection to primary-db (through pgbouncer) and its reservation write path.
+ 
+-``reserve`` takes a row lock on the SKU; under contention the lock wait is retried in a
+-tight loop up to ``LOCK_RETRIES`` times.
++``reserve`` takes a row lock on the SKU. Under contention the lock wait is retried once,
++after a jittered backoff, and only while the caller's deadline (``x-request-deadline-ms``,
++propagated by the API) still has room; every statement carries that deadline as its
++``statement_timeout`` so a slow primary releases the connection instead of holding it.
+ """
+ 
+ from __future__ import annotations
+ 
+ import asyncio
+ import os
++import random
++import time
+ 
+ import asyncpg
+ 
+ DSN = os.environ.get("INVENTORY_DSN", "postgresql://inventory@pgbouncer:6432/shop")
+ POOL_MIN = int(os.environ.get("INVENTORY_POOL_MIN", "4"))
+-POOL_MAX = int(os.environ.get("INVENTORY_POOL_MAX", "64"))
+-LOCK_RETRIES = int(os.environ.get("INVENTORY_LOCK_RETRIES", "5"))
++POOL_MAX = int(os.environ.get("INVENTORY_POOL_MAX", "32"))
++LOCK_RETRIES = min(int(os.environ.get("INVENTORY_LOCK_RETRIES", "1")), 1)
++BACKOFF_BASE_S = float(os.environ.get("INVENTORY_BACKOFF_BASE_MS", "20")) / 1000.0
++BACKOFF_MAX_S = float(os.environ.get("INVENTORY_BACKOFF_MAX_MS", "200")) / 1000.0
++DEFAULT_DEADLINE_S = float(os.environ.get("INVENTORY_DEFAULT_DEADLINE_MS", "1000")) / 1000.0
+ 
+ _pool: asyncpg.Pool | None = None
+ 
+@@ -26,12 +33,18 @@ async def pool() -> asyncpg.Pool:
+     return _pool
+ 
+ 
+-async def reserve(sku: str, qty: int) -> str:
++async def reserve(sku: str, qty: int, deadline_s: float = DEFAULT_DEADLINE_S) -> str:
++    started = time.monotonic()
+     attempt = 0
+     while True:
+         attempt += 1
++        remaining = deadline_s - (time.monotonic() - started)
++        if remaining <= 0:
++            raise TimeoutError(f"reserve {sku}: deadline exhausted after {attempt - 1} attempt(s)")
+         try:
+             async with (await pool()).acquire() as conn, conn.transaction():
++                await conn.execute(f"SET LOCAL statement_timeout = {int(remaining * 1000)}")
++                await conn.execute(f"SET LOCAL lock_timeout = {int(min(remaining, 0.25) * 1000)}")
+                 row = await conn.fetchrow(
+                     "UPDATE stock SET on_hand = on_hand - $2 WHERE sku = $1 AND on_hand >= $2 "
+                     "RETURNING reservation_id()",
+@@ -43,4 +56,4 @@ async def reserve(sku: str, qty: int) -> str:
+         except (asyncpg.LockNotAvailableError, asyncpg.QueryCanceledError):
+             if attempt > LOCK_RETRIES:
+                 raise
+-            await asyncio.sleep(0)
++            await asyncio.sleep(random.uniform(0.0, min(BACKOFF_MAX_S, BACKOFF_BASE_S * 2 ** (attempt - 1))))
+diff --git a/demo/shop/payments/processor_client.py b/demo/shop/payments/processor_client.py
+index e9a9a6f..4ec061d 100644
+--- a/demo/shop/payments/processor_client.py
++++ b/demo/shop/payments/processor_client.py
+@@ -1,47 +1,67 @@
+ """Payments -> card processor client.
+ 
+ ``charge`` is idempotent on ``idempotency_key`` so retrying is safe; how *much* it retries
+-is the question. Pre-incident: three immediate retries per charge, no budget, and a hedged
+-duplicate request fired after ``HEDGE_AFTER_MS`` on every call.
++is the question. Bounded: one retry per charge after a jittered backoff, drawn from a retry
++budget, inside the caller's deadline. Hedged duplicates are gone: under a slow processor a
++hedge is a retry that starts before the first attempt has failed, which doubles load
++exactly when the processor can least afford it.
+ """
+ 
+ from __future__ import annotations
+ 
+ import asyncio
+ import os
++import random
++import time
+ import uuid
+ 
+ import httpx
+ 
+ PROCESSOR_URL = os.environ.get("PROCESSOR_URL", "https://processor.internal/v1/charge")
+-MAX_RETRIES = int(os.environ.get("PAYMENTS_MAX_RETRIES", "3"))
++MAX_RETRIES = min(int(os.environ.get("PAYMENTS_MAX_RETRIES", "1")), 1)
+ ATTEMPT_TIMEOUT_S = float(os.environ.get("PAYMENTS_ATTEMPT_TIMEOUT_MS", "800")) / 1000.0
+-HEDGE_AFTER_MS = int(os.environ.get("PAYMENTS_HEDGE_AFTER_MS", "200"))
++REQUEST_DEADLINE_S = float(os.environ.get("PAYMENTS_REQUEST_DEADLINE_MS", "1500")) / 1000.0
++BACKOFF_BASE_S = float(os.environ.get("PAYMENTS_BACKOFF_BASE_MS", "50")) / 1000.0
++BACKOFF_MAX_S = float(os.environ.get("PAYMENTS_BACKOFF_MAX_MS", "400")) / 1000.0
++RETRY_BUDGET_RATIO = float(os.environ.get("PAYMENTS_RETRY_BUDGET_RATIO", "0.1"))
++RETRY_BUDGET_BURST = float(os.environ.get("PAYMENTS_RETRY_BUDGET_BURST", "10"))
+ 
++_retry_tokens = RETRY_BUDGET_BURST
+ 
+-async def _attempt(client: httpx.AsyncClient, body: dict) -> dict:
+-    response = await client.post(PROCESSOR_URL, json=body, timeout=ATTEMPT_TIMEOUT_S)
++
++def _budget_credit() -> None:
++    global _retry_tokens
++    _retry_tokens = min(RETRY_BUDGET_BURST, _retry_tokens + RETRY_BUDGET_RATIO)
++
++
++def _budget_take() -> bool:
++    global _retry_tokens
++    if _retry_tokens < 1.0:
++        return False
++    _retry_tokens -= 1.0
++    return True
++
++
++async def _attempt(client: httpx.AsyncClient, body: dict, timeout_s: float) -> dict:
++    response = await client.post(PROCESSOR_URL, json=body, timeout=timeout_s)
+     response.raise_for_status()
+     return response.json()
+ 
+ 
+-async def charge(client: httpx.AsyncClient, amount: int, reservation: str) -> dict:
++async def charge(client: httpx.AsyncClient, amount: int, reservation: str, deadline_s: float = REQUEST_DEADLINE_S) -> dict:
+     body = {"amount": amount, "reservation": reservation, "idempotency_key": uuid.uuid4().hex}
++    _budget_credit()
++    started = time.monotonic()
+     attempt = 0
+     while True:
+         attempt += 1
+-        primary = asyncio.ensure_future(_attempt(client, body))
+-        hedge = asyncio.ensure_future(_hedged(client, body))
+-        done, pending = await asyncio.wait({primary, hedge}, return_when=asyncio.FIRST_COMPLETED)
+-        for task in pending:
+-            task.cancel()
++        remaining = deadline_s - (time.monotonic() - started)
+         try:
+-            return done.pop().result()
+-        except (httpx.TimeoutException, httpx.HTTPStatusError):
+-            if attempt > MAX_RETRIES:
++            return await _attempt(client, body, max(0.05, min(ATTEMPT_TIMEOUT_S, remaining)))
++        except (httpx.TimeoutException, httpx.HTTPStatusError) as exc:
++            if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500:
+                 raise
+-
+-
+-async def _hedged(client: httpx.AsyncClient, body: dict) -> dict:
+-    await asyncio.sleep(HEDGE_AFTER_MS / 1000.0)
+-    return await _attempt(client, body)
++            remaining = deadline_s - (time.monotonic() - started)
++            if attempt > MAX_RETRIES or remaining < BACKOFF_BASE_S + 0.05 or not _budget_take():
++                raise
++            await asyncio.sleep(random.uniform(0.0, min(BACKOFF_MAX_S, BACKOFF_BASE_S * 2 ** (attempt - 1))))
+diff --git a/demo/shop/primary-db/pgbouncer.ini b/demo/shop/primary-db/pgbouncer.ini
+index 65b17ec..3c25861 100644
+--- a/demo/shop/primary-db/pgbouncer.ini
++++ b/demo/shop/primary-db/pgbouncer.ini
+@@ -12,8 +12,9 @@ reserve_pool_size = 20
+ reserve_pool_timeout = 1
+ max_client_conn = 2000
+ # How long a client may wait for a server connection before pgbouncer gives up on it.
+-# 0 = wait forever; retrying clients pile up in this queue during a storm.
+-query_wait_timeout = 0
++# Bounded to the API deadline: a request that has waited this long has already been
++# abandoned upstream; failing it releases the queue instead of stacking retries behind it.
++query_wait_timeout = 2
+ server_idle_timeout = 600
+ log_connections = 0
+ log_disconnections = 0
+diff --git a/demo/shop/primary-db/postgresql.conf b/demo/shop/primary-db/postgresql.conf
+index 7e56e8c..15dce5f 100644
+--- a/demo/shop/primary-db/postgresql.conf
++++ b/demo/shop/primary-db/postgresql.conf
+@@ -5,12 +5,13 @@ shared_buffers = 8GB
+ effective_cache_size = 24GB
+ work_mem = 16MB
+ 
+-# Query time limits. Unset: a slow query holds its connection (and its lock) until the
+-# client gives up, which under a retry storm is never, because the client retries instead.
+-statement_timeout = 0
+-lock_timeout = 0
+-idle_in_transaction_session_timeout = 0
++# Query time limits. A checkout the caller has abandoned (API deadline 1500 ms) must not
++# keep running on the primary; bounding statements server-side is what makes the clients'
++# retry caps hold when a client is misconfigured. Inventory lowers these per transaction.
++statement_timeout = 2000
++lock_timeout = 500
++idle_in_transaction_session_timeout = 5000
+ 
+ # Logging
+-log_min_duration_statement = 1000
+-log_lock_waits = off
++log_min_duration_statement = 500
++log_lock_waits = on
+diff --git a/sandbox/services/orders/app.py b/sandbox/services/orders/app.py
+index e2bced0..a46f252 100644
+--- a/sandbox/services/orders/app.py
++++ b/sandbox/services/orders/app.py
+@@ -1,14 +1,17 @@
+ """Orders: POST /checkout calls Payments (through Envoy) with a per-attempt timeout and
+-retries immediately on timeout/error, up to max_retries times (default 3 -> 4 attempts).
++retries on timeout/error, up to max_retries times (default 1 -> 2 attempts).
+ 
+-This retry loop is the code a durable fix (backoff + jitter, retry budget, circuit breaker)
+-would patch. The retry_cap lever sets a runtime override of max_retries with a ttl; Orders
+-drops the override by itself when the ttl expires.
++Durable retry-storm fix (faultline/fallback-retry-cap): retries wait with exponential
++backoff + full jitter, and are drawn from a retry budget (a token bucket fed by request
++volume, RETRY_BUDGET_RATIO tokens per request) so a slow dependency cannot multiply load.
++The retry_cap lever still sets a runtime override of max_retries with a ttl; Orders drops
++the override by itself when the ttl expires.
+ """
+ 
+ import asyncio
+ import logging
+ import os
++import random
+ import time
+ import uuid
+ from contextlib import asynccontextmanager
+@@ -29,14 +32,19 @@ rlog = RateLimitedLog(log)
+ 
+ VERSION = os.environ.get("SERVICE_VERSION", "v1")
+ PAYMENTS_URL = os.environ.get("PAYMENTS_URL", "http://envoy:8081/pay")
+-DEFAULT_MAX_RETRIES = int(os.environ.get("ORDERS_MAX_RETRIES", "3"))
++DEFAULT_MAX_RETRIES = min(int(os.environ.get("ORDERS_MAX_RETRIES", "1")), 1)
+ ATTEMPT_TIMEOUT_S = float(os.environ.get("ORDERS_ATTEMPT_TIMEOUT_MS", "500")) / 1000.0
++RETRY_BUDGET_RATIO = float(os.environ.get("ORDERS_RETRY_BUDGET_RATIO", "0.1"))
++RETRY_BUDGET_BURST = float(os.environ.get("ORDERS_RETRY_BUDGET_BURST", "10"))
++BACKOFF_BASE_S = float(os.environ.get("ORDERS_BACKOFF_BASE_MS", "50")) / 1000.0
++BACKOFF_MAX_S = float(os.environ.get("ORDERS_BACKOFF_MAX_MS", "400")) / 1000.0
+ 
+ stats = Stats("orders", counters=("requests", "attempts", "retries", "ok", "errors", "attempt_timeouts", "attempt_errors"),
+               hists=("request", "attempt"))
+ _override: dict[str, Any] = {"max_retries": None, "timeout_s": None, "expires": 0.0}
+ _session: aiohttp.ClientSession | None = None
+ _in_flight = 0
++_retry_tokens = RETRY_BUDGET_BURST
+ 
+ 
+ def _override_live() -> bool:
+@@ -61,6 +69,23 @@ def attempt_timeout_s() -> float:
+     return ATTEMPT_TIMEOUT_S
+ 
+ 
++def _budget_credit() -> None:
++    global _retry_tokens
++    _retry_tokens = min(RETRY_BUDGET_BURST, _retry_tokens + RETRY_BUDGET_RATIO)
++
++
++def _budget_take() -> bool:
++    global _retry_tokens
++    if _retry_tokens < 1.0:
++        return False
++    _retry_tokens -= 1.0
++    return True
++
++
++def _backoff_s(attempt: int) -> float:
++    return random.uniform(0.0, min(BACKOFF_MAX_S, BACKOFF_BASE_S * 2 ** (attempt - 1)))
++
++
+ @asynccontextmanager
+ async def lifespan(_app: FastAPI):
+     global _session
+@@ -94,6 +119,7 @@ async def checkout():
+     t0 = time.monotonic()
+     order_id = uuid.uuid4().hex
+     stats.inc("requests")
++    _budget_credit()
+     _in_flight += 1
+     try:
+         attempt = 0
+@@ -109,7 +135,7 @@ async def checkout():
+             limit = max_retries() + 1  # re-read each time: a new cap applies to in-flight requests
+             if outcome == "timeout":
+                 stats.inc("attempt_timeouts")
+-                rlog.log(logging.WARNING, "timeout", "payments call timed out after %dms, retrying (attempt %d of %d)",
++                rlog.log(logging.WARNING, "timeout", "payments call timed out after %dms (attempt %d of %d)",
+                          attempt_timeout_s() * 1000, attempt, limit)
+             else:
+                 stats.inc("attempt_errors")
+@@ -119,6 +145,12 @@ async def checkout():
+                 stats.inc("errors")
+                 rlog.log(logging.ERROR, "failed", "checkout failed: payments unavailable after %d attempts", attempt)
+                 return JSONResponse({"error": "payments unavailable", "attempts": attempt}, status_code=503)
++            if not _budget_take():
++                stats.inc("errors")
++                stats.inc("retries_budget_denied")
++                rlog.log(logging.ERROR, "budget", "checkout failed: retry budget exhausted after %d attempt(s)", attempt)
++                return JSONResponse({"error": "payments unavailable", "attempts": attempt}, status_code=503)
++            await asyncio.sleep(_backoff_s(attempt))
+     finally:
+         _in_flight -= 1
+         stats.observe("request", (time.monotonic() - t0) * 1000)
+@@ -127,7 +159,8 @@ async def checkout():
+ @app.get("/stats")
+ async def get_stats():
+     stats.gauges.update(max_retries=max_retries(), attempt_timeout_ms=attempt_timeout_s() * 1000,
+-                        in_flight=_in_flight, version=VERSION)
++                        in_flight=_in_flight, version=VERSION,
++                        retry_budget_ratio=RETRY_BUDGET_RATIO, retry_budget_tokens=round(_retry_tokens, 2))
+     return stats.snapshot()
+ 
+ 

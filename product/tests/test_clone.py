@@ -434,3 +434,23 @@ def test_no_verifier_is_skipped_not_blocking(tmp_path):
     result, events = _run(tmp_path, None)
     assert result.verification.status == VerificationStatus.skipped
     assert result.canary.status == CanaryStatus.passed
+
+
+
+def test_replay_caps_a_long_investigator_hold():
+    """An agent may have held db_capacity for 900 s; the replay triggers it for at most 30 s."""
+    from faultline_product.adapters.clone import MAX_REPLAY_TRIGGER_S
+
+    bundle = load_fixture("storm")
+    lab, levers = FakeLab(), RecordingLevers()
+    clock = FixtureClock(T0)
+    verifier = LabPatchVerifier(
+        lab, context=Path("/tmp/patched"),
+        telemetry_factory=lambda clone, incident_id: FakeCloneTelemetry(bundle, heals=True),
+        levers_factory=lambda clone: levers, sleep=clock.sleep, clock=clock, settle_s=10, healthy_windows=2,
+        recipes={"H_db": {"action": "db_capacity", "params": {"capacity_qps": 30.0}, "ttl_s": 900}}, recipe_store=None,
+    )
+    result = verifier.verify("cap", _patch(), "H_db")
+    assert result.status == VerificationStatus.passed
+    assert lab.actions[0][1:] == ("db_capacity", {"capacity_qps": 30.0}, MAX_REPLAY_TRIGGER_S)
+    assert (clock() - T0).total_seconds() < 120  # not 900 s + settle
