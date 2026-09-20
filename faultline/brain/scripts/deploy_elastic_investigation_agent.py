@@ -10,7 +10,7 @@ Required environment variables:
   OPENAI_API_KEY     key stored by Elastic in the inference endpoint
   OPENAI_MODEL       an OpenAI chat model id selected by the team
 
-Owner 2 must create the four narrowly-scoped custom tools before this script is
+Owner 2 must create the five narrowly-scoped custom tools before this script is
 run. The script verifies their IDs exist, then creates or updates the agent.
 """
 

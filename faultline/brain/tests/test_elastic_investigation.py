@@ -18,11 +18,12 @@ from faultline_brain.elastic_investigation import (
 FIXTURES = Path(__file__).resolve().parents[3] / "contracts" / "fixtures"
 
 
-def test_agent_has_only_the_four_read_only_owner2_tools():
+def test_agent_has_only_the_five_read_only_owner2_tools():
     definition = agent_definition()
 
     assert definition["id"] == AGENT_ID
     assert definition["configuration"]["tools"] == [{"tool_ids": list(OWNER2_TOOL_IDS)}]
+    assert "faultline.semantic_incident_memory" in OWNER2_TOOL_IDS
     assert "platform.core.search" not in json.dumps(definition)
     assert_agent_boundary(definition)
 
@@ -34,6 +35,7 @@ def test_agent_instructions_cannot_offer_a_verdict_or_control_path():
         "Never infer, name, or guess hidden world labels",
         "Never issue a diagnosis",
         "C2 triage and noise-model judge own",
+        "cannot establish the current cause",
     ):
         assert phrase in SYSTEM_INSTRUCTIONS
 
