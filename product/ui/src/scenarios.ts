@@ -10,12 +10,12 @@ function eventsFor(scenario: Omit<Scenario, 'events'>): WorkspaceEvent[] {
   const make = (at: number, kind: WorkspaceEvent['kind'], title: string, extra: Partial<WorkspaceEvent> = {}): WorkspaceEvent => ({
     id: `${id}-${at}-${kind}`, sequence: at, at, kind, title, actor: 'orchestrator', environmentId: 'production', detail: '', ...extra,
   })
-  return [
+  const events: WorkspaceEvent[] = [
     make(0, 'baseline', 'Healthy reference captured', { actor: 'math', tool: 'telemetry.window', detail: 'An illustrative healthy reference. No live telemetry is connected.', result: 'Service-level metrics are available; instance inventory is not.', phase: 'Monitoring' }),
     make(12, 'detect', scenario.incidentTitle, { actor: 'math', targetId: entry, readings: incident, tool: 'detector.evaluate', detail: 'Latency and errors have increased across the request path. This identifies symptoms, not the sustaining cause.', phase: 'Incident detected', result: 'Two explanations still fit the observed symptoms.' }),
     make(18, 'reason', 'Two explanations. One observable symptom.', { actor: 'model', targetId: target, phase: 'Forming hypotheses', tool: 'triage.propose', detail: scenario.hypotheses.map(h => h.description).join(' '), prediction: 'If the overload is self-sustaining, limiting retries should allow recovery that persists after release.', result: 'A second possibility is a persistently constrained dependency. Passive telemetry cannot settle the distinction.', causeId: `${id}-12-detect` }),
-    make(24, 'clone', 'A clean environment for hypothesis A', { environmentId: 'clone-a', actor: 'investigator-a', environment: { label: 'Clone A', color: '#438c83', hypothesisId: 'A' }, phase: 'Investigating in clones', tool: 'lab.create', args: { workload_rps: 80, source: 'observable config only' }, detail: 'Start from a healthy reference. Do not copy the incident state or production data.' }),
-    make(30, 'clone', 'An independent environment for hypothesis B', { environmentId: 'clone-b', actor: 'investigator-b', environment: { label: 'Clone B', color: '#8b78af', hypothesisId: 'B' }, tool: 'lab.create', args: { workload_rps: 80, source: 'observable config only' }, detail: 'Same topology, independently isolated state. The two hypotheses can now be tested in parallel.' }),
+    make(24, 'clone', 'A clean environment for hypothesis A', { environmentId: 'clone-a', actor: 'investigator-a', environment: { label: 'Clone A', color: '#957548', hypothesisId: 'A' }, phase: 'Investigating in clones', tool: 'lab.create', args: { workload_rps: 80, source: 'observable config only' }, detail: 'Start from a healthy reference. Do not copy the incident state or production data.' }),
+    make(30, 'clone', 'An independent environment for hypothesis B', { environmentId: 'clone-b', actor: 'investigator-b', environment: { label: 'Clone B', color: '#716b60', hypothesisId: 'B' }, tool: 'lab.create', args: { workload_rps: 80, source: 'observable config only' }, detail: 'Same topology, independently isolated state. The two hypotheses can now be tested in parallel.' }),
     make(35, 'action', queue ? 'Add transient processing latency' : 'Add transient dependency latency', { environmentId: 'clone-a', actor: 'investigator-a', targetId: target, readings: incident, tool: 'lab.apply', args: { extra_ms: 800, ttl_s: 20 }, action: { id: 'perturb-a', label: '+800 ms latency', ttl: 20 }, prediction: 'A temporary slowdown can reproduce sustained overload if retries keep the dependency saturated.', detail: 'Illustrative clone-only perturbation. The adapter would need to report the exact target and a reversible handle.' }),
     make(39, 'action', queue ? 'Constrain consumer throughput' : 'Constrain dependency capacity', { environmentId: 'clone-b', actor: 'investigator-b', targetId: target, readings: incident, tool: 'lab.apply', args: { capacity_qps: 40, ttl_s: 51 }, action: { id: 'perturb-b', label: 'Capacity · 40 qps', ttl: 51 }, prediction: 'Persistent capacity loss should reproduce high latency even at the ordinary request rate.', detail: 'A separate cause in a separate clone. Production remains untouched.' }),
     make(44, 'observe', 'Both reproductions match the incident shape', { environmentId: 'clone-a', actor: 'math', targetId: target, tool: 'evidence.compare', detail: 'Compare the same metric window in production and the clone, with provenance and missing-data coverage.', prediction: 'Latency, issued load, and error rate should move together.', result: 'This example matches on all three displayed metrics. Reproduction alone does not confirm the cause.', causeId: `${id}-35-action` }),
@@ -32,6 +32,19 @@ function eventsFor(scenario: Omit<Scenario, 'events'>): WorkspaceEvent[] {
     make(105, 'archive', 'Clone A archived; evidence retained', { environmentId: 'clone-a', actor: 'adapter', tool: 'lab.destroy', detail: 'The isolated environment is removed. Its trace remains available.' }),
     make(108, 'archive', 'Clone B archived; evidence retained', { environmentId: 'clone-b', actor: 'adapter', tool: 'lab.destroy', detail: 'No clone state is merged into production.' }),
   ]
+
+  for (const [env, offset] of [['clone-a', 0], ['clone-b', 1]] as const) {
+    const a = env === 'clone-a'
+    const results = [
+      { at: a ? 25 : 31, checkId: 'baseline', expected: 'The clean clone matches the healthy reference.', observed: 'Baseline readings match the healthy reference.' },
+      { at: a ? 44 : 47, checkId: 'reproduction', expected: 'The perturbation reproduces the incident symptoms.', observed: 'Latency, load, and errors reproduce the incident shape.' },
+      { at: 62 + offset, checkId: 'probe', expected: a ? 'Latency recovers while retries are capped.' : 'Latency remains elevated while load falls.', observed: a ? 'Readings returned to the healthy reference during the probe.' : 'Load fell to 80 qps; dependency latency remained at 860 ms.' },
+      { at: 69 + offset, checkId: 'release', expected: a ? 'Recovery persists after the cap is released.' : 'Overload returns after the cap is released.', observed: a ? 'Recovery persisted after release in this scripted window.' : 'Overload returned as predicted. This passing assertion does not mean the system is healthy.' },
+    ]
+    for (const result of results) events.push(make(result.at, 'observe', `${result.checkId} check passed`, { id: `${id}-${env}-${result.checkId}`, sequence: result.at + 100, environmentId: env, actor: 'math', tool: 'suite.evaluate', detail: 'Explicit simulated test result; no live test suite was executed.', testResult: { ...result, passed: true }, result: result.observed }))
+  }
+  return events.sort((a, b) => a.at - b.at || a.sequence - b.sequence)
+
 }
 
 const commerce: Omit<Scenario, 'events'> = {
@@ -48,8 +61,8 @@ const commerce: Omit<Scenario, 'events'> = {
   }, { 'primary-db': { kind: 'datastore', label: 'primary-db' }, cache: { kind: 'datastore' } }),
   baseline: { gateway: healthy(48, 80), 'catalog-api': healthy(24, 34), 'orders-api': healthy(42, 80), payments: healthy(32, 80), inventory: healthy(18, 46), 'primary-db': { ...healthy(16, 80), utilization: 48 }, cache: { ...healthy(3, 34), utilization: 24 } },
   hypotheses: [
-    { id: 'A', title: 'Self-sustaining retry loop', description: 'A transient slowdown may have ended, while retries keep the dependency overloaded.', prediction: 'Cap retries → latency recovers → stays healthy after release.', color: '#438c83' },
-    { id: 'B', title: 'Persistent capacity loss', description: 'The dependency may have insufficient capacity even at the ordinary request rate.', prediction: 'Cap retries → load falls → latency remains high or returns.', color: '#8b78af' },
+    { id: 'A', title: 'Self-sustaining retry loop', description: 'A transient slowdown may have ended, while retries keep the dependency overloaded.', prediction: 'Cap retries → latency recovers → stays healthy after release.', color: '#957548' },
+    { id: 'B', title: 'Persistent capacity loss', description: 'The dependency may have insufficient capacity even at the ordinary request rate.', prediction: 'Cap retries → load falls → latency remains high or returns.', color: '#716b60' },
   ],
 }
 
@@ -67,8 +80,8 @@ const pipeline: Omit<Scenario, 'events'> = {
   }, { events: { kind: 'queue' }, warehouse: { kind: 'datastore' } }),
   baseline: { 'ingest-api': healthy(32, 80), normalizer: healthy(14, 80), events: { ...healthy(22, 80), utilization: 40 }, workers: healthy(40, 80), scheduler: healthy(6, 10), 'admin-api': { health: 'unknown' }, warehouse: healthy(18, 80), 'webhook-provider': { health: 'unknown' } },
   hypotheses: [
-    { id: 'A', title: 'Self-sustaining redelivery', description: 'Retries may be amplifying the event load after the original slowdown has ended.', prediction: 'Limit redelivery → queue delay recovers → remains low after release.', color: '#438c83' },
-    { id: 'B', title: 'Constrained consumer capacity', description: 'Consumer capacity may remain below the ordinary event arrival rate.', prediction: 'Limit redelivery → arrivals fall → processing delay remains high.', color: '#8b78af' },
+    { id: 'A', title: 'Self-sustaining redelivery', description: 'Retries may be amplifying the event load after the original slowdown has ended.', prediction: 'Limit redelivery → queue delay recovers → remains low after release.', color: '#957548' },
+    { id: 'B', title: 'Constrained consumer capacity', description: 'Consumer capacity may remain below the ordinary event arrival rate.', prediction: 'Limit redelivery → arrivals fall → processing delay remains high.', color: '#716b60' },
   ],
 }
 

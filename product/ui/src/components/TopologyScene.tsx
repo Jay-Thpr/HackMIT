@@ -1,211 +1,276 @@
 import { Component, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { CameraControls, Grid, Html, Line, RoundedBox } from '@react-three/drei'
-import { Box, Database, ExternalLink, Layers3 } from 'lucide-react'
+import { CameraControls, Html, Line, RoundedBox } from '@react-three/drei'
 import * as THREE from 'three'
 import type { GraphLayout } from '../layout'
-import { metricLabel, type ActiveAction, type Entity, type Environment, type Position, type Scenario, type WorkspaceState } from '../model'
+import type { Entity, Environment, Position, Scenario, WorkspaceState } from '../model'
 import { useWorkspace } from '../store'
+import { deriveNodeRecovery, type NodeRecovery } from '../recovery'
+import { agentActivity } from '../agent-activity'
+import { suiteChecks } from '../suite'
 
-const iconFor = { service: Box, datastore: Database, queue: Layers3, external: ExternalLink }
-const healthColor = { healthy: '#76a79a', degraded: '#d58b65', unknown: '#a7acb3' }
+const trailColor = '#e38a50'
+const degradedColor = '#dfc0b6'
 
-function placement(index: number, layout: GraphLayout): { position: Position; scale: number } {
-  if (index === 0) return { position: [0, 0, 2], scale: 1 }
-  return { position: [(index % 2 === 1 ? -1 : 1) * (layout.width * 0.35 + 1.4), 0.4, -layout.height * 0.32 - 1.5], scale: 0.32 }
+
+export function investigationPath(layout: GraphLayout, entry: string, target?: string): Set<string> {
+  const queue: { node: string; edges: string[] }[] = [{ node: entry, edges: [] }]
+  const visited = new Set<string>()
+  while (queue.length) {
+    const current = queue.shift()!
+    if (current.node === target) return new Set(current.edges)
+    if (visited.has(current.node)) continue
+    visited.add(current.node)
+    for (const edge of layout.edges.filter(edge => edge.source === current.node)) queue.push({ node: edge.target, edges: [...current.edges, edge.id] })
+  }
+  return new Set()
 }
 
-function ServiceNode({ entity, environment, position, actions, showLabel, attention }: {
-  entity: Entity; environment: Environment; position: Position; actions: ActiveAction[]; showLabel: boolean; attention: boolean
-}) {
+// Each environment is one suspended level; edges retain smooth three-dimensional curves.
+function spatialLayout(layout: GraphLayout): GraphLayout {
+  const positions: Record<string, Position> = Object.fromEntries(Object.entries(layout.positions).map(([id, position]) => {
+    return [id, [position[0] * 1.08, 0, position[2] * 0.82]]
+  }))
+  const edges = layout.edges.map(edge => {
+    const source = new THREE.Vector3(...positions[edge.source])
+    const target = new THREE.Vector3(...positions[edge.target])
+    const direction = target.clone().sub(source).normalize()
+    const start = source.clone().addScaledVector(direction, 0.62)
+    const end = target.clone().addScaledVector(direction, -0.62)
+    const offset = new THREE.Vector3(0, edge.source.localeCompare(edge.target) < 0 ? 0.8 : -0.8, 0)
+    const curve = new THREE.CubicBezierCurve3(start, start.clone().lerp(end, 0.32).add(offset), start.clone().lerp(end, 0.68).add(offset), end)
+    return { ...edge, points: curve.getPoints(36).map(point => point.toArray() as Position) }
+  })
+  return { ...layout, positions, edges, width: layout.width * 1.08, height: layout.height * 0.82 }
+}
+
+function placement(index: number, _layout: GraphLayout): { position: Position; scale: number } {
+  return { position: [0, index * 5.2, 0], scale: 1 }
+}
+
+function ServiceNode({ entity, environment, position, attention, interactive, faded, healthState }: { entity: Entity; environment: Environment; position: Position; attention: boolean; interactive: boolean; faded: boolean; healthState: NodeRecovery }) {
   const selected = useWorkspace(state => state.selectedNode === entity.id && state.environmentId === environment.id)
-  const inspect = useWorkspace(state => state.inspect)
-  const reducedMotion = useWorkspace(state => state.reducedMotion)
-  const playing = useWorkspace(state => state.playing)
-  const cursor = useWorkspace(state => state.cursor)
-  const invalidate = useThree(state => state.invalidate)
-  const scaleTarget = useMemo(() => new THREE.Vector3(), [])
-  const reading = environment.nodes[entity.id] ?? { health: 'unknown' }
+  const { inspect, set, reducedMotion, cursor } = useWorkspace()
   const group = useRef<THREE.Group>(null)
   const marker = useRef<THREE.Mesh>(null)
-  const color = healthColor[reading.health]
-  const active = actions.find(action => action.targetId === entity.id && action.status !== 'reverted')
-  const Icon = iconFor[entity.kind]
-  useFrame((state, delta) => {
-    if (!group.current) return
-    const scale = selected ? 1.08 : 1
-    scaleTarget.setScalar(scale)
-    if (group.current.scale.distanceToSquared(scaleTarget) > 0.000001) {
-      group.current.scale.lerp(scaleTarget, reducedMotion ? 1 : 1 - Math.exp(-delta * 9))
-      invalidate()
+  const invalidate = useThree(state => state.invalidate)
+  const color = healthState === 'degraded' ? degradedColor : healthState === 'recovering' ? '#eee0d2' : '#f5f3ed'
+  const displayedColor = useRef(new THREE.Color(color))
+  const targetColor = useMemo(() => new THREE.Color(color), [color])
+  const opacity = faded ? 0.13 : 1
+  const displayedOpacity = useRef(opacity)
+  const open = () => { inspect(entity.id, environment.id); set({ traceTab: 'trace', follow: false }) }
+  useFrame((_, delta) => {
+    if (group.current) {
+      const colorDifference = Math.abs(displayedColor.current.r - targetColor.r) + Math.abs(displayedColor.current.g - targetColor.g) + Math.abs(displayedColor.current.b - targetColor.b)
+      if (colorDifference > 0.001) {
+        displayedColor.current.lerp(targetColor, reducedMotion ? 1 : 1 - Math.exp(-delta * 1.8))
+        group.current.traverse(object => { if (object instanceof THREE.Mesh && object.material instanceof THREE.MeshStandardMaterial) object.material.color.copy(displayedColor.current) })
+        invalidate()
+      }
+      if (Math.abs(displayedOpacity.current - opacity) > 0.001) {
+        displayedOpacity.current = reducedMotion ? opacity : THREE.MathUtils.damp(displayedOpacity.current, opacity, 5, delta)
+        group.current.traverse(object => {
+          if (object instanceof THREE.Mesh && object.material instanceof THREE.MeshStandardMaterial) object.material.opacity = displayedOpacity.current
+        })
+        invalidate()
+      }
+      const scale = selected ? 1.13 : 1
+      if (Math.abs(group.current.scale.x - scale) > 0.001) {
+        group.current.scale.setScalar(THREE.MathUtils.damp(group.current.scale.x, scale, reducedMotion ? 10000 : 6, delta))
+        invalidate()
+      }
     }
-    if (marker.current && playing && !reducedMotion) {
-      marker.current.position.set(Math.cos(state.clock.elapsedTime * 1.8) * 0.94, 0.34, Math.sin(state.clock.elapsedTime * 1.8) * 0.94)
+    if (marker.current) {
+      const angle = reducedMotion ? 0 : cursor * 1.4
+      marker.current.position.set(Math.cos(angle) * 0.85, Math.sin(angle) * 0.85, 0.15)
     }
   })
   return <group position={position} ref={group}>
-    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.045, 0]}>
-      <ringGeometry args={[0.77, selected ? 0.83 : 0.79, 48]} />
-      <meshBasicMaterial color={selected ? '#274e42' : color} transparent opacity={selected ? 0.95 : 0.35} />
-    </mesh>
-    <group position={[0, 0.34, 0]} onClick={event => { event.stopPropagation(); inspect(entity.id, environment.id) }}>
-      {entity.kind === 'datastore' ? <mesh castShadow receiveShadow>
-        <cylinderGeometry args={[0.55, 0.55, 0.48, 32]} />
-        <meshStandardMaterial color={reading.health === 'degraded' ? '#f4d9c7' : '#e0e9e4'} roughness={0.65} />
-      </mesh> : <RoundedBox args={[1.25, 0.46, 1]} radius={0.12} smoothness={4} castShadow receiveShadow rotation={entity.kind === 'external' ? [0, Math.PI / 4, 0] : [0, 0, 0]}>
-        <meshStandardMaterial color={reading.health === 'degraded' ? '#f2d9c8' : '#e5ede8'} roughness={0.68} />
-      </RoundedBox>}
-      <mesh position={[0, 0.247, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[0.13, 24]} /><meshBasicMaterial color={color} />
-      </mesh>
+    <group onClick={event => { event.stopPropagation(); open() }}>
+      {entity.kind === 'datastore' ? <group>
+        <mesh><cylinderGeometry args={[0.62, 0.62, 1.05, 48]} /><meshStandardMaterial color={displayedColor.current} transparent opacity={opacity} depthWrite={!faded} roughness={0.4} metalness={0.08} /></mesh>
+        {[-0.24, 0.19].map(height => <mesh key={height} position={[0, height, 0]} rotation={[Math.PI / 2, 0, 0]}><torusGeometry args={[0.624, 0.012, 6, 48]} /><meshBasicMaterial color="#d6ddd0" transparent opacity={opacity} toneMapped={false} /></mesh>)}
+      </group> : entity.kind === 'external' ? <mesh rotation={[0.1, Math.PI / 4, 0.1]}><icosahedronGeometry args={[0.75, 0]} /><meshStandardMaterial color={displayedColor.current} transparent opacity={opacity} depthWrite={!faded} roughness={0.35} metalness={0.06} /></mesh> : <group>
+        <RoundedBox args={[1.3, 0.9, 1.05]} radius={0.15} smoothness={5}><meshStandardMaterial color={displayedColor.current} transparent opacity={opacity} depthWrite={!faded} roughness={0.38} metalness={0.04} /></RoundedBox>
+        {entity.kind === 'queue' && [-0.18, 0.1].map(height => <mesh key={height} position={[0, height, 0.53]}><boxGeometry args={[0.84, 0.022, 0.01]} /><meshBasicMaterial color="#d6ddd0" transparent opacity={opacity} toneMapped={false} /></mesh>)}
+      </group>}
+      <mesh position={[0.32, 0.2, 0.535]}><sphereGeometry args={[0.05, 12, 12]} /><meshBasicMaterial color={selected || attention ? trailColor : '#d6ddd0'} transparent opacity={opacity} toneMapped={false} /></mesh>
     </group>
-    {(active || attention) && <group>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.075, 0]}>
-        <ringGeometry args={[0.94, 0.98, 64]} /><meshBasicMaterial color={active ? '#bd8850' : environment.color} transparent opacity={0.7} />
-      </mesh>
-      <mesh ref={marker} position={[0.94, 0.34, 0]}><sphereGeometry args={[0.075, 12, 12]} /><meshBasicMaterial color={environment.color} /></mesh>
+    {selected && <group>
+      <mesh><torusGeometry args={[0.87, 0.01, 6, 64]} /><meshBasicMaterial color={trailColor} transparent opacity={faded ? 0.08 : 0.5} toneMapped={false} /></mesh>
+      <mesh ref={marker} position={[0.85, 0, 0.15]}><sphereGeometry args={[0.055, 12, 12]} /><meshBasicMaterial color={trailColor} transparent opacity={opacity} toneMapped={false} /></mesh>
     </group>}
-    {showLabel && <Html position={[0, 1.2, 0]} center zIndexRange={[30, 0]}>
-      <button className={`node-label ${selected ? 'is-selected' : ''}`} aria-label={`Inspect ${entity.label} in ${environment.label}`} onClick={() => inspect(entity.id, environment.id)}>
-        <span className="node-label-title"><Icon size={12} /><span>{entity.label}</span><i className={`health-dot ${reading.health}`} /></span>
-        <span className="node-label-metric">{metricLabel(reading.latency, 'ms')}<span>{reading.health}</span></span>
-        {active && <span className="node-action-label">{active.label} · {active.status === 'awaiting-reversion' ? 'Awaiting undo' : `${Math.max(0, Math.ceil(active.start + active.ttl - cursor))}s TTL`}</span>}
-      </button>
-    </Html>}
+    {(healthState === 'degraded' || healthState === 'recovering') && !faded && <Html position={[0, 1.05, 0]} center zIndexRange={[34, 0]}><button className={`node-issue-marker ${healthState === 'recovering' ? 'is-recovering' : ''}`} aria-label={`Inspect issue in ${entity.label} in ${environment.label}`} onClick={open} title={healthState === 'degraded' ? 'Measured degradation — inspect issue' : 'Recovery observed — confirmation pending'}>!</button></Html>}
+    {interactive && <Html center zIndexRange={[30, 0]}><button className="node-hit-target" aria-label={`Inspect ${entity.label} in ${environment.label}`} aria-pressed={selected} onClick={open} style={{ width: 44, height: 44, padding: 0, background: 'transparent', border: 0, borderRadius: 12, cursor: 'pointer' }} /></Html>}
   </group>
 }
 
-function Traffic({ layout, environment, animate }: { layout: GraphLayout; environment: Environment; animate: boolean }) {
+function Traffic({ layout, environment, path, animate, faded }: { layout: GraphLayout; environment: Environment; path: Set<string>; animate: boolean; faded: boolean }) {
   const mesh = useRef<THREE.InstancedMesh>(null)
   const dummy = useMemo(() => new THREE.Object3D(), [])
-  const clock = useRef(0)
+  const cursor = useWorkspace(state => state.cursor)
+  const clock = useRef(cursor)
+  useEffect(() => { clock.current = cursor }, [cursor])
   const particles = useMemo(() => layout.edges.flatMap(edge => {
-    const reading = environment.nodes[edge.source]
-    if (reading?.qps === undefined || reading.qps <= 0) return []
-    const curve = new THREE.CurvePath<THREE.Vector3>()
-    for (let i = 1; i < edge.points.length; i++) curve.add(new THREE.LineCurve3(new THREE.Vector3(...edge.points[i - 1]), new THREE.Vector3(...edge.points[i])))
-    const count = Math.min(14, Math.max(3, Math.round(Math.sqrt(reading.qps) * 0.7)))
-    return Array.from({ length: count }, (_, index) => ({ curve, offset: index / count, color: healthColor[reading.health], speed: 0.075 }))
-  }), [layout, environment.nodes])
+    if (!path.has(edge.id) || !environment.nodes[edge.source]?.qps) return []
+    const curve = new THREE.CatmullRomCurve3(edge.points.map(point => new THREE.Vector3(...point)))
+    return [0, 0.35, 0.7].map(offset => ({ curve, offset }))
+  }), [layout, environment.nodes, path])
   const draw = () => {
     if (!mesh.current) return
     particles.forEach((particle, index) => {
-      dummy.position.copy(particle.curve.getPoint((particle.offset + clock.current * particle.speed) % 1))
-      dummy.position.y += 0.07
-      dummy.scale.setScalar(0.035)
+      dummy.position.copy(particle.curve.getPoint((particle.offset + clock.current * 0.13) % 1))
+      dummy.scale.setScalar(0.042)
       dummy.updateMatrix()
       mesh.current!.setMatrixAt(index, dummy.matrix)
-      mesh.current!.setColorAt(index, new THREE.Color(particle.color))
     })
     mesh.current.count = particles.length
     mesh.current.instanceMatrix.needsUpdate = true
-    if (mesh.current.instanceColor) mesh.current.instanceColor.needsUpdate = true
   }
   useEffect(draw, [particles])
-  useFrame((_, delta) => {
-    if (!animate) return
-    clock.current += delta
-    draw()
-  })
-  return <instancedMesh ref={mesh} args={[undefined, undefined, 500]} frustumCulled={false}>
-    <sphereGeometry args={[1, 8, 6]} /><meshBasicMaterial />
-  </instancedMesh>
+  useFrame((_, delta) => { if (animate) { clock.current += delta; draw() } })
+  return <instancedMesh ref={mesh} args={[undefined, undefined, Math.max(1, particles.length)]} frustumCulled={false}><sphereGeometry args={[1, 10, 8]} /><meshBasicMaterial color={trailColor} transparent opacity={faded ? 0.1 : 1} toneMapped={false} /></instancedMesh>
 }
 
-function EnvironmentPlane({ environment, index, layout, scenario, workspace, animate }: {
-  environment: Environment; index: number; layout: GraphLayout; scenario: Scenario; workspace: WorkspaceState; animate: boolean
-}) {
-  const { position, scale } = placement(index, layout)
-  const group = useRef<THREE.Group>(null)
+function TestColumn({ check, environment, position, faded }: { check: ReturnType<typeof suiteChecks>[number]; environment: Environment; position: Position; faded: boolean }) {
+  const { selectedSuiteCheck, focus, set, reducedMotion } = useWorkspace()
+  const selected = selectedSuiteCheck?.environmentId === environment.id && selectedSuiteCheck.checkId === check.id
+  const material = useRef<THREE.MeshStandardMaterial>(null)
   const invalidate = useThree(state => state.invalidate)
-  const targetPosition = useMemo(() => new THREE.Vector3(...position), [layout, index])
-  const selectedEnvironment = useWorkspace(state => state.environmentId)
-  const selectedNode = useWorkspace(state => state.selectedNode)
-  const viewportWidth = useThree(state => state.size.width)
-  const focus = useWorkspace(state => state.focus)
-  const reducedMotion = useWorkspace(state => state.reducedMotion)
-  const cursor = useWorkspace(state => state.cursor)
-  const events = scenario.events.filter(event => event.at <= cursor && event.at > cursor - 6 && event.environmentId === environment.id && event.kind === 'observe')
-  const actions = workspace.actions.filter(action => action.environmentId === environment.id)
-  const focused = selectedEnvironment === environment.id
-  useEffect(() => {
-    if (group.current) group.current.position.set(position[0], reducedMotion ? position[1] : position[1] - 0.6, position[2] + (reducedMotion ? 0 : 1.2))
-  }, [environment.id, layout])
+  const color = check.state === 'passed' ? '#79bd82' : '#d9564d'
+  const displayedColor = useRef(new THREE.Color(color))
+  const targetColor = useMemo(() => new THREE.Color(color), [color])
+  const opacity = faded ? 0.13 : 1
+  const displayedOpacity = useRef(opacity)
+  const open = () => { focus(environment.id); set({ selectedSuiteCheck: { environmentId: environment.id, checkId: check.id }, traceTab: 'trace', follow: false }) }
   useFrame((_, delta) => {
-    if (group.current && group.current.position.distanceToSquared(targetPosition) > 0.000001) {
-      group.current.position.lerp(targetPosition, reducedMotion ? 1 : 1 - Math.exp(-delta * 5))
+    if (!material.current) return
+    const difference = Math.abs(displayedColor.current.r - targetColor.r) + Math.abs(displayedColor.current.g - targetColor.g) + Math.abs(displayedColor.current.b - targetColor.b)
+    if (difference > 0.001 || Math.abs(displayedOpacity.current - opacity) > 0.001) {
+      displayedColor.current.lerp(targetColor, reducedMotion ? 1 : 1 - Math.exp(-delta * 4))
+      displayedOpacity.current = reducedMotion ? opacity : THREE.MathUtils.damp(displayedOpacity.current, opacity, 5, delta)
+      material.current.color.copy(displayedColor.current)
+      material.current.opacity = displayedOpacity.current
       invalidate()
     }
   })
-  return <group ref={group} position={position} scale={scale}>
-    <RoundedBox args={[layout.width + 1.1, 0.12, layout.height + 1.1]} radius={0.16} smoothness={3} position={[0, -0.08, 0]} receiveShadow>
-      <meshStandardMaterial color={index === 0 ? '#eef2ed' : index === 1 ? '#e0ece7' : '#e9e5ef'} roughness={0.9} />
+  return <group position={position}>
+    <RoundedBox args={[0.14, 0.28, 0.14]} radius={0.02} smoothness={3} onClick={event => { event.stopPropagation(); open() }}>
+      <meshStandardMaterial ref={material} color={displayedColor.current} transparent opacity={displayedOpacity.current} depthWrite={!faded} roughness={0.38} metalness={0.06} emissive={color} emissiveIntensity={selected ? 0.2 : 0.025} />
     </RoundedBox>
-    <Line points={[
-      [-layout.width / 2 - 0.52, 0.01, -layout.height / 2 - 0.52], [layout.width / 2 + 0.52, 0.01, -layout.height / 2 - 0.52],
-      [layout.width / 2 + 0.52, 0.01, layout.height / 2 + 0.52], [-layout.width / 2 - 0.52, 0.01, layout.height / 2 + 0.52], [-layout.width / 2 - 0.52, 0.01, -layout.height / 2 - 0.52],
-    ]} color={environment.color} lineWidth={focused ? 1.1 : 0.65} transparent opacity={0.35} dashed={index > 0} dashSize={0.16} gapSize={0.12} />
-    <Html position={[0, 0.2, index === 0 ? layout.height / 2 + 0.9 : -layout.height / 2 - 0.9]} center zIndexRange={[35, 0]}>
-      <button className={`environment-label ${focused ? 'is-focused' : ''}`} onClick={() => focus(environment.id)} style={{ '--environment-color': environment.color } as React.CSSProperties}>
-        <i /><span>{environment.label}</span><small>{environment.hypothesisId ? `Hypothesis ${environment.hypothesisId}` : 'Reference system'}</small>
-      </button>
-    </Html>
-    {layout.edges.map(edge => <group key={edge.id}>
-      <Line points={edge.points} color={environment.nodes[edge.source]?.health === 'degraded' ? '#c7a58c' : '#9fb7a9'} lineWidth={1.6} />
-      {edge.points.length > 1 && <mesh position={edge.points.at(-1)} rotation={[-Math.PI / 2, 0, 0]}><coneGeometry args={[0.075, 0.18, 3]} /><meshBasicMaterial color="#849d91" /></mesh>}
-    </group>)}
-    <Traffic layout={layout} environment={environment} animate={animate} />
-    {scenario.topology.nodes.map(node => <ServiceNode key={node.id} entity={node} environment={environment} position={layout.positions[node.id]} actions={actions} showLabel={focused && (viewportWidth > 540 || node.id === scenario.targetId || node.id === selectedNode)} attention={events.some(event => event.targetId === node.id)} />)}
+    {!faded && <Html center distanceFactor={8} zIndexRange={[36, 0]}><button className="node-hit-target test-column-hit-target" data-suite-check={check.id} title={`${check.label} · ${check.state}${check.total > 1 ? ` · ${check.passed}/${check.total} passed` : ''}`} aria-label={`${check.label}: ${check.state} in ${environment.label}`} aria-pressed={selected} onClick={open} style={{ width: 24, height: 30, padding: 0, background: 'transparent', border: 0, borderRadius: 4, cursor: 'pointer' }} /></Html>}
+  </group>
+}
+
+function AgentMarker({ scenario, environment, layout, faded }: { scenario: Scenario; environment: Environment; layout: GraphLayout; faded: boolean }) {
+  const { cursor, playing, reducedMotion, inspect, set } = useWorkspace()
+  const activity = agentActivity(scenario, environment.id, cursor)
+  const target = layout.positions[activity.targetId]
+  const group = useRef<THREE.Group>(null)
+  const sweep = useRef<THREE.Mesh>(null)
+  const invalidate = useThree(state => state.invalidate)
+  const phase = useRef(0)
+  const destination = useMemo(() => new THREE.Vector3(target?.[0] ?? 0, 0, target?.[2] ?? 0), [target])
+  const initial = useRef(destination.clone())
+  useFrame((_, delta) => {
+    if (!group.current) return
+    const moving = group.current.position.distanceTo(destination) > .002
+    if (moving) { group.current.position.lerp(destination, reducedMotion ? 1 : 1 - Math.exp(-delta * 5)); invalidate() }
+    if (playing && !reducedMotion && activity.phase !== 'Complete') {
+      phase.current += delta
+      if (sweep.current) { sweep.current.position.y = -.35 + (Math.sin(phase.current * 1.7) + 1) * .4; sweep.current.scale.setScalar(1 + Math.sin(phase.current * 1.7) * .025) }
+      invalidate()
+    }
+  })
+  const open = () => { inspect(activity.targetId, environment.id); set({ selectedAgent: environment.id }) }
+  if (!activity.event || !target) return null
+  return <group ref={group} position={initial.current}>
+    <mesh ref={sweep} rotation={[Math.PI / 2,0,0]}><torusGeometry args={[.8,.008,6,64]} /><meshBasicMaterial color="#e1ac83" transparent opacity={faded ? .04 : .32} depthWrite={false} /></mesh>
+    <group position={[.98,.8,0]}><mesh onClick={event => { event.stopPropagation(); open() }}><octahedronGeometry args={[.115]} /><meshBasicMaterial color="#edbd95" transparent opacity={faded ? .15 : 1} /></mesh>
+    {!faded && <Html center zIndexRange={[40,0]}><button className="agent-hit-target" aria-label={`Inspect ${activity.name}`} title={`${activity.name} · ${activity.phase}`} onClick={open} /></Html>}</group>
+  </group>
+}
+
+function EnvironmentCluster({ environment, index, layout, scenario, workspace, animate }: { environment: Environment; index: number; layout: GraphLayout; scenario: Scenario; workspace: WorkspaceState; animate: boolean }) {
+  const { position, scale } = placement(index, layout)
+  const { environmentId, isolatedLayer, focus, cursor, reducedMotion } = useWorkspace()
+  const cluster = useRef<THREE.Group>(null)
+  const invalidate = useThree(state => state.invalidate)
+  const entrance = useRef(index > 0 && !reducedMotion ? 0 : 1)
+  useFrame((_, delta) => {
+    if (!cluster.current || entrance.current >= 0.999) return
+    entrance.current = reducedMotion ? 1 : THREE.MathUtils.damp(entrance.current, 1, 4, delta)
+    cluster.current.scale.setScalar(scale * (0.94 + 0.06 * entrance.current))
+    cluster.current.position.y = position[1] - 0.35 * (1 - entrance.current)
+    invalidate()
+  })
+  const faded = isolatedLayer !== null && isolatedLayer !== environment.id
+  const activeEvent = scenario.events.filter(event => event.at <= cursor && event.targetId).at(-1)
+  const activeActions = workspace.actions.filter(action => action.environmentId === environment.id && action.status !== 'reverted')
+  const currentEvent = scenario.events.filter(event => event.at <= cursor && event.environmentId === environment.id && event.targetId).at(-1)
+  const path = useMemo(() => investigationPath(layout, scenario.entryId, currentEvent?.targetId), [layout, scenario.entryId, currentEvent?.targetId])
+  return <group ref={cluster} position={position} scale={scale * (0.94 + 0.06 * entrance.current)}>
+    <Html position={[-layout.width / 2 + 0.3, 0.6, 0]} center zIndexRange={[35, 0]}><button className={`environment-label ${environmentId === environment.id ? 'is-focused' : ''}`} onClick={() => focus(environment.id)} style={{ opacity: faded ? 0.45 : 1 }}><span>{environment.label}</span></button></Html>
+    {index > 0 && layout.positions[scenario.targetId] && <group position={layout.positions[scenario.targetId]}>
+      {suiteChecks(scenario, environment.id, cursor).map((check, checkIndex) => {
+        const offset = checkIndex - 1.5
+        return <TestColumn key={check.id} check={check} environment={environment} faded={faded} position={[offset * 0.38, -0.48, 0.94 + (1 - Math.abs(offset) / 1.5) * 0.2]} />
+      })}
+    </group>}
+    {layout.edges.map(edge => <Line key={edge.id} points={edge.points} color={path.has(edge.id) ? trailColor : '#bcc5bd'} lineWidth={path.has(edge.id) ? 1.3 : 0.75} transparent opacity={faded ? 0.1 : path.has(edge.id) ? 0.95 : 0.65} />)}
+    <AgentMarker scenario={scenario} environment={environment} layout={layout} faded={faded} />
+    <Traffic layout={layout} environment={environment} path={path} animate={animate} faded={faded} />
+    {scenario.topology.nodes.map(node => <ServiceNode key={node.id} entity={node} environment={environment} position={layout.positions[node.id]} interactive={environmentId === environment.id} faded={faded} healthState={deriveNodeRecovery(scenario, environment, node.id, cursor)} attention={(activeEvent?.environmentId === environment.id && activeEvent.targetId === node.id) || activeActions.some(action => action.targetId === node.id)} />)}
   </group>
 }
 
 function CameraDirector({ layout, workspace, scenario }: { layout: GraphLayout; workspace: WorkspaceState; scenario: Scenario }) {
   const controls = useRef<CameraControls>(null)
   const { size, camera } = useThree()
-  const { environmentId, selectedNode, focusRevision, follow, reducedMotion, cursor, set } = useWorkspace()
+  const { environmentId, isolatedLayer, selectedNode, focusRevision, follow, reducedMotion, cursor, set } = useWorkspace()
   const lastEvent = useRef('')
   const move = (environment?: string, targetId?: string) => {
     if (!controls.current) return
     const index = workspace.environments.findIndex(env => env.id === environment)
     if (environment && index < 0) return
     const selected = index >= 0 ? placement(index, layout) : undefined
-    const node = targetId ? layout.positions[targetId] : undefined
-    const direction = new THREE.Vector3(0.22, 1.55, 1.3).normalize()
+    const target = targetId ? layout.positions[targetId] : undefined
+    const direction = new THREE.Vector3(0.38, 0.72, 1.65).normalize()
     const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), direction).normalize()
     const up = new THREE.Vector3().crossVectors(direction, right).normalize()
     const points: THREE.Vector3[] = []
-    const planes = selected && (index > 0 || node) ? [selected] : workspace.environments.map((_, i) => placement(i, layout))
-    for (const plane of planes) {
-      const origin = new THREE.Vector3(...plane.position)
-      if (node && selected) origin.add(new THREE.Vector3(...node).multiplyScalar(plane.scale))
-      const halfWidth = node ? 2.6 : layout.width / 2 + 1
-      const halfDepth = node ? 2.6 : layout.height / 2 + 1.4
-      for (const x of [-halfWidth, halfWidth]) for (const z of [-halfDepth, halfDepth]) {
-        points.push(origin.clone().add(new THREE.Vector3(x, 0.65, z).multiplyScalar(plane.scale)))
+    const clusters = selected && (isolatedLayer !== null || target) ? [selected] : workspace.environments.map((_, i) => placement(i, layout))
+    for (const cluster of clusters) {
+      for (const node of target ? [target] : Object.values(layout.positions)) {
+        const origin = new THREE.Vector3(...cluster.position).add(new THREE.Vector3(...node).multiplyScalar(cluster.scale))
+        const padding = target ? 2.1 : 1.2
+        for (const x of [-padding, padding]) for (const y of [-padding, padding]) for (const z of [-padding, padding]) points.push(origin.clone().add(new THREE.Vector3(x, y, z).multiplyScalar(cluster.scale)))
       }
     }
-    const box = new THREE.Box3().setFromPoints(points)
-    const center = box.getCenter(new THREE.Vector3())
+    if (!points.length) return
+    const center = new THREE.Box3().setFromPoints(points).getCenter(new THREE.Vector3())
     const fov = THREE.MathUtils.degToRad((camera as THREE.PerspectiveCamera).fov || 40)
-    const tanV = Math.tan(fov / 2) * Math.max(0.65, (size.height - 95) / size.height)
-    const tanH = Math.tan(fov / 2) * size.width / size.height * Math.max(0.7, (size.width - 145) / size.width)
-    const distance = Math.max(5, ...points.map(point => {
-      const relative = point.clone().sub(center)
-      return Math.max(Math.abs(relative.dot(up)) / tanV, Math.abs(relative.dot(right)) / tanH) + relative.dot(direction)
-    }))
+    const tanV = Math.tan(fov / 2) * Math.max(0.7, (size.height - 80) / size.height)
+    const tanH = Math.tan(fov / 2) * size.width / size.height * Math.max(0.75, (size.width - 70) / size.width)
+    const distance = Math.max(4, ...points.map(point => { const relative = point.clone().sub(center); return Math.max(Math.abs(relative.dot(up)) / tanV, Math.abs(relative.dot(right)) / tanH) + relative.dot(direction) }))
     const position = center.clone().add(direction.multiplyScalar(distance))
     void controls.current.setLookAt(position.x, position.y, position.z, center.x, center.y, center.z, !reducedMotion)
   }
-  useEffect(() => { move(environmentId, selectedNode) }, [layout, focusRevision, size.width, size.height, workspace.environments.length])
+  useEffect(() => {
+    const event = follow ? scenario.events.filter(event => event.at <= cursor && event.targetId && ['verdict', 'observe', 'action'].includes(event.kind)).at(-1) : undefined
+    move(event?.environmentId ?? environmentId, event?.targetId ?? selectedNode)
+  }, [layout, focusRevision, isolatedLayer, selectedNode, follow, size.width, size.height, workspace.environments.length])
   useEffect(() => {
     if (!follow) return
-    const event = scenario.events.filter(event => event.at <= cursor && (event.kind === 'clone' || event.kind === 'verdict' || (event.kind === 'action' && event.environmentId === 'production'))).at(-1)
-    if (event && event.id !== lastEvent.current) {
-      lastEvent.current = event.id
-      move(event.environmentId, event.targetId)
+    const event = scenario.events.filter(event => event.at <= cursor && event.targetId && ['verdict', 'observe', 'action'].includes(event.kind)).at(-1)
+    if (!event) lastEvent.current = ''
+    if (event && `${scenario.id}:${event.id}` !== lastEvent.current) {
+      lastEvent.current = `${scenario.id}:${event.id}`
+      if (workspace.environments.some(environment => environment.id === event.environmentId)) { set({ environmentId: event.environmentId, isolatedLayer: event.environmentId, selectedNode: undefined, selectedAgent: undefined, selectedSuiteCheck: undefined }); move(event.environmentId, event.targetId) }
     }
-  }, [cursor, follow])
-  return <CameraControls ref={controls} makeDefault smoothTime={0.7} minDistance={3} maxDistance={100} minPolarAngle={0.12} maxPolarAngle={Math.PI / 2.12} onControlStart={() => set({ follow: false })} />
+  }, [cursor, follow, scenario.id])
+  return <CameraControls ref={controls} makeDefault smoothTime={0.65} draggingSmoothTime={0.22} minDistance={3} maxDistance={100} minPolarAngle={0.12} maxPolarAngle={Math.PI - 0.12} onControlStart={() => set({ follow: false })} />
 }
 
 class SceneBoundary extends Component<{ children: ReactNode; fallback: ReactNode }, { failed: boolean }> {
@@ -217,24 +282,15 @@ class SceneBoundary extends Component<{ children: ReactNode; fallback: ReactNode
 export default function TopologyScene({ layout, workspace, scenario, fallback }: { layout: GraphLayout; workspace: WorkspaceState; scenario: Scenario; fallback: ReactNode }) {
   const { playing, reducedMotion } = useWorkspace()
   const [visible, setVisible] = useState(!document.hidden)
-  useEffect(() => {
-    const update = () => setVisible(!document.hidden)
-    document.addEventListener('visibilitychange', update)
-    return () => document.removeEventListener('visibilitychange', update)
-  }, [])
+  const spatial = useMemo(() => spatialLayout(layout), [layout])
+  useEffect(() => { const update = () => setVisible(!document.hidden); document.addEventListener('visibilitychange', update); return () => document.removeEventListener('visibilitychange', update) }, [])
   const animate = playing && !reducedMotion && visible
-  return <SceneBoundary fallback={fallback}>
-    <Canvas shadows dpr={[1, 1.5]} camera={{ position: [17, 24, 28], fov: 40, near: 0.1, far: 200 }} frameloop={visible ? animate ? 'always' : 'demand' : 'never'} fallback={fallback} gl={{ antialias: true, powerPreference: 'low-power' }}>
-      <color attach="background" args={['#f4f6f1']} />
-      <fog attach="fog" args={['#f4f6f1', 50, 110]} />
-      <ambientLight intensity={1.5} />
-      <directionalLight position={[-8, 20, 7]} intensity={2.3} castShadow shadow-mapSize={[1024, 1024]} shadow-camera-left={-25} shadow-camera-right={25} shadow-camera-top={25} shadow-camera-bottom={-25} shadow-bias={-0.002} />
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.18, 0]} receiveShadow><planeGeometry args={[200, 200]} /><meshStandardMaterial color="#f4f6f1" roughness={1} /></mesh>
-      <Grid position={[0, -0.17, 0]} args={[80, 80]} cellSize={0.7} cellThickness={0.4} cellColor="#dbe1d8" sectionSize={4.9} sectionThickness={0.6} sectionColor="#dbe1d8" fadeDistance={42} fadeStrength={2} />
-      <Suspense fallback={null}>
-        {workspace.environments.map((environment, index) => <EnvironmentPlane key={environment.id} environment={environment} index={index} layout={layout} scenario={scenario} workspace={workspace} animate={animate} />)}
-      </Suspense>
-      <CameraDirector layout={layout} workspace={workspace} scenario={scenario} />
-    </Canvas>
-  </SceneBoundary>
+  return <SceneBoundary fallback={fallback}><Canvas dpr={[1, 1.5]} camera={{ position: [12, 15, 28], fov: 40, near: 0.1, far: 200 }} frameloop={visible ? animate ? 'always' : 'demand' : 'never'} fallback={fallback} gl={{ antialias: true, powerPreference: 'low-power' }}>
+    <color attach="background" args={['#252a27']} />
+    <ambientLight intensity={1.1} />
+    <directionalLight position={[-6, 12, 9]} intensity={2.5} />
+    <directionalLight position={[8, 1, -6]} intensity={0.8} color="#E0E7D7" />
+    <Suspense fallback={null}>{workspace.environments.map((environment, index) => <EnvironmentCluster key={environment.id} environment={environment} index={index} layout={spatial} scenario={scenario} workspace={workspace} animate={animate} />)}</Suspense>
+    <CameraDirector layout={spatial} workspace={workspace} scenario={scenario} />
+  </Canvas></SceneBoundary>
 }
