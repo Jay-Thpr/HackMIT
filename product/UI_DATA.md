@@ -70,7 +70,8 @@ triage event will carry the `TriageResult` dump — it is a five-line change.
 ### Patch / Devin
 `stage 6, kind patch_opened`: `payload.provider` (`devin|fallback`), `reference` (PR URL or
 `branch:…`), `revision` (0, 1, …), `session_id`. A revision after measured failure adds
-`payload.evidence` (the text sent back to Devin). Link `reference` and
+`payload.evidence_text` (the text sent back to Devin; `evidence` is always the object form so the
+ES mapping stays consistent). Link `reference` and
 `https://app.devin.ai/sessions/<session_id>`.
 
 ### Canary

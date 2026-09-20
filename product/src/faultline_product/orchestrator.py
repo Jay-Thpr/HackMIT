@@ -585,7 +585,7 @@ class Orchestrator:
             self._record(
                 incident_id, Stage.patch, EventKind.page_human, Actor.orchestrator,
                 f"{patch.provider} patch cannot be revised automatically; page human",
-                {"patch_reference": patch.reference, "evidence": evidence},
+                {"patch_reference": patch.reference, "evidence_text": evidence},
             )
             self._renderer.event("patch", "no revision available — paged human")
             return None
@@ -594,7 +594,7 @@ class Orchestrator:
             {
                 "provider": revised.provider, "reference": revised.reference,
                 "revision": revised.revision, "session_id": revised.session_id,
-                "evidence": evidence,
+                "evidence_text": evidence,  # str; `evidence` is reserved for the object form (ES mapping)
             },
         )
         self._renderer.event("patch", f"{revised.provider} revision {revised.revision} received")

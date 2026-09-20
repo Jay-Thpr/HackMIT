@@ -331,8 +331,8 @@ def test_failed_verification_is_sent_back_to_devin_and_revision_ships(tmp_path):
     assert result.patch.revision == 1 and result.canary.status == CanaryStatus.passed
     opened = [e for e in events if e.kind == EventKind.patch_opened]
     assert [e.payload["revision"] for e in opened] == [0, 1]
-    assert "still breached" in opened[1].payload["evidence"]
-    assert '"breached_after_settle": 3' in opened[1].payload["evidence"]
+    assert "still breached" in opened[1].payload["evidence_text"]
+    assert '"breached_after_settle": 3' in opened[1].payload["evidence_text"]
     assert events[-1].payload["patch_reference"] == "devin://task/ship/rev1"
 
 
@@ -355,7 +355,7 @@ def test_unrevisable_patch_pages_human_instead_of_looping(tmp_path):
     assert [c[0] for c in verifier.calls] == [0]
     assert result.canary.status == CanaryStatus.refused
     paged = [e for e in events if e.kind == EventKind.page_human and "cannot be revised" in e.summary]
-    assert paged and paged[0].payload["evidence"].startswith("clone verification failed")
+    assert paged and paged[0].payload["evidence_text"].startswith("clone verification failed")
 
 
 def test_checkout_failure_is_recorded_and_flow_continues(tmp_path):
