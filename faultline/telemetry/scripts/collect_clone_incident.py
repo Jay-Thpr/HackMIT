@@ -15,7 +15,6 @@ file is also an `--extra` input for `ambiguity_check.py`. Destroys the clone on 
 
 import argparse
 import json
-import os
 import sys
 import time
 from collections import Counter, defaultdict
@@ -28,7 +27,7 @@ from faultline_contracts.clone import CloneSpec, HttpCloneLab
 from faultline_contracts.common import WINDOW_S
 from faultline_contracts.fingerprint import Fingerprint
 
-from faultline_telemetry import ElasticsearchFingerprintStore, HttpElasticsearchClient, load_repo_dotenv
+from faultline_telemetry import ElasticsearchFingerprintStore, HttpElasticsearchClient, client_from_env, load_repo_dotenv
 from faultline_telemetry.analytics import ElasticsearchTelemetryAnalytics
 from faultline_telemetry.fingerprint import fingerprint_from_stats
 
@@ -49,13 +48,15 @@ def prior_labels(client: HttpElasticsearchClient) -> dict[str, str]:
     labels: dict[str, str] = {}
     for hit in audit["hits"]["hits"]:
         src = hit["_source"]
-        labels[src["incident_id"]] = VERDICT_LABELS.get(src["payload"].get("diagnosis"), "unknown")
+        if src.get("environment", "production") == "production" and not src.get("clone_id"):
+            confirmed = src.get("actor") == "math" and src.get("payload", {}).get("confirmed") is True
+            labels[src["incident_id"]] = VERDICT_LABELS.get(src["payload"].get("diagnosis"), "unknown") if confirmed else "unknown"
     return labels
 
 
 class ClonePoller:
     def __init__(self, stats_urls: dict[str, str], store: ElasticsearchFingerprintStore, incident_id: str, clone_id: str):
-        self._urls = {k: v.rstrip("/") + "/stats" for k, v in stats_urls.items() if k in ("orders", "payments", "loadgen")}
+        self._urls = {k: v.rstrip("/") if v.rstrip("/").endswith("/stats") else v.rstrip("/") + "/stats" for k, v in stats_urls.items() if k in ("orders", "payments", "loadgen")}
         self._http = httpx.Client(timeout=5.0)
         self._store, self._incident_id, self._clone_id = store, incident_id, clone_id
         self._previous: dict[str, Any] | None = None
@@ -76,16 +77,23 @@ class ClonePoller:
 
 def run(world: str, lab_url: str, incident_windows: int, timeout_s: int) -> dict[str, Any]:
     load_repo_dotenv(Path(__file__))
-    es = HttpElasticsearchClient(os.environ["FAULTLINE_ELASTICSEARCH_URL"], api_key=os.environ.get("FAULTLINE_ELASTICSEARCH_API_KEY"))
+    es = client_from_env()
+    if es is None:
+        raise ValueError("FAULTLINE_ELASTICSEARCH_URL is required")
     store, analytics = ElasticsearchFingerprintStore(es), ElasticsearchTelemetryAnalytics(es)
     labels = prior_labels(es)
     recipe = RECIPES[world]
-    stamp = datetime.now(UTC).strftime("%H%M%S")
-    incident_id = f"o2-{world}-{stamp}"
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
+    incident_id = f"o2-observation-{stamp}"
     lab = HttpCloneLab(lab_url)
-    clone = lab.create(CloneSpec(name=f"o2-{world}"))
+    try:
+        clone = lab.create(CloneSpec(name="telemetry-reproduction"))
+    except Exception:
+        es.close()
+        raise
     print(f"clone {clone.clone_id} {clone.status.value} endpoints={clone.endpoints.stats_urls}")
     handle = None
+    poller = None
     try:
         poller = ClonePoller(clone.endpoints.stats_urls, store, incident_id, clone.clone_id)
         # phase 1: healthy baseline
@@ -154,13 +162,18 @@ def run(world: str, lab_url: str, incident_windows: int, timeout_s: int) -> dict
         print("wrote", out)
         return result
     finally:
-        if handle is not None:
-            try:
-                lab.undo(handle)
-            except Exception as exc:  # already expired is fine
-                print("undo:", exc)
-        info = lab.destroy(clone.clone_id)
-        print(f"destroyed {clone.clone_id}: {info.status.value}")
+        try:
+            if handle is not None:
+                try:
+                    lab.undo(handle)
+                except Exception as exc:  # already expired is fine
+                    print("undo:", type(exc).__name__)
+            info = lab.destroy(clone.clone_id)
+            print(f"destroyed {clone.clone_id}: {info.status.value}")
+        finally:
+            if poller is not None:
+                poller._http.close()
+            es.close()
 
 
 def main() -> int:
@@ -170,6 +183,8 @@ def main() -> int:
     ap.add_argument("--incident-windows", type=int, default=20)
     ap.add_argument("--timeout-s", type=int, default=240)
     args = ap.parse_args()
+    if args.incident_windows < 1 or args.timeout_s < 1:
+        ap.error("--incident-windows and --timeout-s must be positive")
     run(args.world, args.lab_url, args.incident_windows, args.timeout_s)
     return 0
 

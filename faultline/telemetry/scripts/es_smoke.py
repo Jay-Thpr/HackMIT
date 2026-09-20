@@ -8,7 +8,9 @@ three C1 fingerprints and two C4 audit events under a fresh incident id, reads
 them back through the store and sink, and prints the ES|QL incident timeline.
 """
 
+import argparse
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -19,6 +21,7 @@ from faultline_contracts.fingerprint import DbStats, SloStatus
 from faultline_telemetry import (
     ElasticsearchAuditSink,
     ElasticsearchFingerprintStore,
+    MirroredElasticsearchClient,
     client_from_env,
     ensure_index_templates,
     incident_timeline,
@@ -27,15 +30,28 @@ from faultline_telemetry import (
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--require-mirror", action="store_true")
+    parser.add_argument("--skip-setup", action="store_true")
+    args = parser.parse_args()
     load_repo_dotenv(Path(__file__))
     client = client_from_env()
     if client is None:
         print("FAULTLINE_ELASTICSEARCH_URL is not set", file=sys.stderr)
         return 2
+    try:
+        if args.require_mirror and not isinstance(client, MirroredElasticsearchClient):
+            print("A configured display mirror is required; no smoke data written", file=sys.stderr)
+            return 2
+        if not args.skip_setup:
+            ensure_index_templates(client)
+        return run_smoke(client)
+    finally:
+        client.close()
 
-    ensure_index_templates(client)
 
-    incident_id = "smoke-" + datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+def run_smoke(client) -> int:
+    incident_id = "smoke-" + datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
     start = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=1)
     store = ElasticsearchFingerprintStore(client)
     for i in range(3):
@@ -75,7 +91,22 @@ def main() -> int:
     assert len(rows) == 3, f"expected 3 timeline rows, got {len(rows)}"
     for row in rows:
         print(row)
-    print("OK")
+    if isinstance(client, MirroredElasticsearchClient):
+        deadline = time.monotonic() + 20
+        while client.health()["pending"] and time.monotonic() < deadline:
+            time.sleep(0.1)
+        if client.health()["pending"] or client.health()["rejected"]:
+            print("FAIL: display mirror has pending or rejected evidence", file=sys.stderr)
+            return 1
+        client.secondary.refresh("faultline-fingerprints")
+        client.secondary.refresh("faultline-audit")
+        mirrored_windows = ElasticsearchFingerprintStore(client.secondary).query(start, start + timedelta(seconds=15), incident_id=incident_id)
+        mirrored_events = ElasticsearchAuditSink(client.secondary).query(incident_id)
+        assert mirrored_windows == found, "mirrored C1 evidence differs from primary"
+        assert mirrored_events == events, "mirrored C4 evidence differs from primary"
+        print("OK: primary and display mirror verified")
+    else:
+        print("OK: primary verified; display mirror is not configured")
     return 0
 
 

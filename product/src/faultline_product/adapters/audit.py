@@ -17,17 +17,19 @@ class TeeAuditSink:
     secondary failures are logged and swallowed. Queries read the primary only.
     """
 
-    def __init__(self, primary, secondary: _SecondaryAuditSink, *, log: logging.Logger):
+    def __init__(self, primary, secondary: _SecondaryAuditSink, *, log: logging.Logger,
+                 clone_id: str | None = None):
         self._primary = primary
         self._secondary = secondary
         self._log = log
+        self._clone_id = clone_id
 
     def write(self, event: AuditEvent, *, clone_id: str | None = None) -> None:
         self._primary.write(event)
         try:
-            self._secondary.write(event, clone_id=clone_id)
+            self._secondary.write(event, clone_id=clone_id if clone_id is not None else self._clone_id)
         except Exception as exc:  # noqa: BLE001 - audit durability must not break the loop
-            self._log.warning("secondary audit sink failed for %s: %s", event.event_id, exc)
+            self._log.warning("secondary audit sink failed for %s (%s)", event.event_id, type(exc).__name__)
 
     def query(self, incident_id: str):
         return self._primary.query(incident_id)

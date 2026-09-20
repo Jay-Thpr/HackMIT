@@ -14,3 +14,4 @@ service:
   pipelines:
     traces:  {exporters: [elasticsearch/elastic, file/leakcheck]}
     metrics: {exporters: [elasticsearch/elastic, file/leakcheck]}
+    logs:    {exporters: [elasticsearch/elastic, file/leakcheck]}

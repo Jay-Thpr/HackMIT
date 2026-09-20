@@ -13,6 +13,13 @@ from faultline_product.cli import main
 BUCKETS = [10, 100, 1000]
 
 
+@pytest.fixture(autouse=True)
+def isolate_cloud_persistence(monkeypatch):
+    monkeypatch.setattr("faultline_product.cli.load_repo_dotenv", lambda _: None)
+    monkeypatch.delenv("FAULTLINE_ELASTICSEARCH_URL", raising=False)
+    monkeypatch.delenv("FAULTLINE_ELASTICSEARCH_API_KEY", raising=False)
+
+
 def _hist(counts):
     return {"counts": counts}
 
@@ -195,6 +202,30 @@ def test_live_source_persists_each_window_once_with_incident_metadata():
     assert source.window(start, end).window_start == start
     assert [(item[1], item[2]) for item in writer.writes] == [("incident-7", None)]
 
+
+def test_persistence_failure_is_sanitized_and_retried_with_clone_metadata(caplog):
+    from unittest.mock import Mock
+
+    writer = Mock()
+    writer.write.side_effect = [RuntimeError("secret URL credential"), None, None]
+    source = LiveTelemetrySource(
+        orders_url="http://orders", payments_url="http://payments", loadgen_url="http://loadgen",
+        http=_scripted_http([_snapshot(0), _snapshot(5), _snapshot(10)]),
+        writer=writer, incident_id="incident-7", clone_id="clone-7",
+    )
+    source.snapshot()
+    source.snapshot()
+    first = source.latest()
+    assert first is not None
+    assert "RuntimeError" in caplog.text and "secret" not in caplog.text
+    assert source.latest() == first
+    source.latest()
+    assert writer.write.call_count == 2
+    source.snapshot()
+    assert source.latest().window_end > first.window_end
+    assert writer.write.call_count == 3
+    assert all(call.kwargs == {"incident_id": "incident-7", "clone_id": "clone-7"}
+               for call in writer.write.call_args_list)
 
 def test_persist_failure_is_logged_and_retried_without_stopping_polling(caplog):
     class FailingWriter:

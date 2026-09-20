@@ -250,7 +250,7 @@ class LiveTelemetrySource:
                 fingerprint, incident_id=self._incident_id, clone_id=self._clone_id
             )
         except Exception as exc:  # noqa: BLE001 - ES persistence must never break detection
-            log.warning("fingerprint persist failed: %s", exc)
+            log.warning("fingerprint persist failed (%s); window remains eligible for retry", type(exc).__name__)
             with self._lock:
                 self._persisted_windows.discard(identity)
 

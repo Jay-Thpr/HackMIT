@@ -20,9 +20,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from services.common.stats import RateLimitedLog, Stats, require_token
+from services.common.telemetry import configure_application_logs
 
 log = logging.getLogger("orders")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+configure_application_logs(log)
 rlog = RateLimitedLog(log)
 
 VERSION = os.environ.get("SERVICE_VERSION", "v1")

@@ -26,9 +26,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from services.common.stats import RateLimitedLog, Stats, require_token
+from services.common.telemetry import configure_application_logs
 
 log = logging.getLogger("payments")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+configure_application_logs(log)
 rlog = RateLimitedLog(log)
 
 POOLS_CFG = {
@@ -64,8 +66,8 @@ async def _connect_pools() -> None:
                 pools[name] = await asyncpg.create_pool(dsn, min_size=size, max_size=size, command_timeout=60)
                 log.info("pool %s ready (size=%d)", name, size)
                 break
-            except (OSError, asyncpg.PostgresError) as e:
-                log.warning("pool %s not ready: %s; retrying", name, e)
+            except (OSError, asyncpg.PostgresError):
+                log.warning("pool %s not ready; retrying", name)
                 await asyncio.sleep(1)
 
 
@@ -96,9 +98,9 @@ async def _run_query(order_id: str, amount_cents: int) -> tuple[int, dict[str, A
         stats.observe("db_query", waited_ms)
         rlog.log(logging.WARNING, "pool", "db connection pool exhausted, waited %dms for a connection", waited_ms)
         return 503, {"error": "db connection pool exhausted"}
-    except (OSError, asyncpg.PostgresError) as e:
+    except (OSError, asyncpg.PostgresError):
         stats.inc("db_errors")
-        rlog.log(logging.ERROR, "conn", "db connection error: %s", e)
+        rlog.log(logging.ERROR, "conn", "db connection error")
         return 503, {"error": "db unavailable"}
     finally:
         waiting[target] -= 1
@@ -107,9 +109,9 @@ async def _run_query(order_id: str, amount_cents: int) -> tuple[int, dict[str, A
     t1 = time.monotonic()
     try:
         payment_id = await conn.fetchval("SELECT process_payment($1, $2)", order_id, amount_cents)
-    except (OSError, asyncpg.PostgresError) as e:
+    except (OSError, asyncpg.PostgresError):
         stats.inc("db_errors")
-        rlog.log(logging.ERROR, "query", "db query failed: %s", e)
+        rlog.log(logging.ERROR, "query", "db query failed")
         return 503, {"error": "db query failed"}
     finally:
         t2 = time.monotonic()
@@ -121,7 +123,7 @@ async def _run_query(order_id: str, amount_cents: int) -> tuple[int, dict[str, A
     stats.observe("db_query", total_ms)
     stats.inc("db_queries_completed")
     if total_ms > 1000:
-        rlog.log(logging.WARNING, "slow", "slow query: SELECT process_payment(...) took %dms", total_ms)
+        rlog.log(logging.WARNING, "slow", "slow database operation took %dms", total_ms)
     return 200, {"payment_id": payment_id}
 
 

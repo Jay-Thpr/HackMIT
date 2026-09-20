@@ -14,13 +14,22 @@ prints what it sees and exits non-zero.
 """
 
 import argparse
-import os
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from faultline_telemetry import load_repo_dotenv
+from kibana_setup import connection_settings
 
 PNG_PATH = Path(__file__).resolve().parents[1] / "docs" / "kibana-traces-production-vs-clone.png"
+
+
+def scoped_headers(url, kibana_url, api_key, headers):
+    headers = {name: value for name, value in headers.items() if name.lower() not in ("authorization", "kbn-xsrf")}
+    target, origin = urlsplit(url), urlsplit(kibana_url)
+    if (target.scheme, target.netloc) == (origin.scheme, origin.netloc):
+        headers.update({"Authorization": f"ApiKey {api_key}", "kbn-xsrf": "true"})
+    return headers
 
 
 def main() -> int:
@@ -28,16 +37,17 @@ def main() -> int:
     parser.add_argument("--kibana-url", default=None, help="Override $KIBANA_URL")
     parser.add_argument(
         "--api-key-env",
-        default="FAULTLINE_ELASTICSEARCH_API_KEY",
-        help="Name of the env var holding the API key (default: FAULTLINE_ELASTICSEARCH_API_KEY)",
+        default=None,
+        help="Environment variable containing a key with Kibana dashboard read privileges",
     )
+    parser.add_argument("--observability", action="store_true")
+    parser.add_argument("--out", type=Path, default=PNG_PATH)
     args = parser.parse_args()
 
     load_repo_dotenv(Path(__file__))
-    kibana_url = (args.kibana_url or os.environ.get("KIBANA_URL", "")).rstrip("/")
-    api_key = os.environ.get(args.api_key_env)
+    kibana_url, api_key, key_name = connection_settings(args.observability, args.kibana_url, args.api_key_env)
     if not kibana_url or not api_key:
-        print(f"KIBANA_URL and {args.api_key_env} must be set", file=sys.stderr)
+        print(f"Set the selected project's Kibana URL and {key_name}", file=sys.stderr)
         return 2
 
     from playwright.sync_api import sync_playwright
@@ -47,19 +57,14 @@ def main() -> int:
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(channel="chrome", headless=True)
-        context = browser.new_context(
-            viewport={"width": 1600, "height": 1000},
-            extra_http_headers={
-                "Authorization": f"ApiKey {api_key}",
-                "kbn-xsrf": "true",
-            },
-        )
+        context = browser.new_context(viewport={"width": 1600, "height": 1000})
+        context.route("**/*", lambda route: route.continue_(headers=scoped_headers(route.request.url, kibana_url, api_key, route.request.headers)))
         page = context.new_page()
+        ok = True
         page.goto(dashboard_url, wait_until="domcontentloaded", timeout=120_000)
 
         if "login" in page.url:
-            print(f"Auth redirect: URL={page.url} TITLE={page.title()}", file=sys.stderr)
-            page.screenshot(path=str(PNG_PATH.with_name("kibana-login-failure.png")))
+            print("Authentication redirected to login; dashboard access is not verified", file=sys.stderr)
             browser.close()
             return 1
 
@@ -68,6 +73,7 @@ def main() -> int:
         try:
             page.wait_for_selector("[data-test-subj='dashboardGrid'], .dshDashboardGrid", timeout=120_000)
         except Exception:
+            ok = False
             print("warning: dashboard grid not detected", file=sys.stderr)
         try:
             page.wait_for_load_state("networkidle", timeout=60_000)
@@ -77,16 +83,15 @@ def main() -> int:
         try:
             page.wait_for_selector(".euiDataGridRow, .kbnDocTable__row, [data-test-subj='discoverDocTable'] tr, .unifiedDataTable__row", timeout=60_000)
         except Exception:
+            ok = False
             print("warning: no table rows detected before screenshot", file=sys.stderr)
         page.wait_for_timeout(5_000)
 
-        PNG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        page.screenshot(path=str(PNG_PATH), full_page=True)
-        print(f"URL: {page.url}")
-        print(f"TITLE: {page.title()}")
-        print(f"Saved: {PNG_PATH}")
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(args.out), full_page=True)
+        print(f"Saved: {args.out}")
         browser.close()
-    return 0
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

@@ -11,3 +11,4 @@ service:
   pipelines:
     traces:  {exporters: [debug, file/leakcheck]}
     metrics: {exporters: [debug, file/leakcheck]}
+    logs:    {exporters: [debug, file/leakcheck]}

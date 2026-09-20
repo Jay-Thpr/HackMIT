@@ -11,7 +11,7 @@ from faultline_contracts import JsonlSink, LeverError, utcnow
 from faultline_telemetry import (
     ElasticsearchAuditSink,
     ElasticsearchFingerprintStore,
-    HttpElasticsearchClient,
+    client_from_env,
     ensure_index_templates,
     load_repo_dotenv,
 )
@@ -174,13 +174,10 @@ def main(argv: list[str] | None = None) -> int:
         "FAULTLINE_ELASTICSEARCH_API_KEY"
     )
     es_client = None
-    if elasticsearch_url:
-        es_client = HttpElasticsearchClient(elasticsearch_url, api_key=elasticsearch_api_key)
-        try:
-            ensure_index_templates(es_client)
-        except Exception as exc:  # noqa: BLE001 - ES persistence is optional
-            log.warning("could not ensure Elasticsearch index templates: %s", exc)
-        audit = TeeAuditSink(audit, ElasticsearchAuditSink(es_client), log=log)
+    if elasticsearch_url and getattr(args, "telemetry", None) == "sandbox":
+        es_client = _persistence_client(elasticsearch_url, elasticsearch_api_key)
+        audit = TeeAuditSink(audit, ElasticsearchAuditSink(es_client), log=log,
+                             clone_id=getattr(args, "clone_id", None))
     live_telemetry = None
     writer = None
     try:
@@ -316,8 +313,25 @@ def main(argv: list[str] | None = None) -> int:
         print(f"faultline: error: {parser_error}")
         return 2
     finally:
-        if live_telemetry is not None:
-            live_telemetry.stop()
+        try:
+            if live_telemetry is not None:
+                live_telemetry.stop()
+        finally:
+            if es_client is not None:
+                es_client.close()
+
+
+def _persistence_client(url, api_key):
+    env = {**os.environ, "FAULTLINE_ELASTICSEARCH_URL": url,
+           "FAULTLINE_ELASTICSEARCH_API_KEY": api_key or ""}
+    client = client_from_env(env)
+    if client is None:
+        return None
+    try:
+        ensure_index_templates(getattr(client, "primary", client))
+    except Exception as exc:  # noqa: BLE001 - ES persistence is optional
+        log.warning("could not ensure Elasticsearch index templates (%s)", type(exc).__name__)
+    return client
 
 
 def _run_incident_id(base: str) -> str:

@@ -12,7 +12,7 @@ from typing import Any
 from faultline_contracts.fingerprint import Fingerprint
 
 from .ports import ElasticsearchPort
-from .store import FINGERPRINT_INDEX
+from .store import FINGERPRINT_INDEX, production_filter
 
 
 @dataclass(frozen=True)
@@ -126,7 +126,9 @@ class ElasticsearchTelemetryAnalytics:
             filters.append({"exists": {"field": "incident_id"}})
         if clone_id is not None:
             filters.append({"term": {"clone_id": clone_id}})
-        if environment is not None:
+        if environment == "production":
+            filters.append(production_filter())
+        elif environment is not None:
             filters.append({"term": {"environment": environment}})
         query: dict[str, Any] = {"bool": {"filter": filters}} if filters else {"match_all": {}}
         response = self._client.search(index=self._index, query=query, sort=[{"window_start": "asc"}])

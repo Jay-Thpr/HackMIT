@@ -1,0 +1,13 @@
+exporters:
+  otlphttp/observability:
+    endpoint: "${env:FAULTLINE_OTLP_ENDPOINT}"
+    headers:
+      Authorization: "ApiKey ${env:FAULTLINE_OTLP_API_KEY}"
+  file/leakcheck:
+    path: /tmp/otel/records.jsonl
+    rotation: {max_megabytes: 20, max_backups: 1}
+service:
+  pipelines:
+    traces:  {exporters: [otlphttp/observability, file/leakcheck]}
+    metrics: {exporters: [otlphttp/observability, file/leakcheck]}
+    logs:    {exporters: [otlphttp/observability, file/leakcheck]}

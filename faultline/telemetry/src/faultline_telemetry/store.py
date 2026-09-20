@@ -11,6 +11,17 @@ from .ports import ElasticsearchPort
 FINGERPRINT_INDEX = "faultline-fingerprints"
 
 
+def production_filter() -> dict[str, Any]:
+    return {"bool": {
+        "must_not": [{"exists": {"field": "clone_id"}}],
+        "should": [
+            {"term": {"environment": "production"}},
+            {"bool": {"must_not": [{"exists": {"field": "environment"}}]}},
+        ],
+        "minimum_should_match": 1,
+    }}
+
+
 class ElasticsearchFingerprintStore:
     """Persist C1 windows and retrieve them as a TelemetrySource."""
 
@@ -78,6 +89,8 @@ class ElasticsearchFingerprintStore:
             filters.append({"term": {"incident_id": incident_id}})
         if clone_id is not None:
             filters.append({"term": {"clone_id": clone_id}})
+        else:
+            filters.append(production_filter())
         response = self._client.search(
             index=self._index,
             query={"bool": {"filter": filters}},

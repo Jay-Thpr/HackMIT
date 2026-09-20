@@ -49,13 +49,16 @@ def production_incidents(client: HttpElasticsearchClient) -> list[dict[str, Any]
     audit = [h["_source"] for h in client.search(index="faultline-audit", query={"match_all": {}}, sort=[{"ts": "asc"}])["hits"]["hits"]]
     events: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for event in audit:
-        events[event["incident_id"]].append(event)
+        if event.get("environment", "production") == "production" and not event.get("clone_id"):
+            events[event["incident_id"]].append(event)
     incidents = []
     for incident_id, evs in events.items():
-        verdicts = [e["payload"].get("diagnosis") for e in evs if e["kind"] == "verdict"]
+        verdicts = [e for e in evs if e["kind"] == "verdict"]
         detects = [e["ts"] for e in evs if e["kind"] == "detect"]
         applies = [e["ts"] for e in evs if e["kind"] == "action_apply"]
-        if not detects or not applies or not verdicts or verdicts[-1] not in LABELS:
+        verdict = verdicts[-1] if verdicts else {}
+        diagnosis = verdict.get("payload", {}).get("diagnosis")
+        if not detects or not applies or diagnosis not in LABELS or verdict.get("actor") != "math" or verdict.get("payload", {}).get("confirmed") is not True:
             continue
         first_apply = _ts(min(applies))
         docs = [
@@ -69,11 +72,11 @@ def production_incidents(client: HttpElasticsearchClient) -> list[dict[str, Any]
         fps = [_fp(d) for d in docs]
         # Product stops polling production while the clone investigators run, so the passive-phase
         # windows are the breached ones between SLO breach onset and the first lever (detect sits inside).
-        windows = [f for f in fps if f.window_start < first_apply and any(s.breached for s in f.slos)]
+        windows = [f for f in fps if f.window_end <= first_apply and any(s.breached for s in f.slos)]
         healthy = [f for f in fps if windows and f.window_end <= windows[0].window_start and f.slos and not any(s.breached for s in f.slos)]
         if not windows or not healthy:
             continue
-        incidents.append({"incident_id": incident_id, "label": LABELS[verdicts[-1]], "origin": "production", "windows": windows, "baseline": healthy[-1]})
+        incidents.append({"incident_id": incident_id, "label": LABELS[diagnosis], "origin": "production", "windows": windows, "baseline": healthy[-1]})
     return incidents
 
 
@@ -116,7 +119,7 @@ def predict_centroid(metrics: dict[str, float], centroids: dict[str, dict[str, f
         common = sorted(set(metrics) & set(centroid))
         if common:
             best.append((sqrt(sum(((metrics[k] - centroid[k]) / scales[k]) ** 2 for k in common) / len(common)), label))
-    return min(best)[1]
+    return min(best)[1] if best else "unclassified"
 
 
 # --- passive LLM ------------------------------------------------------------------------------
@@ -165,14 +168,15 @@ def score(results: list[tuple[str, str, str]]) -> dict[str, Any]:
         per_incident.setdefault(incident_id, (label, []))[1].append(pred)
     recall = {label: sum(v) / len(v) for label, v in per_class.items()}
     majority = {
-        inc: {"label": label, "prediction": max(set(preds), key=preds.count), "windows": len(preds)}
+        inc: {"label": label, "prediction": min(set(preds), key=lambda value: (-preds.count(value), value)), "windows": len(preds)}
         for inc, (label, preds) in per_incident.items()
     }
     return {
         "windows": len(results),
         "window_accuracy": sum(p == l for _, l, p in results) / len(results) if results else None,
         "per_class_recall": recall,
-        "balanced_accuracy": sum(recall.values()) / len(recall) if recall else None,
+        "balanced_accuracy": sum(recall.values()) / len(recall) if set(recall) == set(LABELS.values()) else None,
+        "evaluated_classes": sorted(recall),
         "incidents_correct": sum(m["label"] == m["prediction"] for m in majority.values()),
         "incidents": len(majority),
         "per_incident": majority,
@@ -187,10 +191,16 @@ def main() -> int:
     ap.add_argument("--drop", nargs="*", default=[], help="metric keys to hide from the classifiers (leak ablation)")
     ap.add_argument("--out", type=Path, default=OUT)
     args = ap.parse_args()
+    if args.llm_windows < 1:
+        ap.error("--llm-windows must be positive")
     load_repo_dotenv(Path(__file__))
+    if not os.environ.get("FAULTLINE_ELASTICSEARCH_URL"):
+        ap.error("FAULTLINE_ELASTICSEARCH_URL is required")
     es = HttpElasticsearchClient(os.environ["FAULTLINE_ELASTICSEARCH_URL"], api_key=os.environ.get("FAULTLINE_ELASTICSEARCH_API_KEY"))
-
-    incidents = production_incidents(es) + extra_incidents(args.extra)
+    try:
+        incidents = production_incidents(es) + extra_incidents(args.extra)
+    finally:
+        es.close()
     for inc in incidents:
         inc["rows"] = ambiguity_rows(inc["windows"])  # label-free export; only `metrics` reaches a classifier
         for row in inc["rows"]:
@@ -219,15 +229,15 @@ def main() -> int:
 
     if args.llm:
         model = os.environ.get("OPENAI_MODEL", "gpt-4.1")
-        oa = httpx.Client(base_url="https://api.openai.com", headers={"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}"})
         llm_results = []
-        for inc in incidents:
-            rows = inc["rows"]
-            step = max(1, len(rows) // args.llm_windows)
-            for row in rows[::step][: args.llm_windows]:
-                pred = llm_predict(oa, model, inc["baseline_metrics"], row["metrics"])
-                llm_results.append((inc["incident_id"], inc["label"], pred))
-                print(f"  llm {inc['incident_id']} {row['window_start']} label={inc['label']} pred={pred}")
+        with httpx.Client(base_url="https://api.openai.com", headers={"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}"}) as oa:
+            for inc in incidents:
+                rows = inc["rows"]
+                step = max(1, len(rows) // args.llm_windows)
+                for row in rows[::step][: args.llm_windows]:
+                    pred = llm_predict(oa, model, inc["baseline_metrics"], row["metrics"])
+                    llm_results.append((inc["incident_id"], inc["label"], pred))
+                    print(f"  llm {inc['incident_id']} {row['window_start']} label={inc['label']} pred={pred}")
         report["passive_llm"] = {"model": model, **score(llm_results)}
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -235,7 +245,9 @@ def main() -> int:
     for name in ("nearest_centroid_loio", "passive_llm"):
         if name in report:
             s = report[name]
-            print(f"{name}: window acc {s['window_accuracy']:.0%}, balanced {s['balanced_accuracy']:.0%}, "
+            accuracy = f"{s['window_accuracy']:.0%}" if s['window_accuracy'] is not None else "not measured"
+            balanced = f"{s['balanced_accuracy']:.0%}" if s['balanced_accuracy'] is not None else "not measured"
+            print(f"{name}: window acc {accuracy}, balanced {balanced}, "
                   f"recall {({k: round(v, 2) for k, v in s['per_class_recall'].items()})}, "
                   f"incidents {s['incidents_correct']}/{s['incidents']} by majority, {s['windows']} windows")
     print("wrote", args.out)

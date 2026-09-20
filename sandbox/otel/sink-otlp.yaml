@@ -1,0 +1,10 @@
+exporters:
+  otlphttp/observability:
+    endpoint: "${env:FAULTLINE_OTLP_ENDPOINT}"
+    headers:
+      Authorization: "ApiKey ${env:FAULTLINE_OTLP_API_KEY}"
+service:
+  pipelines:
+    traces:  {exporters: [otlphttp/observability]}
+    metrics: {exporters: [otlphttp/observability]}
+    logs:    {exporters: [otlphttp/observability]}

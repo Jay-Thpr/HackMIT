@@ -15,10 +15,13 @@ import aiohttp
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
-from services.common.stats import Stats
+from services.common.stats import RateLimitedLog, Stats
+from services.common.telemetry import configure_application_logs
 
 log = logging.getLogger("loadgen")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+configure_application_logs(log)
+rlog = RateLimitedLog(log)
 
 TARGET_URL = os.environ.get("TARGET_URL", "http://envoy:8080/checkout")
 DEFAULT_RPS = float(os.environ.get("LOAD_RPS", "80"))
@@ -41,9 +44,11 @@ async def _fire() -> None:
             stats.inc("ok" if r.status == 200 else "errors")
             if r.status != 200:
                 stats.inc(f"status_{r.status}")
+                rlog.log(logging.WARNING, "status", "checkout request failed: status %d", r.status)
     except (asyncio.TimeoutError, aiohttp.ClientError):
         stats.inc("errors")
         stats.inc("client_timeouts_or_conn_errors")
+        rlog.log(logging.WARNING, "unavailable", "checkout request timed out or connection unavailable")
     stats.observe("request", (time.monotonic() - t0) * 1000)
 
 
@@ -71,7 +76,7 @@ async def lifespan(_app: FastAPI):
     global _session
     _session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=0))
     gen = asyncio.create_task(_generate())
-    log.info("generating %.1f req/s against %s", state["rps"], TARGET_URL)
+    log.info("generating %.1f req/s", state["rps"])
     yield
     gen.cancel()
     await _session.close()

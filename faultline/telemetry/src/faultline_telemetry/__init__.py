@@ -11,8 +11,9 @@ from .analytics import (
 from .ambiguity import ambiguity_rows, export_ambiguity_window
 from .config import TelemetrySettings
 from .dotenv import load_repo_dotenv
-from .elasticsearch import HttpElasticsearchClient, MirroredElasticsearchClient
+from .elasticsearch import HttpElasticsearchClient
 from .factory import client_from_env
+from .mirror import MirroredElasticsearchClient
 from .esql import incident_timeline
 from .indices import ensure_index_templates
 from .fingerprint import fingerprint_from_stats

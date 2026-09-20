@@ -28,6 +28,7 @@ import httpx
 from faultline_telemetry import load_repo_dotenv
 
 TRACE_COLUMNS = [
+    "resource.attributes.deployment.environment.name",
     "resource.attributes.deployment.environment",
     "resource.attributes.service.name",
     "name",
@@ -113,8 +114,7 @@ def dashboard_object() -> dict:
         "id": "faultline-evidence",
         "attributes": {
             "title": "Faultline — OTel evidence: production vs clone",
-            "description": "Raw OTel spans from traces-generic.otel-default split by "
-            "resource.attributes.deployment.environment.",
+            "description": "Raw OTel spans split by production and clone environment, with C1/C4 evidence.",
             "panelsJSON": json.dumps([p for p, _ in panels]),
             "optionsJSON": json.dumps(
                 {"useMargins": True, "syncColors": False, "syncCursor": True, "hidePanelTitles": False}
@@ -132,7 +132,7 @@ def build_ndjson() -> str:
     objects = [
         data_view_object(
             "faultline-otel-traces",
-            "traces-generic.otel-default",
+            "traces-*.otel-*",
             "Faultline OTel traces",
             "@timestamp",
         ),
@@ -154,7 +154,7 @@ def build_ndjson() -> str:
             "faultline-otel-traces",
             TRACE_COLUMNS,
             TRACE_SORT,
-            'resource.attributes.deployment.environment : "production"',
+            '(resource.attributes.deployment.environment : "production" or resource.attributes.deployment.environment.name : "production")',
         ),
         search_object(
             "faultline-traces-clones",
@@ -162,7 +162,7 @@ def build_ndjson() -> str:
             "faultline-otel-traces",
             TRACE_COLUMNS,
             TRACE_SORT,
-            "resource.attributes.deployment.environment : clone-*",
+            "(resource.attributes.deployment.environment : clone-* or resource.attributes.deployment.environment.name : clone-*)",
         ),
         search_object(
             "faultline-traces-all",
@@ -190,54 +190,56 @@ def build_ndjson() -> str:
     return "\n".join(json.dumps(o) for o in objects) + "\n"
 
 
+def connection_settings(observability=False, url=None, api_key_env=None):
+    if observability:
+        current = any(os.environ.get(name) for name in ("FAULTLINE_OBSERVABILITY_KIBANA_URL", "FAULTLINE_OBSERVABILITY_KIBANA_API_KEY", "FAULTLINE_OBSERVABILITY_ELASTICSEARCH_URL", "FAULTLINE_OBSERVABILITY_ELASTICSEARCH_SETUP_API_KEY"))
+        url = url or os.environ.get("FAULTLINE_OBSERVABILITY_KIBANA_URL" if current else "KIBANA_MIRROR_URL")
+        if current:
+            api_key_env = api_key_env or ("FAULTLINE_OBSERVABILITY_KIBANA_API_KEY" if os.environ.get("FAULTLINE_OBSERVABILITY_KIBANA_API_KEY") else "FAULTLINE_OBSERVABILITY_ELASTICSEARCH_SETUP_API_KEY")
+        else:
+            api_key_env = api_key_env or ("FAULTLINE_ELASTICSEARCH_MIRROR_SETUP_API_KEY" if os.environ.get("FAULTLINE_ELASTICSEARCH_MIRROR_SETUP_API_KEY") else "FAULTLINE_ELASTICSEARCH_MIRROR_API_KEY")
+    else:
+        url = url or os.environ.get("KIBANA_URL")
+        api_key_env = api_key_env or ("KIBANA_API_KEY" if os.environ.get("KIBANA_API_KEY") else "FAULTLINE_ELASTICSEARCH_API_KEY")
+    return (url or "").rstrip("/"), os.environ.get(api_key_env), api_key_env
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--kibana-url", default=None, help="Override $KIBANA_URL")
-    parser.add_argument(
-        "--api-key-env",
-        default="FAULTLINE_ELASTICSEARCH_API_KEY",
-        help="Name of the env var holding the API key (default: FAULTLINE_ELASTICSEARCH_API_KEY)",
-    )
+    parser.add_argument("--kibana-url", default=None, help="Override the selected project's Kibana URL")
+    parser.add_argument("--api-key-env", default=None, help="Environment variable containing a key with Kibana saved-object privileges")
+    parser.add_argument("--observability", action="store_true", help="Configure the Observability project instead of the primary")
+    parser.add_argument("--dry-run", action="store_true", help="Print saved objects without calling Kibana")
     args = parser.parse_args()
-
-    load_repo_dotenv(Path(__file__))
-    kibana_url = (args.kibana_url or os.environ.get("KIBANA_URL", "")).rstrip("/")
-    api_key = os.environ.get(args.api_key_env)
-    if not kibana_url or not api_key:
-        print(f"KIBANA_URL and {args.api_key_env} must be set", file=sys.stderr)
-        return 2
-
-    client = httpx.Client(
-        base_url=kibana_url,
-        headers={"Authorization": f"ApiKey {api_key}", "kbn-xsrf": "true"},
-        timeout=60.0,
-    )
-
     body = build_ndjson()
-    resp = client.post(
-        "/api/saved_objects/_import",
-        params={"overwrite": "true", "createNewCopies": "false"},
-        files={"file": ("faultline.ndjson", body, "application/ndjson")},
-    )
-    if resp.status_code != 200:
-        print(f"FAIL import: HTTP {resp.status_code} {resp.text[:2000]}", file=sys.stderr)
+    if args.dry_run:
+        print(body, end="")
+        return 0
+    load_repo_dotenv(Path(__file__))
+    kibana_url, api_key, key_name = connection_settings(args.observability, args.kibana_url, args.api_key_env)
+    if not kibana_url or not api_key:
+        print(f"Set the selected project's Kibana URL and {key_name}", file=sys.stderr)
+        return 2
+    try:
+        with httpx.Client(base_url=kibana_url, headers={"Authorization": f"ApiKey {api_key}", "kbn-xsrf": "true"}, timeout=60.0) as client:
+            resp = client.post("/api/saved_objects/_import", params={"overwrite": "true", "createNewCopies": "false"}, files={"file": ("faultline.ndjson", body, "application/ndjson")})
+        if resp.status_code != 200:
+            print(f"FAIL import: HTTP {resp.status_code}", file=sys.stderr)
+            return 1
+        result = resp.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        print(f"FAIL import ({type(exc).__name__})", file=sys.stderr)
         return 1
-
-    result = resp.json()
-    ok = True
-    if result.get("success"):
-        for r in result.get("successResults", []):
-            print(f"PASS {r.get('type')}/{r.get('id')} ({r.get('meta', {}).get('title', '')})")
-    else:
-        for r in result.get("successResults", []):
-            print(f"PASS {r.get('type')}/{r.get('id')} ({r.get('meta', {}).get('title', '')})")
-        for e in result.get("errors", []):
-            ok = False
-            print(f"FAIL {e.get('type')}/{e.get('id')}: {json.dumps(e.get('error', {}))[:500]}")
-        if not result.get("successResults") and not result.get("errors"):
-            ok = False
-            print(f"FAIL import response: {json.dumps(result)[:2000]}")
-
+    if not isinstance(result, dict):
+        print("FAIL import: invalid response", file=sys.stderr)
+        return 1
+    ok = result.get("success") is True and not result.get("errors")
+    for item in result.get("successResults", []):
+        print(f"PASS {item.get('type')}/{item.get('id')}")
+    for item in result.get("errors", []):
+        print(f"FAIL {item.get('type')}/{item.get('id')}")
+    if not ok:
+        print("FAIL: saved-object import did not fully succeed", file=sys.stderr)
     print(f"Dashboard: {kibana_url}/app/dashboards#/view/faultline-evidence")
     return 0 if ok else 1
 
