@@ -26,7 +26,7 @@ from typing import Any
 
 import httpx
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from faultline_contracts import AuditEvent, EventKind, Fingerprint
 from faultline_telemetry import ElasticsearchFingerprintStore, HttpElasticsearchClient
@@ -213,6 +213,27 @@ def create_app(audit_paths: list[Path], store: ElasticsearchFingerprintStore | N
         if not evs:
             raise HTTPException(404, f"no audit events for {incident_id!r}")
         return reader.scenario(incident_id, evs, now=datetime.now(timezone.utc))
+
+    @app.get("/api/incidents/{incident_id}/evidence.json")
+    def evidence_json(incident_id: str) -> dict[str, Any]:
+        """Portable, read-only C1/C2/C4 evidence bundle for judges and incident review."""
+        evs = reader.events(incident_id)
+        if not evs:
+            raise HTTPException(404, f"no audit events for {incident_id!r}")
+        return {"incident_id": incident_id, "scenario": reader.scenario(incident_id, evs, now=datetime.now(timezone.utc)),
+                "fingerprints": [fp.model_dump(mode="json") for fp in reader.windows(incident_id, evs)],
+                "audit_events": [event.model_dump(mode="json") for event in evs]}
+
+    @app.get("/api/incidents/{incident_id}/evidence.md", response_class=PlainTextResponse)
+    def evidence_markdown(incident_id: str) -> str:
+        evs = reader.events(incident_id)
+        if not evs:
+            raise HTTPException(404, f"no audit events for {incident_id!r}")
+        scenario = reader.scenario(incident_id, evs, now=datetime.now(timezone.utc))
+        report = scenario.get("report", {})
+        return "\n".join((f"# Faultline evidence: {incident_id}", "", f"- Outcome: {report.get('outcome', 'in progress')}",
+            f"- Diagnosis: {report.get('diagnosis') or 'not confirmed'}", f"- Production actions: {report.get('productionActions', 0)}", "", "## Audited timeline", "",
+            *[f"- {event.ts.isoformat()} · stage {event.stage} · {event.kind.value}: {event.summary}" for event in evs], ""))
 
     @app.get("/api/incidents/{incident_id}/supporting-telemetry")
     def supporting_telemetry(incident_id: str) -> dict[str, Any]:
