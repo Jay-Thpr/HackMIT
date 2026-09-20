@@ -47,6 +47,7 @@ def test_run_triage_uses_strict_schema_and_returns_c2_result():
     assert request["candidate_experiments"][0]["id"] == "retry_cap_0_20s"
     assert "db.query_p50_ms" in request["known_metrics"]
     assert "positive, falsifiable confirms_if" in client.calls[0]["messages"][0]["content"]
+    assert "cannot by itself confirm a capacity" in client.calls[0]["messages"][0]["content"]
 
 
 def test_run_triage_reports_token_usage_for_every_attempt():

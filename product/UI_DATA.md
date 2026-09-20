@@ -1,0 +1,146 @@
+# UI data contract — what the orchestrator emits, and where each panel reads it
+
+For whoever builds the UI. Everything below is produced by `faultline watch` today and was
+taken from real runs (`live-11`, `live-13` in `/tmp/faultline-live/audit.jsonl`). Nothing here
+requires a product change; if you need a field that isn't listed, ask Owner 4 rather than
+parsing `summary` strings.
+
+## Sources
+
+| Source | Where | Use |
+|---|---|---|
+| C4 audit events | `product/state/faultline-audit.jsonl` (or `--audit-log <path>`), one JSON object per line; also ES index `faultline-audit` when `--elasticsearch-url` is set | Every panel except the chart |
+| C1 fingerprints | ES index `faultline-fingerprints` (Owner 2's `ElasticsearchFingerprintStore`), documents carry `incident_id` and, for clones, `clone_id`; or poll the sandbox `/stats` directly (`:8101` orders, `:8102` payments, `:8103` loadgen, `:8104` orders-v2) and build with `faultline_telemetry.fingerprint_from_stats` | The chart |
+| Owner 2 analytics | `faultline_telemetry.analytics.ElasticsearchTelemetryAnalytics`: `ui_data`, `similar_incidents`, `clone_production_similarity` | Similar-incidents row, clone-vs-production similarity |
+
+Audit event envelope (C4, `faultline_contracts.AuditEvent`):
+
+```json
+{"schema_version":"1","event_id":"…","incident_id":"live-13","ts":"2026-09-19T23:57:12Z",
+ "stage":2,"kind":"detect","actor":"orchestrator","summary":"checkout SLO breached",
+ "action_id":null,"experiment_id":null,"payload":{…}}
+```
+
+`stage` 1–8 = ingest, detect, triage, experiment, mitigate, patch, canary, report.
+`actor` is the split the PRD asks the UI to show: **`llm` = reasoning panel, `math` = measured-evidence
+panel**, `adapter` = actions, `orchestrator` = control flow. Don't rely on order within one `ts`.
+
+## Ready-made: the Product API and the live stream
+
+`faultline ui` (see `product/README.md`) already does the translation described below:
+`GET /api/incidents/{id}/scenario` returns the UI's `Scenario` for a recorded incident, and
+`GET /api/incidents/{id}/stream` re-sends it as Server-Sent Events (`event: scenario`) every time the
+audit log grows, ending with `event: done` at the report. `product/src/faultline_product/ui_scenario.py`
+is the mapping; `product/ui/src/live.ts` consumes it.
+
+## Panel → events
+
+### Timeline / status strip
+All events for the incident, in `ts` order. `stage` gives the pipeline position; the last
+`report` event's `payload.diagnosis`, `canary_status`, `clone_verification` give the outcome.
+
+### LLM reasoning panel (`actor == "llm"`)
+`stage 3, kind triage`: `payload.hypotheses` (ids, e.g. `["H_meta","H_db","H_cpu"]`), `payload.ambiguous`,
+and `payload.triage` = the full `TriageResult` (C2, `faultline_contracts.triage`) as JSON:
+`reasoning`, `hypotheses[] {id, label, description, evidence[]}`, and the prediction matrix
+`predictions[] {hypothesis_id, experiment_id, during[] {metric, direction}, after_release[] {metric,
+direction}, confirms_if {phase, metric, expect} | null}`. Render labels from `hypotheses[].label`, the
+matrix as hypotheses × experiments, and `confirms_if` as "confirmed if <metric> is <expect> <phase>".
+`payload.similar_incidents[]` (when Elasticsearch is configured): past production incidents ranked by
+C1 similarity to this breach, `{incident_id, score (0–1), diagnosis, confirmed}` with the diagnosis
+taken from that incident's own verdict — the "looks like incident X, which was a storm" row. `[]`
+when history is unavailable; it never changes what the math decides.
+The renderer's `[triage] source: openai|fallback (...)` line is not in the audit.
+
+### Measured-evidence panel (`actor == "math"`)
+- `stage 5, kind verdict`: `payload.diagnosis`, `payload.confirmed`, `payload.observations[]`, each
+  `{experiment_id, metric, phase: "during"|"after_release", baseline, measured, sigma, z, direction}`.
+  This is the table the PRD wants next to the LLM panel (z-scores against noise). Observations are
+  duplicated per hypothesis; de-dup on `(metric, phase)` for display.
+- `stage 4, kind triage, payload.investigation == true` (one per hypothesis): `hypothesis_id`,
+  `clone_id`, `recipe`, `reproduced`, `recovered`, `prediction_matches`/`prediction_total`,
+  `survives`, `evidence.{reproduction,recovery}.{shared_metrics,matching_metrics,mean_abs_z}`.
+  These are the **investigator panels** ("two clones appear"). `survives=false` with
+  `reproduced=true` is normal today (see judge-calibration notes to Owner 3).
+- `stage 6, kind canary_update, actor math`: clone verification of the patch — `payload.status`
+  (`passed|failed|skipped`), `clone_id`, `recipe`, `evidence.{incident_reproduced,
+  breached_after_settle, windows_after_settle, orders_v2_p99_ms_after, retry_ratio_after}`.
+
+### Planner / experiment
+- `stage 4, kind triage, actor math, payload.planner == true`: the planner's **candidate table**
+  (PRD stage 4b, judge-visible item 4). `payload.candidates[]` is one row per scored experiment,
+  ranked as the planner ranked them: `{experiment_id, lever_id, separation, score, blast_radius_pct,
+  selected}`. `separation` = number of (phase, metric) predictions on which the hypotheses disagree;
+  `score = separation − 0.1 × blast_radius_pct`; exactly one row has `selected: true` (none when the
+  planner refused — the following `refused` + `page_human` say why). `experiment_id` on the event is the
+  winner. The event is emitted once per `plan()`; the follow-up confirmation experiment does not re-emit it.
+- The chosen probe then appears as `stage 4, kind experiment_start` with `payload.hold_s`, `ttl_s`,
+  `experiment_id`.
+- Phase boundaries for shading the chart: `kind experiment_start` (cap on) and `kind experiment_end`
+  (released) with matching `experiment_id`; `faultline_contracts.experiment_windows(events)` computes
+  them for you. During = start→end; after-release = end→+default_watch_s (20 s for retry_cap).
+
+### Actions / audit log (`actor == "adapter"`)
+`kind action_apply` / `action_undo` in stages 4, 5, 7: `payload.lever_id`, `params`, `ttl_s`,
+`applied_at`, `status`, `action_id`. Every `action_apply` has a matching `action_undo` with the same
+`action_id` (or the TTL expired on the target). `stage 7 action_apply` also has `payload.target`
+(`patch_reference`, `version`, `source_revision`, `service_name`).
+
+Every release is re-verified against the target (`status()` after `undo()`, one retry). If the lever is
+still active, the `action_undo` carries `payload.status == "active"` and is followed by `kind refused`
+with `payload.release_failed == true`, `lever_id`, `ttl_s`, `expires_at` (summary "release of <lever> did
+not land; TTL <n>s will revert it") and a `page_human` with the same `action_id`. Show the lever as
+**still applied until `expires_at`**. A canary whose release did not land is reported `regressed`.
+
+### Patch / Devin
+`stage 6, kind patch_opened`: `payload.provider` (`devin|fallback`), `reference` (PR URL or
+`branch:…`), `revision` (0, 1, …), `session_id`. A revision after measured failure adds
+`payload.evidence_text` (the text sent back to Devin; `evidence` is always the object form so the
+ES mapping stays consistent). Link `reference` and
+`https://app.devin.ai/sessions/<session_id>`.
+
+### Canary
+`stage 7, kind canary_update, actor orchestrator`: `payload.v2_weight`, `target`, `evidence`. Failure path:
+`stage 7, kind refused` (`payload.reason`, `evidence`) + `kind page_human`. `evidence` is what the canary
+measured: `{windows, breached_windows, checkout_slo_threshold_ms, gateway_p99_ms_mean, gateway_p99_ms_max}`
+plus, when orders-v2 reported, `{v2_service, v2_windows, v2_qps_mean, v1_error_rate_mean, v2_error_rate_mean,
+v1_p99_ms_mean, v2_p99_ms_mean}`. The same numbers (and the verdict's z-scores) are what goes back to Devin
+as `payload.evidence_text` on the next `patch_opened`.
+
+### Telemetry quality
+`stage 4, kind refused, actor adapter, payload.stale_telemetry == true` (`lag_s`, `max_lag_s`): the newest
+window trailed the clock by more than 3 windows, so the experiment phases could not be aligned and the verdict
+was withheld (the following verdict is `none_of_the_above`, unconfirmed). Show the experiment as *not judged*.
+
+### Aborts and resumes
+- `stage 8, kind refused, payload.aborted == true` (`error`, `actions_applied`) + `kind page_human`: the loop
+  died on an unhandled error after detection; applied levers revert on their TTL.
+- `stage 5, kind mitigation, payload.resumed == true` (`actions_applied`, `leftover[]`, `still_active[]`): a
+  `watch --resume` picked the incident back up; leftover levers were released (an `action_undo` with the
+  original `action_id` follows each) or left to their TTL.
+
+### Human paging
+`kind page_human` (any stage) — show prominently; `kind refused` right before it says why.
+
+## The chart
+
+DB query latency and request load over time, with the experiment shaded. Series from ES
+(`faultline-fingerprints`, filter `incident_id`, optionally `clone_id` for a clone's own chart) or
+from `/stats` polling every 5 s. Metric keys (C1 canonical): `db.query_p50_ms`, `db.query_p99_ms`,
+`db.qps`, `svc.orders.retry_ratio`, `svc.gateway.p99_ms`, `svc.gateway.error_rate`,
+`db.pool_busy_ratio`; SLO threshold is `slos[0].threshold` (1000 ms on `svc.gateway.p99_ms`).
+Reference magnitudes: healthy p50 ≈ 50 ms / 80 qps / retry 1.0; storm ≈ 1100 ms / 320 qps / 4.0.
+Missing values are `null`, never 0 — draw a gap, not a drop.
+
+## Live run for UI development
+
+```bash
+cd sandbox && docker compose up -d && uv run uvicorn services.lab.app:app --port 9910   # stack + lab
+cd product && source ~/.config/faultline/env && uv run faultline watch \
+  --telemetry sandbox --levers sandbox --brain live --lab-url http://127.0.0.1:9910 \
+  --elasticsearch-url "$FAULTLINE_ELASTICSEARCH_URL" --incident ui-dev-1
+# ~2 min later, from integration/: inject the storm via C5 (see integration/live_loop.py)
+```
+
+The audit file is appended live; `/tmp/faultline-live/audit.jsonl` already holds thirteen real
+incidents (`live-1`…`live-13`) to develop against without a running stack.

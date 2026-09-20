@@ -8,6 +8,7 @@ loadgen ──► Envoy :8080 ──► orders (v1 | v2 canary) ──► Envoy 
   Poisson)                                    in Orders code
 control :9901  – operator levers (Faultline's only write path)
 faultctl :9900 – hidden fault controller (benchmark/demo only)
+lab :9910      – clone manager (C6): the same stack as disposable clones `faultline-clone-<1..3>`, no faultctl
 ```
 
 ## Quick start
@@ -18,6 +19,8 @@ docker compose up -d --build           # ~1 min first time
 uv sync                                 # host tooling (validation, diagnostics)
 uv run python scripts/diag.py --hidden  # live 1 s diagnostics (--hidden adds fault state; debug only)
 uv run python scripts/validate.py all   # every scripted check (~12 min)
+uv run uvicorn services.lab.app:app --port 9910   # clone lab (C6) manager, separate terminal
+uv run python scripts/validate_lab.py all         # clone fairness, API, reproductions (~10 min)
 ```
 
 ## The capacity model
@@ -114,8 +117,39 @@ the client a longer timeout than its 5 s default: `HttpFaultController(timeout_s
 ## Telemetry notes for Owner 2
 
 `GET /stats` on orders (:8101), payments (:8102) and loadgen (:8103) returns cumulative counters, gauges and
-latency histograms. `services/common/probe.py` turns two snapshots into rates and quantiles. OTel is not
-wired yet. When it is, keep these choices, because they are what keeps World A and World B ambiguous:
+latency histograms. `services/common/probe.py` turns two snapshots into rates and quantiles.
+
+OTel auto-instrumentation is wired for `payments`, `orders`, `orders-v2` and `loadgen` via env +
+`opentelemetry-instrument` (no code changes; `control`/`faultctl` stay uninstrumented). All four ship
+OTLP http/protobuf to the compose project's `otel-collector` (`otel/collector.yaml`), which also scrapes
+Envoy `:9902/stats/prometheus`, tags every signal `deployment.environment=production|clone-<slot>`, and
+drops `/internal/*` `/admin/*` `/stats` `/healthz` `/rate` spans, `*fault*` metric names and all
+`db.statement`/`db.query.text` attributes before exporting. Sink is the local `debug` exporter unless
+`FAULTLINE_ELASTICSEARCH_URL` is set in `.env` (elasticsearch exporter bulk-indexes into the
+`*-generic.otel-default` data streams, authenticated with `FAULTLINE_ELASTICSEARCH_API_KEY` — the
+Agent Builder key works; run `uv run python scripts/otel_es_setup.py` once per Elastic project,
+before the first export, to install the `faultline-otel` index template vectordb projects lack). Production must be recreated once
+(`docker compose up -d --force-recreate`) for the export to start — the pre-OTel image has no
+collector and no `opentelemetry-instrument`;
+`OTEL_SDK_DISABLED=true` turns instrumentation off entirely. Compose reads `sandbox/.env` only —
+`ln -sf ../.env sandbox/.env` to share the root file. The running production containers keep the old
+image; this activates when the project is next recreated.
+
+Clone collectors also tee OTLP JSON batches to `/tmp/otel/records.jsonl` (`FAULTLINE_OTEL_TEE=1`, set
+by the lab manager via `otel/sink-tee.yaml` / `sink-elastic-tee.yaml`); `validate_lab.py fairness`
+reads those records rather than container logs, and optionally cross-checks `traces-*` in Elasticsearch
+when `FAULTLINE_ELASTICSEARCH_URL` + `FAULTLINE_ELASTICSEARCH_API_KEY` are set (SKIPped otherwise).
+
+After changing OTel deps / `requirements.txt`, rebuild the shared app image or clones fail with
+`opentelemetry-instrument: not found` (announce production recreates in chat first per the
+shared-stack rule):
+
+```
+cd sandbox && docker compose build --quiet payments && docker compose up -d --force-recreate
+```
+
+Keep these choices in any OTel-derived telemetry too, because they are what keeps World A and World B
+ambiguous:
 
 * **DB query latency = client-side time from issuing the query to the result, including pool wait**
   (`db_query` histogram). Don't emit execution-only time (asyncpg auto-instrumentation spans or
@@ -128,6 +162,22 @@ wired yet. When it is, keep these choices, because they are what keeps World A a
   Envoy fault-filter stats (they're lever state, but the word trips the fairness check).
 * No hidden state reaches the app: the DB cost lives in `io_profile`, which the app never reads, and
   fault-controller state is only on :9900.
+
+## Clone lab (C6, `services/lab`)
+
+`uv run uvicorn services.lab.app:app --port 9910` on the host. A clone is `docker-compose.yml` +
+`clone.override.yml` under project `faultline-clone-<slot>` with `PORT_*` shifted by 1000·slot, started without
+`faultctl`, configured only from the `CloneSpec` (retry policy, workload rate, optional `patch_ref` for
+orders-v2). Lab actions move the same physical knobs the fault controller moves in production (`io_profile`
+cost via `psql`, `docker update --cpus`, `compose stop/start`), each with a TTL the manager enforces. The
+manager refuses to touch any compose project it didn't create.
+
+Validated (`scripts/validate_lab.py`): clone ready in ~9 s; no faultctl, clean `io_profile`, empty DB; production
+`:9900` refuses clone traffic (403: faultctl accepts only its own network + host, and clone networks don't
+masquerade); `db_latency 800/20 s` → self-sustaining storm that the clone's retry cap heals permanently;
+`db_capacity 40` → degraded DB that only failover heals; `cpu_limit payments 0.1` → neither heals; API
+validation, TTL revert, undo, reset (8–15 s), capacity 3, destroy idempotent, production levers untouched.
+~300 MB / ~0.2 CPU per healthy clone. Recipes and endpoint details in [INTEGRATION.md](INTEGRATION.md).
 
 ## Canary (orders-v2)
 
@@ -149,5 +199,9 @@ docker-compose.yml   envoy/envoy.yaml   postgres/init.sql   Dockerfile (one imag
 services/orders      retry loop + runtime override          services/payments  pool, shielded DB work, failover
 services/loadgen     open-loop Poisson client               services/control   :9901 levers
 services/faultctl    :9900 hidden faults + reset            services/common    stats + probe (shared with scripts)
+services/lab         :9910 clone manager (C6, host process) clone.override.yml clone-only network settings
+otel/                collector.yaml + sink*.yaml (OTLP → debug or Elastic Cloud) + es-index-template.json
 scripts/diag.py      live diagnostics                       scripts/validate.py scripted checks
+scripts/validate_lab.py  clone lab checks (fairness, api, storm, degraded, cpu)
+scripts/sweep_lab.py     benchmark cell sweep (rps × trigger), concurrent clones, LabPatchVerifier path
 ```

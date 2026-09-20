@@ -4,10 +4,12 @@
 """
 
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
 import pytest
+from faultline_telemetry.fingerprint import fingerprint_from_stats
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -27,18 +29,36 @@ def test_window_metrics_omits_missing_data():
     snap = {"orders": empty, "payments": empty, "loadgen": empty}
     later = {k: {**v, "t": 5.0} for k, v in snap.items()}
     m = sm.window_metrics(snap, later)
-    assert m["svc.orders.qps"] == 0.0
-    assert m["svc.orders.error_rate"] is None
-    assert m["svc.orders.retry_ratio"] is None
-    assert m["db.query_p99_ms"] is None
-    assert m["db.pool_busy_ratio"] is None
+    assert "svc.orders.qps" not in m
+    assert "svc.orders.error_rate" not in m
+    assert "svc.orders.retry_ratio" not in m
+    assert "db.query_p99_ms" not in m
+    assert "db.pool_busy_ratio" not in m
     assert not sm.is_healthy(m)
 
 
-def test_quantile_interpolates_and_treats_last_bucket_as_inf():
-    assert sm.quantile([0, 10, 0], [10, 20], 0.5) == pytest.approx(15.0)
-    assert 20.0 < sm.quantile([0, 0, 4], [10, 20], 0.99) <= 40.0
-    assert sm.quantile([0, 0, 0], [10, 20], 0.5) is None
+def test_window_metrics_matches_canonical_fingerprint_metrics():
+    counters = {
+        "requests": 10,
+        "ok": 9,
+        "errors": 1,
+        "attempts": 11,
+        "sent": 10,
+        "db_queries_issued": 10,
+    }
+    previous = {
+        name: {"t": 0.0, "buckets_ms": [10.0, 20.0], "counters": counters, "gauges": {}, "hists": {}}
+        for name in ("orders", "payments", "loadgen")
+    }
+    current = {
+        name: {**snapshot, "t": 5.0, "counters": {key: value + 10 for key, value in snapshot["counters"].items()}}
+        for name, snapshot in previous.items()
+    }
+    expected = fingerprint_from_stats(
+        previous, current, datetime.fromtimestamp(0, timezone.utc), datetime.fromtimestamp(5, timezone.utc)
+    ).metrics()
+    actual = sm.window_metrics(previous, current)
+    assert {key: actual[key] for key in expected} == expected
 
 
 @pytest.mark.skipif(not _up(), reason="sandbox not running on :9900/:9901")

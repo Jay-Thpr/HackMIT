@@ -1,0 +1,14 @@
+# Elasticsearch direct sink (used when the URL is set). This project has no managed OTLP intake
+# (/_otlp 404s), so the elasticsearch exporter bulk-indexes OTLP docs into the otel-mode data
+# streams traces/metrics/logs-generic.otel-default. confmap merges maps and replaces lists, so
+# only the exporters of each pipeline change.
+exporters:
+  elasticsearch/elastic:
+    endpoints: ["${env:FAULTLINE_ELASTICSEARCH_URL}"]
+    api_key: "${env:FAULTLINE_ELASTICSEARCH_API_KEY}"
+    mapping: {mode: otel}
+service:
+  pipelines:
+    traces:  {exporters: [elasticsearch/elastic]}
+    metrics: {exporters: [elasticsearch/elastic]}
+    logs:    {exporters: [elasticsearch/elastic]}

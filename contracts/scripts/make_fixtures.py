@@ -195,23 +195,28 @@ def triage_hero() -> TriageResult:
                 hypothesis_id="H_db", experiment_id="retry_cap_0_20s",
                 during=[me("db.query_p50_ms", flat), me("db.qps", down), me("svc.gateway.error_rate", flat)],
                 after_release=[me("db.query_p50_ms", flat), me("svc.orders.retry_ratio", up)],
-                # Positive test of H_db itself: the DB stays slow even with the load taken off it.
-                # ("retry_ratio up after release" would only be elimination of H_meta: any non-storm
-                # world passes it, so CPU starvation would be misdiagnosed as H_db.)
-                confirms_if=Confirmation(phase=Phase.during, metric="db.query_p50_ms", expect=ConfirmExpect.flat),
+                # Retry capping separates the worlds but does not directly repair
+                # capacity. H_db can only be confirmed by the failover prediction
+                # below; host contention can also stay slow under a retry cap.
+                confirms_if=None,
             ),
             Prediction(
                 hypothesis_id="H_meta", experiment_id="db_failover_30s",
                 during=[me("db.query_p50_ms", flat), me("svc.orders.retry_ratio", flat)],
                 after_release=[me("db.query_p50_ms", flat)],
-                confirms_if=Confirmation(phase=Phase.during, metric="db.query_p50_ms", expect=ConfirmExpect.flat),
+                # A failover no-op is useful separation evidence, but it is not
+                # a positive recovery test for a retry loop.
+                confirms_if=None,
             ),
             Prediction(
                 hypothesis_id="H_db", experiment_id="db_failover_30s",
                 during=[me("db.query_p50_ms", down), me("svc.orders.retry_ratio", down),
-                        me("svc.gateway.error_rate", down)],
+                        me("svc.gateway.error_rate", down), me("svc.gateway.p99_ms", down)],
                 after_release=[me("db.query_p50_ms", up)],
-                confirms_if=Confirmation(phase=Phase.during, metric="db.query_p50_ms", expect=ConfirmExpect.down),
+                # A degraded dependency is confirmed only if relieving it heals the user-facing
+                # SLO. DB latency alone also drops when the DB is merely a victim (e.g. a
+                # CPU-starved caller), which must stay none-of-the-above.
+                confirms_if=Confirmation(phase=Phase.during, metric="svc.gateway.p99_ms", expect=ConfirmExpect.down),
             ),
         ],
     )

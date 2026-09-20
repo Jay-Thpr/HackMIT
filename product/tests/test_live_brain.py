@@ -15,6 +15,7 @@ from faultline_product.adapters import (
     LiveBrain,
     build_live_brain,
 )
+from faultline_product.adapters.brain import INCIDENT_STEADY_WINDOWS, _baselines
 from faultline_product.cli import main
 from faultline_product.fixtures import load_fixture
 
@@ -83,7 +84,7 @@ def test_judge_matches_storm_fixture():
     verdict = LiveBrain([]).judge(
         triage,
         Experiment.model_validate(json.loads((FIXTURES / "experiments.json").read_text())[0]),
-        baseline,
+        [*baseline, *incident],
         during,
         after_release,
     )
@@ -109,6 +110,31 @@ def test_judge_empty_during_returns_none_of_the_above():
     assert verdict.diagnosis == NONE_OF_THE_ABOVE
     assert verdict.confirmed is False
     assert verdict.summary == "insufficient telemetry: no during/after-release windows"
+
+
+def test_judge_refuses_to_confirm_without_true_healthy_baseline():
+    triage, series, _baseline, incident, during, after_release, _windows = _storm_inputs()
+
+    verdict = LiveBrain([]).judge(
+        triage,
+        Experiment.model_validate(json.loads((FIXTURES / "experiments.json").read_text())[0]),
+        incident,
+        during,
+        after_release,
+    )
+
+    assert verdict.diagnosis == NONE_OF_THE_ABOVE
+    assert verdict.confirmed is False
+    assert verdict.summary == "insufficient telemetry: no healthy baseline windows"
+
+
+def test_incident_baseline_uses_only_the_stable_breached_tail():
+    _triage, series, healthy, incident, _during, _after_release, _windows = _storm_inputs()
+
+    selected_healthy, selected_incident = _baselines([*healthy, *incident])
+
+    assert selected_healthy == healthy
+    assert selected_incident == incident[-INCIDENT_STEADY_WINDOWS:]
 
 
 class _Response:
@@ -172,6 +198,8 @@ def test_build_live_brain_without_key_uses_fallback():
 
 def test_cli_live_brain_falls_back_without_key(tmp_path, monkeypatch, capsys):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    # Do not let a developer's repository .env turn this no-key test into a live-key test.
+    monkeypatch.chdir(tmp_path)
     result = main(
         [
             "--audit-log",
@@ -191,3 +219,21 @@ def test_cli_live_brain_falls_back_without_key(tmp_path, monkeypatch, capsys):
     verdict = next(event for event in events if event["kind"] == "verdict")
     assert verdict["payload"]["diagnosis"] == "H_meta"
     assert verdict["payload"]["confirmed"] is True
+
+
+def test_plan_scores_ranks_every_catalog_candidate():
+    bundle = load_fixture("storm")
+    adapter = FixtureLeverAdapter()
+    brain = LiveBrain(bundle.experiments)
+
+    rows = brain.plan_scores(bundle.triage, adapter.catalog(), adapter.estimate_blast_radius)
+
+    assert [row["experiment_id"] for row in rows][0] == "retry_cap_0_20s"
+    assert {row["experiment_id"] for row in rows} == {item.id for item in bundle.experiments}
+    assert [row["score"] for row in rows] == sorted((row["score"] for row in rows), reverse=True)
+    for row in rows:
+        assert set(row) == {"experiment_id", "lever_id", "separation", "score", "blast_radius_pct"}
+        assert row["blast_radius_pct"] == adapter.estimate_blast_radius(
+            row["lever_id"], next(i.params for i in bundle.experiments if i.id == row["experiment_id"])
+        )
+        assert row["score"] == row["separation"] - 0.1 * row["blast_radius_pct"]

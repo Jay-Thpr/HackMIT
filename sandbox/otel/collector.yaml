@@ -1,0 +1,70 @@
+# Faultline OTel collector: OTLP in, fairness-filtered, sink chosen by a second --config file
+# (sink.yaml or sink-elastic.yaml, selected by compose interpolation of FAULTLINE_ELASTICSEARCH_URL).
+receivers:
+  otlp:
+    protocols:
+      http: {endpoint: 0.0.0.0:4318}
+      grpc: {endpoint: 0.0.0.0:4317}
+  prometheus/envoy:
+    config:
+      scrape_configs:
+        - job_name: envoy
+          scrape_interval: 5s
+          metrics_path: /stats/prometheus
+          static_configs: [{targets: [envoy:9902]}]
+
+processors:
+  resource/env:
+    attributes:
+      - {key: deployment.environment, value: "${env:OTEL_DEPLOYMENT_ENVIRONMENT}", action: upsert}
+      - {key: deployment.environment.name, value: "${env:OTEL_DEPLOYMENT_ENVIRONMENT}", action: upsert}
+  # Fairness: drop control-plane spans and any statement text (the hidden fault is delivered through SQL).
+  filter/fairness:
+    error_mode: ignore
+    traces:
+      span:
+        - 'IsMatch(attributes["url.path"], "^/(internal|admin|stats|healthz)")'
+        - 'IsMatch(attributes["http.target"], "^/(internal|admin|stats|healthz)")'
+        - 'IsMatch(attributes["http.route"], "^/(internal|admin|stats|healthz)")'
+        - 'IsMatch(attributes["url.full"], "/(internal|admin)/")'
+        - 'IsMatch(attributes["http.url"], "/(internal|admin)/")'
+    metrics:
+      metric:
+        - 'IsMatch(name, "(?i)fault")'
+  filter/application_logs:
+    error_mode: propagate
+    logs:
+      log_record:
+        - 'resource.attributes["service.name"] == nil or not IsMatch(resource.attributes["service.name"], "^(orders|payments|loadgen)$")'
+        - 'not IsString(body)'
+        - 'not IsMatch(body, "^(payments call timed out after [0-9]+ms, retrying \\(attempt [0-9]+ of [0-9]+\\)|payments call failed: status [0-9]{3} \\(attempt [0-9]+ of [0-9]+\\)|checkout failed: payments unavailable after [0-9]+ attempts|pool (primary|standby) ready \\(size=[0-9]+\\)|db connection pool exhausted, waited [0-9]+ms for a connection|slow database operation took [0-9]+ms|db connection error|db query failed|generating [0-9]+\\.[0-9]+ req/s|checkout request failed: status [0-9]{3}|checkout request timed out or connection unavailable)( \\(\\+[0-9]+ similar\\))?$$")'
+  transform/application_logs:
+    error_mode: propagate
+    log_statements:
+      - context: log
+        statements:
+          - keep_keys(resource.attributes, ["service.name", "service.version", "deployment.environment", "deployment.environment.name"])
+          - keep_keys(log.attributes, [])
+          - keep_keys(instrumentation_scope.attributes, [])
+          - set(instrumentation_scope.name, "sandbox.application")
+          - set(instrumentation_scope.version, "")
+          - set(log.severity_text, "")
+          - set(log.event_name, "")
+  transform/fairness:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - delete_key(span.attributes, "db.statement")
+          - delete_key(span.attributes, "db.query.text")
+          - set(span.name, "postgresql query") where span.attributes["db.system"] == "postgresql"
+  batch: {timeout: 2s}
+
+exporters:
+  debug: {verbosity: basic}
+
+service:
+  pipelines:
+    traces:  {receivers: [otlp], processors: [resource/env, filter/fairness, transform/fairness, batch], exporters: [debug]}
+    metrics: {receivers: [otlp, prometheus/envoy], processors: [resource/env, filter/fairness, batch], exporters: [debug]}
+    logs:    {receivers: [otlp], processors: [resource/env, filter/application_logs, transform/application_logs, batch], exporters: [debug]}

@@ -59,7 +59,10 @@ class Prediction(Model):
     experiment_id: str
     during: list[MetricExpectation]
     after_release: list[MetricExpectation]
-    confirms_if: Confirmation
+    # Diagnostic experiments can separate hypotheses without being a direct,
+    # causal confirmation of either one. Every ambiguous hypothesis must still
+    # have at least one non-null confirmation across its predictions.
+    confirms_if: Confirmation | None
 
 
 class TriageDraft(Model):
@@ -81,9 +84,19 @@ class TriageDraft(Model):
                 errs.append(f"prediction for unknown hypothesis {p.hypothesis_id!r}")
             if experiment_ids is not None and p.experiment_id not in experiment_ids:
                 errs.append(f"prediction for unknown experiment {p.experiment_id!r}")
-            keys = [m.metric for m in p.during + p.after_release] + [p.confirms_if.metric]
+            keys = [m.metric for m in p.during + p.after_release]
+            if p.confirms_if is not None:
+                keys.append(p.confirms_if.metric)
             for k in unknown_metrics(keys, known_metrics):
                 errs.append(f"unknown metric {k!r} in prediction {p.hypothesis_id}/{p.experiment_id}")
+        if self.ambiguous:
+            confirmed_hypotheses = {
+                prediction.hypothesis_id
+                for prediction in self.predictions
+                if prediction.confirms_if is not None
+            }
+            for hypothesis_id in sorted(hyp_ids - confirmed_hypotheses):
+                errs.append(f"ambiguous hypothesis {hypothesis_id!r} has no positive confirmation test")
         return errs
 
 

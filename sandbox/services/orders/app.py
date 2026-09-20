@@ -23,9 +23,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from services.common.stats import RateLimitedLog, Stats, require_token
+from services.common.telemetry import configure_application_logs
 
 log = logging.getLogger("orders")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+configure_application_logs(log)
 rlog = RateLimitedLog(log)
 
 VERSION = os.environ.get("SERVICE_VERSION", "v1")
@@ -37,20 +39,34 @@ RETRY_BUDGET_BURST = float(os.environ.get("ORDERS_RETRY_BUDGET_BURST", "10"))
 BACKOFF_BASE_S = float(os.environ.get("ORDERS_BACKOFF_BASE_MS", "50")) / 1000.0
 BACKOFF_MAX_S = float(os.environ.get("ORDERS_BACKOFF_MAX_MS", "400")) / 1000.0
 
-stats = Stats("orders")
-_override: dict[str, Any] = {"max_retries": None, "expires": 0.0}
+stats = Stats("orders", counters=("requests", "attempts", "retries", "ok", "errors", "attempt_timeouts", "attempt_errors"),
+              hists=("request", "attempt"))
+_override: dict[str, Any] = {"max_retries": None, "timeout_s": None, "expires": 0.0}
 _session: aiohttp.ClientSession | None = None
 _in_flight = 0
 _retry_tokens = RETRY_BUDGET_BURST
 
 
+def _override_live() -> bool:
+    if _override["max_retries"] is None and _override["timeout_s"] is None:
+        return False
+    if time.monotonic() < _override["expires"]:
+        return True
+    log.info("retry override ttl expired, max_retries back to %d", DEFAULT_MAX_RETRIES)
+    _override.update(max_retries=None, timeout_s=None, expires=0.0)
+    return False
+
+
 def max_retries() -> int:
-    if _override["max_retries"] is not None:
-        if time.monotonic() < _override["expires"]:
-            return _override["max_retries"]
-        log.info("retry override ttl expired, max_retries back to %d", DEFAULT_MAX_RETRIES)
-        _override.update(max_retries=None, expires=0.0)
+    if _override_live() and _override["max_retries"] is not None:
+        return _override["max_retries"]
     return DEFAULT_MAX_RETRIES
+
+
+def attempt_timeout_s() -> float:
+    if _override_live() and _override["timeout_s"] is not None:
+        return _override["timeout_s"]
+    return ATTEMPT_TIMEOUT_S
 
 
 def _budget_credit() -> None:
@@ -85,7 +101,7 @@ async def _attempt(order_id: str) -> tuple[bool, str]:
     t0 = time.monotonic()
     try:
         async with _session.post(PAYMENTS_URL, json={"order_id": order_id, "amount_cents": 1000},
-                                 timeout=aiohttp.ClientTimeout(total=ATTEMPT_TIMEOUT_S)) as r:
+                                 timeout=aiohttp.ClientTimeout(total=attempt_timeout_s())) as r:
             await r.read()
             ok = r.status == 200
             outcome = "ok" if ok else f"status {r.status}"
@@ -120,7 +136,7 @@ async def checkout():
             if outcome == "timeout":
                 stats.inc("attempt_timeouts")
                 rlog.log(logging.WARNING, "timeout", "payments call timed out after %dms (attempt %d of %d)",
-                         ATTEMPT_TIMEOUT_S * 1000, attempt, limit)
+                         attempt_timeout_s() * 1000, attempt, limit)
             else:
                 stats.inc("attempt_errors")
                 rlog.log(logging.WARNING, "error", "payments call failed: %s (attempt %d of %d)",
@@ -142,7 +158,7 @@ async def checkout():
 
 @app.get("/stats")
 async def get_stats():
-    stats.gauges.update(max_retries=max_retries(), attempt_timeout_ms=ATTEMPT_TIMEOUT_S * 1000,
+    stats.gauges.update(max_retries=max_retries(), attempt_timeout_ms=attempt_timeout_s() * 1000,
                         in_flight=_in_flight, version=VERSION,
                         retry_budget_ratio=RETRY_BUDGET_RATIO, retry_budget_tokens=round(_retry_tokens, 2))
     return stats.snapshot()
@@ -154,26 +170,33 @@ async def healthz():
 
 
 class OverrideBody(BaseModel):
-    max_retries: int = Field(ge=0, le=10)
+    max_retries: int | None = Field(None, ge=0, le=10)
+    timeout_ms: int | None = Field(None, ge=50, le=10_000)  # clone lab (C6 retry_policy) only
     ttl_s: float = Field(gt=0)
 
 
 def _override_state() -> dict[str, Any]:
-    eff = max_retries()
-    remaining = max(0.0, _override["expires"] - time.monotonic()) if _override["max_retries"] is not None else 0.0
-    return {"max_retries": eff, "override": _override["max_retries"], "remaining_s": round(remaining, 3)}
+    live = _override_live()
+    remaining = max(0.0, _override["expires"] - time.monotonic()) if live else 0.0
+    return {"max_retries": max_retries(), "attempt_timeout_ms": attempt_timeout_s() * 1000,
+            "override": _override["max_retries"], "timeout_override_ms": (_override["timeout_s"] or 0) * 1000 or None,
+            "remaining_s": round(remaining, 3)}
 
 
 @app.post("/internal/retry_override", dependencies=[Depends(require_token)])
 async def set_override(body: OverrideBody):
-    _override.update(max_retries=body.max_retries, expires=time.monotonic() + body.ttl_s)
-    log.info("retry override set: max_retries=%d for %.0fs", body.max_retries, body.ttl_s)
+    if body.max_retries is None and body.timeout_ms is None:
+        return JSONResponse({"detail": "max_retries or timeout_ms required"}, status_code=422)
+    _override.update(max_retries=body.max_retries, expires=time.monotonic() + body.ttl_s,
+                     timeout_s=body.timeout_ms / 1000.0 if body.timeout_ms is not None else None)
+    log.info("retry override set: max_retries=%s%s for %.0fs", body.max_retries,
+             f" timeout_ms={body.timeout_ms}" if body.timeout_ms is not None else "", body.ttl_s)
     return _override_state()
 
 
 @app.delete("/internal/retry_override", dependencies=[Depends(require_token)])
 async def clear_override():
-    _override.update(max_retries=None, expires=0.0)
+    _override.update(max_retries=None, timeout_s=None, expires=0.0)
     return _override_state()
 
 

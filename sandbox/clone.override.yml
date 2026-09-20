@@ -1,0 +1,20 @@
+# Applied by the lab manager (services/lab) on top of docker-compose.yml for clone projects only.
+#
+# Docker lets containers on other bridge networks reach a *published* port (production's fault
+# controller :9900) and masquerades them as the target network's gateway, which is exactly how host
+# traffic looks. Without masquerade a clone's packets keep their own subnet as source, so the fault
+# controller's own-network filter refuses them (and the reply can't route back either). Clones need
+# no outbound access anyway: images are prebuilt.
+# The clone's otel-collector additionally sits on `egress`, a normal masqueraded bridge, so it can
+# reach an external OTLP sink (Elastic Cloud). Fairness-safe: the collector is a stock image with no
+# admin surface and nobody sends it requests — app services and investigators stay on the default
+# network only and cannot ride the collector's outbound path.
+networks:
+  default:
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+  egress:
+
+services:
+  otel-collector:
+    networks: [default, egress]

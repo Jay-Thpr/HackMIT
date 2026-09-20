@@ -1,4 +1,6 @@
+import http.client
 import json
+import logging
 import threading
 import time
 import urllib.error
@@ -6,12 +8,21 @@ import urllib.request
 from collections import deque
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Protocol
 
 from faultline_contracts import WINDOW_S, Fingerprint
 from faultline_telemetry.fingerprint import fingerprint_from_stats
 
 Snapshot = dict[str, dict[str, Any]]
+log = logging.getLogger(__name__)
+
+
+class FingerprintWriter(Protocol):
+    """Track 2 persistence boundary; metadata remains outside the C1 payload."""
+
+    def write(
+        self, fingerprint: Fingerprint, *, incident_id: str | None = None, clone_id: str | None = None
+    ) -> None: ...
 
 
 class TelemetryUnavailable(RuntimeError):
@@ -44,10 +55,12 @@ def fingerprint_from_snapshots(
 
 def _get_json(url: str, timeout: float) -> dict:
     request = urllib.request.Request(url, method="GET")
+    # A container being (re)created binds its port before it listens and resets the
+    # connection (RemoteDisconnected, not URLError); every transport failure is "unavailable".
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read())
-    except urllib.error.URLError as exc:
+    except (OSError, http.client.HTTPException, json.JSONDecodeError) as exc:
         raise TelemetryUnavailable(f"telemetry unavailable at {url}") from exc
 
 
@@ -61,6 +74,9 @@ class LiveTelemetrySource:
         timeout_s: float = 3.0,
         retain_s: float = 1800,
         http: Callable[[str, float], dict] = _get_json,
+        writer: FingerprintWriter | None = None,
+        incident_id: str | None = None,
+        clone_id: str | None = None,
     ):
         self._required_urls = {
             "orders": orders_url.rstrip("/") + "/stats",
@@ -75,6 +91,10 @@ class LiveTelemetrySource:
         self._timeout_s = timeout_s
         self._retain_s = retain_s
         self._http = http
+        self._writer = writer
+        self._incident_id = incident_id
+        self._clone_id = clone_id
+        self._persisted_windows: set[tuple[datetime, datetime]] = set()
         self._snapshots: deque[tuple[datetime, Snapshot]] = deque()
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -141,9 +161,11 @@ class LiveTelemetrySource:
         )
         if current_index is None or previous_index == current_index:
             raise ValueError(f"no telemetry covering [{start}, {end})")
-        return fingerprint_from_snapshots(
+        fingerprint = fingerprint_from_snapshots(
             entries[previous_index][1], entries[current_index][1], start, end
         )
+        self._persist(fingerprint)
+        return fingerprint
 
     def series(
         self,
@@ -169,17 +191,33 @@ class LiveTelemetrySource:
             if len(self._snapshots) < 2:
                 return None
             previous, current = list(self._snapshots)[-2:]
-        return fingerprint_from_snapshots(previous[1], current[1])
+        fingerprint = fingerprint_from_snapshots(previous[1], current[1])
+        self._persist(fingerprint)
+        return fingerprint
 
-    def wait_for_breach(self, timeout_s: float, poll_s: float = 1.0) -> Fingerprint:
+    def wait_for_breach(
+        self, timeout_s: float, poll_s: float = 1.0, sustain_s: float = 0
+    ) -> Fingerprint:
+        """Return the latest fingerprint once the SLO has been breached continuously for `sustain_s`.
+
+        A single breached window is a transient; acting on it means experimenting while the
+        trigger is still active, which confounds the judge (a retry cap during a 20 s DB hiccup
+        looks like a degraded DB). The PRD detector is "p99 above threshold for 60 s".
+        """
         if timeout_s <= 0:
             raise TimeoutError(f"no SLO breach observed within {timeout_s}s")
         deadline = time.monotonic() + timeout_s
+        breached_since: float | None = None
         while True:
             fingerprint = self.latest()
+            now = time.monotonic()
             if fingerprint is not None and any(slo.breached for slo in fingerprint.slos):
-                return fingerprint
-            remaining = deadline - time.monotonic()
+                breached_since = breached_since if breached_since is not None else now
+                if now - breached_since >= sustain_s:
+                    return fingerprint
+            else:
+                breached_since = None
+            remaining = deadline - now
             if remaining <= 0:
                 raise TimeoutError(f"no SLO breach observed within {timeout_s}s")
             self._stop.wait(min(max(poll_s, 0.01), remaining))
@@ -198,10 +236,30 @@ class LiveTelemetrySource:
         except urllib.error.URLError as exc:
             raise TelemetryUnavailable(f"telemetry unavailable at {url}") from exc
 
+    def _persist(self, fingerprint: Fingerprint) -> None:
+        """Index each live C1 window once, regardless of how often consumers read it."""
+        if self._writer is None:
+            return
+        identity = (fingerprint.window_start, fingerprint.window_end)
+        with self._lock:
+            if identity in self._persisted_windows:
+                return
+            self._persisted_windows.add(identity)
+        try:
+            self._writer.write(
+                fingerprint, incident_id=self._incident_id, clone_id=self._clone_id
+            )
+        except Exception as exc:  # noqa: BLE001 - ES persistence must never break detection
+            log.warning("fingerprint persist failed (%s); window remains eligible for retry", type(exc).__name__)
+            with self._lock:
+                self._persisted_windows.discard(identity)
+
     def _run(self, period_s: float) -> None:
         while not self._stop.is_set():
             try:
                 self.snapshot()
             except TelemetryUnavailable:
                 pass
+            except Exception:  # noqa: BLE001 - the poller must outlive any single bad poll
+                log.exception("live telemetry poll failed")
             self._stop.wait(period_s)

@@ -31,7 +31,8 @@ from typing import Any
 
 import httpx
 
-from faultline_contracts.fault import DegradeDbFault, HttpFaultController, StormFault, World
+from faultline_contracts.fault import CpuStarveFault, DegradeDbFault, HttpFaultController, StormFault, World
+from faultline_telemetry.fingerprint import fingerprint_from_stats
 
 STATS_URLS = {
     "orders": os.environ.get("ORDERS_STATS_URL", "http://127.0.0.1:8101"),
@@ -47,69 +48,18 @@ ALL_LEVERS = {"retry_cap", "shed", "db_failover", "canary_weight"}
 Snap = dict[str, dict[str, Any]]
 
 
-# -- /stats -> C1 keys (sandbox/INTEGRATION.md, "Mapping to C1 keys") --------------------------------
-
-def _delta(prev: dict, cur: dict, name: str) -> float:
-    return cur["counters"].get(name, 0.0) - prev["counters"].get(name, 0.0)
-
-
-def _hist_delta(prev: dict, cur: dict, name: str) -> list[int] | None:
-    c = cur["hists"].get(name)
-    if c is None:
-        return None
-    p = prev["hists"].get(name)
-    return [a - (p["counts"][i] if p else 0) for i, a in enumerate(c["counts"])]
-
-
-def quantile(counts: list[int] | None, buckets_ms: list[float], q: float) -> float | None:
-    """Linear interpolation inside the bucket holding the q-quantile; the last bucket is +Inf. None if empty."""
-    if not counts or sum(counts) <= 0:
-        return None
-    rank, seen = q * sum(counts), 0
-    for i, n in enumerate(counts):
-        if n and seen + n >= rank:
-            lo = buckets_ms[i - 1] if i > 0 else 0.0
-            hi = buckets_ms[i] if i < len(buckets_ms) else buckets_ms[-1] * 2
-            return lo + (hi - lo) * (rank - seen) / n
-        seen += n
-    return buckets_ms[-1] * 2
-
-
-def _ratio(a: float, b: float) -> float | None:
-    return a / b if b > 0 else None
-
-
 def window_metrics(prev: Snap, cur: Snap) -> dict[str, Any]:
-    """One window's metrics. Missing data is None, never 0."""
-    o0, o1, p0, p1, l0, l1 = prev["orders"], cur["orders"], prev["payments"], cur["payments"], prev["loadgen"], cur["loadgen"]
-    dt = max(1e-6, o1["t"] - o0["t"])
-    b = o1["buckets_ms"]
-    req, att = _delta(o0, o1, "requests"), _delta(o0, o1, "attempts")
-    ok, err = _delta(o0, o1, "ok"), _delta(o0, o1, "errors")
-    lok, lerr = _delta(l0, l1, "ok"), _delta(l0, l1, "errors")
-    issued = _delta(p0, p1, "db_queries_issued")
-    db_hist = _hist_delta(p0, p1, "db_query")
-    pool_size = p1["gauges"].get("pool_size")
+    """One benchmark window using Owner 2's canonical public /stats -> C1 conversion."""
+    start = datetime.fromtimestamp(float(prev["orders"]["t"]), tz=timezone.utc)
+    end = datetime.fromtimestamp(float(cur["orders"]["t"]), tz=timezone.utc)
+    metrics = fingerprint_from_stats(prev, cur, start, end).metrics()
     return {
-        "dt_s": dt,
-        "svc.gateway.qps": _delta(l0, l1, "sent") / dt,
-        "svc.gateway.error_rate": _ratio(lerr, lok + lerr),
-        "svc.gateway.p99_ms": quantile(_hist_delta(l0, l1, "request"), l1["buckets_ms"], 0.99),
-        "svc.orders.qps": req / dt,
-        "svc.orders.error_rate": _ratio(err, ok + err),
-        "svc.orders.retry_ratio": _ratio(att, req),
-        "svc.orders.timeout_rate": _ratio(_delta(o0, o1, "attempt_timeouts"), att),
-        "svc.orders.p50_ms": quantile(_hist_delta(o0, o1, "request"), b, 0.50),
-        "svc.orders.p99_ms": quantile(_hist_delta(o0, o1, "request"), b, 0.99),
-        "svc.payments.qps": _delta(p0, p1, "requests") / dt,
-        "db.qps": issued / dt,
-        "db.query_p50_ms": quantile(db_hist, p1["buckets_ms"], 0.50),
-        "db.query_p99_ms": quantile(db_hist, p1["buckets_ms"], 0.99),
-        "db.pool_busy_ratio": min(1.0, _delta(p0, p1, "db_busy_s") / (dt * pool_size)) if pool_size else None,
+        "dt_s": float(cur["orders"]["t"]) - float(prev["orders"]["t"]),
+        **metrics,
         # gauges (config as the target reports it; used instead of hardcoded thresholds)
-        "orders.max_retries": o1["gauges"].get("max_retries"),
-        "orders.attempt_timeout_ms": o1["gauges"].get("attempt_timeout_ms"),
-        "payments.db_target": p1["gauges"].get("db_target"),
+        "orders.max_retries": cur["orders"].get("gauges", {}).get("max_retries"),
+        "orders.attempt_timeout_ms": cur["orders"].get("gauges", {}).get("attempt_timeout_ms"),
+        "payments.db_target": cur["payments"].get("gauges", {}).get("db_target"),
     }
 
 
@@ -117,21 +67,21 @@ def is_healthy(m: dict[str, Any]) -> bool:
     """Traffic flowing, requests succeed, no amplification, DB p99 under the attempt timeout Orders reports."""
     timeout_ms = m["orders.attempt_timeout_ms"]
     return (
-        m["svc.orders.qps"] > 0
-        and (m["svc.orders.error_rate"] if m["svc.orders.error_rate"] is not None else 1.0) <= 0.02
-        and (m["svc.orders.retry_ratio"] or 99.0) <= 1.10
+        (m.get("svc.orders.qps") or 0.0) > 0
+        and (m.get("svc.orders.error_rate") if m.get("svc.orders.error_rate") is not None else 1.0) <= 0.02
+        and (m.get("svc.orders.retry_ratio") or 99.0) <= 1.10
         and timeout_ms is not None
-        and m["db.query_p99_ms"] is not None
+        and m.get("db.query_p99_ms") is not None
         and m["db.query_p99_ms"] < timeout_ms
     )
 
 
 def is_incident(m: dict[str, Any]) -> bool:
-    return m["svc.orders.qps"] > 0 and (m["svc.orders.error_rate"] if m["svc.orders.error_rate"] is not None else 1.0) >= 0.5
+    return (m.get("svc.orders.qps") or 0.0) > 0 and (m.get("svc.orders.error_rate") if m.get("svc.orders.error_rate") is not None else 1.0) >= 0.5
 
 
 def is_amplified(m: dict[str, Any]) -> bool:
-    return (m["svc.orders.retry_ratio"] or 0.0) > 2.0
+    return (m.get("svc.orders.retry_ratio") or 0.0) > 2.0
 
 
 def fmt(m: dict[str, Any] | None) -> str:
@@ -392,9 +342,35 @@ class Smoke:
         span = self.phase(15, "after reset")
         self.assert_all_healthy("healthy baseline restored after final reset", span)
 
-    def run(self) -> Report:
+    def step_cpu(self, cpus: float = 0.1, cap_s: int = 20) -> None:
+        """None-of-the-above world: neither the retry cap nor failover heals it. Optional (needs the Docker socket)."""
+        self.begin("11-cpu-starve", f"C5 cpu_starve payments cpus={cpus}: neither lever should heal")
+        self.assert_all_healthy("healthy before cpu_starve", self.phase(10, "baseline"))
+        try:
+            st = self.fc.cpu_starve(CpuStarveFault(service="payments", cpus=cpus))
+        except httpx.HTTPStatusError as e:
+            self.check("C5 cpu_starve accepted", False, f"{e.response.status_code} {e.response.text[:160]} "
+                       "(501 = Docker socket not mounted; documented, skipping world)")
+            return
+        self.check("C5 cpu_starve returns world=cpu_starve active=True", st.world == World.cpu_starve and st.active, st.model_dump_json())
+        inc = self.phase(30, "incident")
+        self.check("cpu: incident develops", is_incident(self.s.tail(inc, 15)), fmt(self.s.tail(inc, 15)))
+        j = self.apply_lever("retry_override", {"max_retries": 0, "ttl_s": cap_s}, "retry_cap")
+        cap = self.phase(cap_s - 2, "retry cap 0")
+        self.wait_lever_expired("retry_cap", j["expires_at"] if j else None)
+        after = self.phase(30, "cap released")
+        self.check("cpu: retry cap does not permanently heal", not is_healthy(self.s.tail(after, 15)),
+                   f"during: {fmt(self.s.tail(cap, 10))} | after: {fmt(self.s.tail(after, 15))}")
+        self.apply_lever("db/failover", {"ttl_s": 60}, "db_failover")
+        fo = self.phase(30, "db failover")
+        self.check("cpu: db failover does not heal", not is_healthy(self.s.tail(fo, 15)), fmt(self.s.tail(fo, 15)))
+        self.begin("12-reset", "C5 reset after cpu_starve")
+        self.reset("cpu")
+        self.assert_all_healthy("healthy baseline restored after cpu reset", self.phase(15, "after reset"))
+
+    def run(self, with_cpu: bool = False) -> Report:
         steps = [self.step_baseline, self.step_storm, self.step_storm_cap, self.step_reset_mid, self.step_degraded,
-                 self.step_degraded_cap, self.step_failover, self.step_reset_end]
+                 self.step_degraded_cap, self.step_failover, self.step_reset_end] + ([self.step_cpu] if with_cpu else [])
         try:
             for st in steps:
                 st()
@@ -423,6 +399,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--quiet", action="store_true", help="suppress per-second rows")
     ap.add_argument("--report", type=Path, default=None, help="JSON report path (default runs/smoke-<utc>.json)")
+    ap.add_argument("--cpu", action="store_true", help="also run the cpu_starve (none-of-the-above) world")
+    ap.add_argument("--repeat", type=int, default=1, help="run the whole sequence N times; summary of pass counts and timings")
     args = ap.parse_args()
     try:
         httpx.get(f"{CONTROL_URL}/healthz", timeout=3).raise_for_status()
@@ -430,14 +408,20 @@ def main() -> None:
     except httpx.HTTPError as e:
         print(f"sandbox not reachable ({e!r}); start it with `cd sandbox && docker compose up -d --build`")
         sys.exit(2)
-    report = Smoke(verbose=not args.quiet).run()
-    out = args.report or Path(__file__).parent / "runs" / f"smoke-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.json"
-    write_report(report, out)
-    failed = report.failed
-    print(f"\n{len(report.checks) - len(failed)}/{len(report.checks)} checks passed; report: {out}")
-    for c in failed:
-        print(f"  FAILED [{c.step}] {c.name}  {c.detail}")
-    sys.exit(1 if failed or report.aborted else 0)
+    stamp = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}"
+    any_failed = False
+    for i in range(args.repeat):
+        if args.repeat > 1:
+            print(f"\n##### run {i + 1}/{args.repeat}", flush=True)
+        report = Smoke(verbose=not args.quiet).run(with_cpu=args.cpu)
+        out = args.report if args.repeat == 1 and args.report else Path(__file__).parent / "runs" / f"smoke-{stamp}-{i + 1}.json"
+        write_report(report, out)
+        failed = report.failed
+        any_failed |= bool(failed or report.aborted)
+        print(f"\n{len(report.checks) - len(failed)}/{len(report.checks)} checks passed; report: {out}")
+        for c in failed:
+            print(f"  FAILED [{c.step}] {c.name}  {c.detail}")
+    sys.exit(1 if any_failed else 0)
 
 
 if __name__ == "__main__":

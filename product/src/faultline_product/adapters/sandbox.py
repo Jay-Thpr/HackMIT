@@ -1,3 +1,4 @@
+import http.client
 import json
 import urllib.error
 import urllib.request
@@ -47,7 +48,7 @@ def _http_request(
     except urllib.error.HTTPError as error:
         body = error.read()
         return error.code, json.loads(body) if body else {}
-    except urllib.error.URLError as error:
+    except (OSError, http.client.HTTPException) as error:  # URLError, timeouts, resets
         raise LeverError(f"control service unreachable at {url}: {error}") from error
 
 
@@ -70,7 +71,6 @@ class SandboxLeverAdapter:
         self._clock = clock
         self._http = http
         self._specs = {spec.id: spec for spec in CATALOG}
-        self._undone: set[str] = set()
 
     def catalog(self) -> list[LeverSpec]:
         return list(CATALOG)
@@ -108,12 +108,9 @@ class SandboxLeverAdapter:
         path = handle.undo.payload["path"]
         status, body = self._request("DELETE", f"/admin/{path}")
         self._raise_for_status(handle.lever_id, status, body)
-        self._undone.add(handle.action_id)
         return handle.model_copy(update={"status": ActionStatus.undone})
 
     def status(self, handle: ActionHandle) -> ActionStatus:
-        if handle.action_id in self._undone:
-            return ActionStatus.undone
         status, body = self._request("GET", "/admin/levers")
         self._raise_for_status(handle.lever_id, status, body)
         try:
@@ -142,7 +139,7 @@ class SandboxLeverAdapter:
         url = f"{self._base_url}{path}"
         try:
             return self._http(method, url, data=payload, timeout=self._timeout_s)
-        except urllib.error.URLError as error:
+        except (OSError, http.client.HTTPException) as error:
             raise LeverError(f"control service unreachable at {url}: {error}") from error
 
     @staticmethod

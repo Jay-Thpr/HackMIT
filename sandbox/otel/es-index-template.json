@@ -1,0 +1,72 @@
+{
+  "index_patterns": [
+    "traces-generic.otel-*",
+    "metrics-generic.otel-*",
+    "logs-generic.otel-*",
+    "*-prometheusreceiver.otel-*"
+  ],
+  "priority": 600,
+  "data_stream": {},
+  "template": {
+    "settings": {
+      "index.mapping.ignore_malformed": true
+    },
+    "mappings": {
+      "date_detection": false,
+      "dynamic_templates": [
+        {
+          "gauge_double": {
+            "path_match": "metrics.*",
+            "match_mapping_type": "*",
+            "mapping": {"type": "double"}
+          }
+        },
+        {
+          "counter_double": {
+            "path_match": "metrics.*",
+            "match_mapping_type": "*",
+            "mapping": {"type": "double"}
+          }
+        },
+        {
+          "gauge_long": {
+            "path_match": "metrics.*",
+            "match_mapping_type": "*",
+            "mapping": {"type": "long"}
+          }
+        },
+        {
+          "counter_long": {
+            "path_match": "metrics.*",
+            "match_mapping_type": "*",
+            "mapping": {"type": "long"}
+          }
+        },
+        {
+          "histogram": {
+            "path_match": "metrics.*",
+            "match_mapping_type": "*",
+            "mapping": {"type": "object", "enabled": false}
+          }
+        },
+        {
+          "summary": {
+            "path_match": "metrics.*",
+            "match_mapping_type": "*",
+            "mapping": {"type": "object", "enabled": false}
+          }
+        },
+        {
+          "strings_keyword": {
+            "match_mapping_type": "string",
+            "mapping": {"type": "keyword", "ignore_above": 1024}
+          }
+        }
+      ],
+      "properties": {
+        "@timestamp": {"type": "date_nanos"},
+        "metrics": {"type": "object", "subobjects": false}
+      }
+    }
+  }
+}

@@ -3,11 +3,22 @@ name = "faultline-bench"
 version = "0.1.0"
 description = "Deterministic C2 benchmark runner for Faultline"
 requires-python = ">=3.11"
-dependencies = ["faultline-contracts", "faultline-brain"]
+dependencies = [
+    "faultline-contracts",
+    "faultline-brain",
+    "faultline-product",
+    "faultline-telemetry",
+    "openai==3.13.0",
+]
+
+[project.scripts]
+faultline-bench-live = "faultline_bench.live:main"
 
 [tool.uv.sources]
 faultline-contracts = { path = "../contracts", editable = true }
 faultline-brain = { path = "../faultline/brain", editable = true }
+faultline-product = { path = "../product", editable = true }
+faultline-telemetry = { path = "../faultline/telemetry", editable = true }
 
 [dependency-groups]
 dev = ["pytest>=8"]

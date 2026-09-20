@@ -51,7 +51,16 @@ def test_apply_rejects_bad_params_before_http():
     assert calls == []
 
 
-def test_undo_marks_action_undone_without_status_request():
+@pytest.mark.parametrize(
+    "control_after_delete,expected",
+    [
+        ({"active": False, "expires_at": "2026-09-19T15:00:20Z"}, ActionStatus.undone),
+        ({"active": True, "expires_at": "2026-09-19T15:00:20Z"}, ActionStatus.active),  # DELETE did not land
+    ],
+)
+def test_status_after_undo_reads_the_control_plane(control_after_delete, expected):
+    """The orchestrator re-verifies every release through status(); a cached 'undone' would
+    hide a DELETE that the control plane accepted but never applied."""
     calls = []
 
     def http(method, url, *, data=None, timeout):
@@ -60,7 +69,7 @@ def test_undo_marks_action_undone_without_status_request():
             return 200, {"applied_at": "2026-09-19T15:00:00Z"}
         if method == "DELETE":
             return 200, {}
-        raise AssertionError("status should use the local undone set")
+        return 200, {"retry_cap": control_after_delete}
 
     adapter = SandboxLeverAdapter(clock=lambda: NOW, http=http)
     handle = adapter.apply("retry_cap", {"max_retries": 0}, 20)
@@ -69,7 +78,8 @@ def test_undo_marks_action_undone_without_status_request():
     assert calls[1][0] == "DELETE"
     assert calls[1][1].endswith("/admin/retry_override")
     assert undone.status == ActionStatus.undone
-    assert adapter.status(handle) == ActionStatus.undone
+    assert adapter.status(handle) == expected
+    assert calls[-1][0] == "GET" and calls[-1][1].endswith("/admin/levers")
 
 
 @pytest.mark.parametrize(
@@ -98,3 +108,19 @@ def test_connection_refused_becomes_lever_error():
     adapter = SandboxLeverAdapter(http=http)
     with pytest.raises(LeverError, match="control service unreachable"):
         adapter.apply("retry_cap", {"max_retries": 0}, 20)
+
+
+def test_transport_timeout_is_a_lever_error():
+    from faultline_contracts import LeverError
+    from faultline_product.adapters.sandbox import SandboxLeverAdapter
+
+    def http(method, url, *, data=None, timeout):
+        raise TimeoutError("timed out")
+
+    adapter = SandboxLeverAdapter(base_url="http://clone:10901", http=http)
+    try:
+        adapter.apply("retry_cap", {"max_retries": 0}, 20)
+    except LeverError as exc:
+        assert "unreachable" in str(exc)
+    else:
+        raise AssertionError("expected LeverError")

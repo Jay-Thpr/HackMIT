@@ -15,7 +15,7 @@ from faultline_contracts.audit import AuditEvent, experiment_windows
 from faultline_contracts.fingerprint import Fingerprint
 from faultline_contracts.triage import Phase, TriageResult
 
-from faultline_brain.judge import judge, phase_fingerprints
+from faultline_brain.judge import _settled_during, judge, phase_fingerprints
 from faultline_brain.noise import NoiseModel
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent.parent.parent / "contracts" / "fixtures"
@@ -127,6 +127,18 @@ def test_phase_fingerprints_slices_during_and_after_release_windows():
     assert all(fp.window_start >= window.release for fp in after)
     assert len(during) > 0
     assert len(after) > 0
+
+
+def test_during_measurement_uses_the_settled_tail_after_a_lever_is_applied():
+    series = _load_series()
+    windows = _load_windows()
+    window = next(w for w in windows if w.experiment_id == "retry_cap_0_20s")
+    during = phase_fingerprints(series, window.start, window.release)
+
+    settled = _settled_during(during)
+
+    assert settled == during[len(during) // 2 :]
+    assert settled[-1].window_start == during[-1].window_start
 
 
 def test_unrun_experiment_predictions_are_skipped_not_errored():

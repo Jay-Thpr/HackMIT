@@ -17,6 +17,7 @@ Capacity through the primary pool = DB_POOL_SIZE / (DB_BASE_MS + extra_ms) queri
 """
 
 import asyncio
+import ipaddress
 import logging
 import os
 import time
@@ -26,7 +27,7 @@ from typing import Any
 
 import asyncpg
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from faultline_contracts.fault import CpuStarveFault, DegradeDbFault, FaultState, StormFault, World
@@ -55,6 +56,25 @@ _lock = asyncio.Lock()
 _state: dict[str, Any] = {"world": World.none, "params": {}, "started_at": None, "storm_until": None}
 _storm_task: asyncio.Task | None = None
 _starved: dict[str, int] = {}  # container id -> original NanoCpus
+_allowed_nets: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []  # own compose network(s) + loopback
+
+
+# ---- reachability: only production's own network (and the host through its published port) ---
+async def _load_allowed_nets() -> None:
+    """Docker Desktop does not isolate bridge networks from each other, so a clone (C6) could reach
+    this port by IP. Traffic from the host arrives from the network gateway, which is inside the
+    subnet, so bench/ and the demo script are unaffected; clone containers are not."""
+    _allowed_nets[:] = [ipaddress.ip_network("127.0.0.0/8"), ipaddress.ip_network("::1/128")]
+    try:
+        async with _docker() as d:
+            me = (await d.get(f"/containers/{os.environ.get('HOSTNAME', '')}/json")).json()
+        for net in me["NetworkSettings"]["Networks"].values():
+            if net.get("IPAddress"):
+                _allowed_nets.append(ipaddress.ip_network(f"{net['IPAddress']}/{net['IPPrefixLen']}", strict=False))
+    except Exception as e:  # noqa: BLE001 - no docker socket: stay open rather than lock bench out
+        log.warning("could not read own network (%s); accepting all sources", e)
+        _allowed_nets.append(ipaddress.ip_network("0.0.0.0/0"))
+    log.info("accepting requests from %s", [str(n) for n in _allowed_nets])
 
 
 # ---- physical knobs ------------------------------------------------------------------------
@@ -165,14 +185,20 @@ async def wait_until(pred, window_s: float, timeout_s: float) -> dict[str, Any] 
 
 async def _orders_override(max_retries: int | None, ttl_s: float = 30) -> None:
     for u in (URLS["orders"], ORDERS_V2_URL):
+        primary = u == URLS["orders"]
         try:
             if max_retries is None:
-                await http.delete(f"{u}/internal/retry_override", headers=TOKEN)
+                r = await http.delete(f"{u}/internal/retry_override", headers=TOKEN)
             else:
-                await http.post(f"{u}/internal/retry_override", json={"max_retries": max_retries, "ttl_s": ttl_s},
-                                headers=TOKEN)
+                r = await http.post(f"{u}/internal/retry_override", json={"max_retries": max_retries, "ttl_s": ttl_s},
+                                    headers=TOKEN)
+            r.raise_for_status()
+            if primary and max_retries is None:
+                state = (await http.get(f"{u}/internal/retry_override", headers=TOKEN)).json()
+                if state.get("override") is not None:
+                    raise RuntimeError(f"orders still reports retry override {state}")
         except httpx.HTTPError:
-            if u == URLS["orders"]:
+            if primary:
                 raise
 
 
@@ -191,24 +217,27 @@ async def do_reset() -> dict[str, Any]:
     (await http.delete(f"{URLS['loadgen']}/rate")).raise_for_status()
     # drain: without amplification offered load < capacity, so any queue (or a
     # self-sustaining storm) empties; then release retries and demand a stable baseline.
-    for round_ in range(1, 4):
-        remaining = RESET_TIMEOUT_S - (time.monotonic() - t0)
-        await _orders_override(0, ttl_s=max(5.0, remaining))
-        if await wait_until(_drained, 2.0, remaining) is None:
-            break
+    try:
+        for round_ in range(1, 4):
+            remaining = RESET_TIMEOUT_S - (time.monotonic() - t0)
+            await _orders_override(0, ttl_s=max(5.0, remaining))
+            if await wait_until(_drained, 2.0, remaining) is None:
+                break
+            await _orders_override(None)
+            remaining = RESET_TIMEOUT_S - (time.monotonic() - t0)
+            row = await wait_until(lambda r: probe.is_healthy(r, ATTEMPT_TIMEOUT_MS), 5.0, min(15.0, remaining))
+            if row is not None:
+                log.info("reset complete in %.1fs (round %d)", time.monotonic() - t0, round_)
+                return {"elapsed_s": round(time.monotonic() - t0, 1), "baseline": row}
+    finally:
         await _orders_override(None)
-        remaining = RESET_TIMEOUT_S - (time.monotonic() - t0)
-        row = await wait_until(lambda r: probe.is_healthy(r, ATTEMPT_TIMEOUT_MS), 5.0, min(15.0, remaining))
-        if row is not None:
-            log.info("reset complete in %.1fs (round %d)", time.monotonic() - t0, round_)
-            return {"elapsed_s": round(time.monotonic() - t0, 1), "baseline": row}
-    await _orders_override(None)
     raise HTTPException(status_code=503, detail="system did not return to a healthy baseline")
 
 
 # ---- API -----------------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    await _load_allowed_nets()
     for _ in range(60):  # make sure both DBs carry the configured base cost
         try:
             await set_db_extra(PRIMARY_DSN, 0)
@@ -221,6 +250,19 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.middleware("http")
+async def _own_network_only(request: Request, call_next):
+    host = request.client.host if request.client else ""
+    try:
+        ok = any(ipaddress.ip_address(host) in n for n in _allowed_nets)
+    except ValueError:
+        ok = False
+    if not ok:
+        log.warning("refused request from %s (outside the production network)", host)
+        return JSONResponse({"detail": "fault controller is not reachable from here"}, status_code=403)
+    return await call_next(request)
 
 
 async def _storm_end(duration_s: float) -> None:

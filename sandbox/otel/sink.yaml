@@ -1,0 +1,3 @@
+# Local sink: detailed debug output so leak checks can grep span attributes.
+exporters:
+  debug: {verbosity: detailed}

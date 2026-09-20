@@ -6,6 +6,7 @@ from faultline_contracts import Fingerprint, ServiceStats
 
 from faultline_telemetry.analytics import ElasticsearchTelemetryAnalytics, FingerprintRecord, fingerprint_similarity
 from faultline_telemetry.store import ElasticsearchFingerprintStore
+from test_store import matches
 
 
 class FakeElastic:
@@ -15,18 +16,8 @@ class FakeElastic:
     def index(self, *, index, document):
         self.docs.append((index, document))
 
-    def search(self, *, index, query, sort):
-        filters = query.get("bool", {}).get("filter", [])
-        docs = [doc for document_index, doc in self.docs if document_index == index]
-        for item in filters:
-            if "range" in item:
-                bounds = item["range"]["window_start"]
-                docs = [doc for doc in docs if bounds["gte"] <= doc["window_start"] < bounds["lt"]]
-            elif "term" in item:
-                field, value = next(iter(item["term"].items()))
-                docs = [doc for doc in docs if doc.get(field.removesuffix(".keyword")) == value]
-            elif "exists" in item:
-                docs = [doc for doc in docs if item["exists"]["field"] in doc]
+    def search(self, *, index, query, sort, size=10000):
+        docs = [doc for document_index, doc in self.docs if document_index == index and matches(doc, query)]
         return {"hits": {"hits": [{"_source": doc} for doc in sorted(docs, key=lambda doc: doc["window_start"])]}}
 
 
@@ -54,6 +45,21 @@ def test_ui_data_reads_only_requested_incident_and_clone():
 
     assert [row.environment for row in production] == ["production"]
     assert [row.clone_id for row in clone_rows] == ["clone-a"]
+
+
+def test_analytics_and_store_share_legacy_production_scope():
+    start = datetime(2026, 9, 19, tzinfo=timezone.utc)
+    end = start + timedelta(seconds=5)
+    client = FakeElastic()
+    fp = fingerprint(start, 100)
+    doc = {**fp.model_dump(mode="json"), "incident_id": "legacy"}
+    client.index(index="faultline-fingerprints", document=doc)
+    client.index(index="faultline-fingerprints", document={**doc, "clone_id": "c1"})
+    client.index(index="faultline-fingerprints", document={**doc, "environment": "clone"})
+    analytics = ElasticsearchTelemetryAnalytics(client)
+    assert [row.fingerprint for row in analytics.ui_data("legacy", start, end)] == [fp]
+    assert ElasticsearchFingerprintStore(client).query(start, end, incident_id="legacy") == [fp]
+    assert [row.incident_id for row in analytics.similar_incidents(fp)] == ["legacy"]
 
 
 def test_similar_incidents_ranks_past_production_fingerprints_only():

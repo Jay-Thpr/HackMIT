@@ -1,0 +1,17 @@
+# Elastic sink + clone tee: OTLP to Elasticsearch AND OTLP JSON batches to
+# /tmp/otel/records.jsonl so validate_lab.py fairness can read emitted records
+# instead of process logs. confmap replaces lists, so the full exporters list
+# is restated per pipeline.
+exporters:
+  elasticsearch/elastic:
+    endpoints: ["${env:FAULTLINE_ELASTICSEARCH_URL}"]
+    api_key: "${env:FAULTLINE_ELASTICSEARCH_API_KEY}"
+    mapping: {mode: otel}
+  file/leakcheck:
+    path: /tmp/otel/records.jsonl
+    rotation: {max_megabytes: 20, max_backups: 1}
+service:
+  pipelines:
+    traces:  {exporters: [elasticsearch/elastic, file/leakcheck]}
+    metrics: {exporters: [elasticsearch/elastic, file/leakcheck]}
+    logs:    {exporters: [elasticsearch/elastic, file/leakcheck]}

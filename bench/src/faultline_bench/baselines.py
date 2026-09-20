@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from math import sqrt
 
 from faultline_contracts.fingerprint import Fingerprint
+from faultline_contracts.metrics import is_valid_metric_key
 
 
 Labeler = Callable[[Fingerprint], str]
@@ -63,12 +64,20 @@ class NearestCentroid:
 
     @classmethod
     def fit(cls, cases: list[tuple[str, Fingerprint]]) -> "NearestCentroid":
+        return cls.fit_metrics([(label, fingerprint.metrics()) for label, fingerprint in cases])
+
+    @classmethod
+    def fit_metrics(cls, cases: list[tuple[str, dict]]) -> "NearestCentroid":
         grouped: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
         all_values: dict[str, list[float]] = defaultdict(list)
-        for label, fingerprint in cases:
-            for metric, value in fingerprint.metrics().items():
-                grouped[label][metric].append(value)
-                all_values[metric].append(value)
+        for label, values in cases:
+            for metric, value in values.items():
+                if not is_valid_metric_key(metric):
+                    continue
+                if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
+                    continue
+                grouped[label][metric].append(float(value))
+                all_values[metric].append(float(value))
         if not grouped:
             raise ValueError("cannot fit nearest centroid with no cases")
         centroids = {
@@ -83,7 +92,9 @@ class NearestCentroid:
         return cls(centroids, scales)
 
     def predict(self, fingerprint: Fingerprint) -> str:
-        values = fingerprint.metrics()
+        return self.predict_metrics(fingerprint.metrics())
+
+    def predict_metrics(self, values: dict) -> str:
         distances: list[tuple[float, str]] = []
         for label, centroid in self._centroids.items():
             common = sorted(set(values) & set(centroid))

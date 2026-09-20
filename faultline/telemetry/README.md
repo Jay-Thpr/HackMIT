@@ -18,14 +18,29 @@ observable output without reading hidden fault state.
 - Do not ingest fault-controller data, `io_profile`, `/internal/*`, or Envoy
   `*.fault.*` metrics.
 
-## Planned modules
+## Modules
 
 | Module | Responsibility |
 | --- | --- |
 | `config.py` | Local endpoint and index configuration |
 | `ports.py` | Small Elasticsearch and stats-source dependency ports |
+| `elasticsearch.py` | `HttpElasticsearchClient`: ApiKey auth, explicit search `size`, index templates, `_refresh`, ES|QL `_query` |
+| `indices.py` | `ensure_index_templates`: keyword/date mappings plus double coercion for `faultline-fingerprints*` and `faultline-audit*` |
+| `esql.py` | `incident_timeline`: ES|QL per-window incident metric summary |
+| `dotenv.py` | `load_repo_dotenv`: repo-root `.env` loading without overriding real env vars |
 | `audit.py` | C4 `AuditSink` implementation backed by `faultline-audit` |
 | `fingerprint.py` | C1 five-second fingerprint assembly from public stats deltas |
 | `source.py` | Polling `TelemetrySource`, with optional ES persistence |
 | `store.py` | Elasticsearch C1 fingerprint window/series reads |
 | `ambiguity.py` | Label-free canonical metric exports for passive ambiguity checks |
+| `tokens.py` | OpenAI-token measurement: raw public snapshots versus compressed C1 evidence per incident |
+
+## Elastic Cloud
+
+Set `FAULTLINE_ELASTICSEARCH_URL` (deployment endpoint) and
+`FAULTLINE_ELASTICSEARCH_API_KEY` (Kibana → Stack Management → API keys; needs
+write on `faultline-*` and read on `_query`) in the repo-root `.env` — see
+`.env.example`. Both the product CLI and `scripts/es_smoke.py` load it via
+`load_repo_dotenv` without overriding real environment variables. Leave the URL
+unset to skip Elasticsearch persistence entirely. For local development, point
+the URL at `http://localhost:9200` with no API key.

@@ -110,7 +110,14 @@
           "type": "array"
         },
         "confirms_if": {
-          "$ref": "#/$defs/Confirmation"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Confirmation"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "during": {
           "items": {

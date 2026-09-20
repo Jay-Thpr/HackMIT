@@ -95,7 +95,9 @@ breached = [s for s in fp.slos if s.breached]
   `ambiguous`, `reasoning`, `hypotheses: list[Hypothesis]`, `predictions: list[Prediction]`.
   A `Prediction` is per hypothesis × experiment: `during` / `after_release` lists of
   `MetricExpectation(metric, direction: up|down|flat)` plus `confirms_if: Confirmation(phase, metric,
-  expect: within_baseline|up|down|flat)`.
+  expect: within_baseline|up|down|flat) | null`. `null` means the experiment is
+  diagnostic only; every hypothesis in an ambiguous draft must still have at least
+  one non-null positive confirmation test on another prediction.
 - **`TriageResult`** = `TriageDraft` + `incident_id`, `created_at`, `schema_version` (added by our code, not the LLM).
 - **`draft.problems(known_metrics, experiment_ids)`** — semantic checks beyond the schema (unknown/malformed
   metric keys, predictions for unknown hypotheses or experiments, duplicate ids, reserved `none_of_the_above`).
@@ -215,7 +217,7 @@ Used only by the sandbox, `bench/` and the demo script. HTTP API on `http://loca
 
 All endpoints return `FaultState`. Port 9900 must not be reachable from Faultline's config.
 
-## C6 — Clone lab (Owner 1 serves; Owner 3 investigators and Owner 4 orchestrator call) — DRAFT, awaiting Owner 3 approval
+## C6 — Clone lab (Owner 1 serves; Owner 3 investigators and Owner 4 orchestrator call) — approved by Owner 3
 
 A **clone** is a disposable, healthy replica of the target (its own Compose project and network) where an
 investigator may run experiments that are far too aggressive for production. Three environments, never mixed:

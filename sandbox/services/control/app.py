@@ -97,11 +97,17 @@ async def push(lever_id: str, params: dict[str, Any], ttl_s: float) -> None:
 
 
 async def revert(lever_id: str) -> None:
-    """Return a lever's target to default. Best effort on every target; raises only if all fail."""
+    """Return a lever's target to default. The primary target must confirm; secondary Orders builds are best effort."""
     if lever_id == "retry_cap":
-        for u in [*ORDERS_URLS, ORDERS_V2_URL]:
+        r = await http.delete(f"{ORDERS_URLS[0]}/internal/retry_override", headers=TOKEN)
+        r.raise_for_status()
+        g = await http.get(f"{ORDERS_URLS[0]}/internal/retry_override", headers=TOKEN)
+        g.raise_for_status()
+        if g.json().get("override") is not None or g.json().get("timeout_override_ms") is not None:
+            raise httpx.HTTPError(f"orders still reports retry override {g.json()}")
+        for u in [*ORDERS_URLS[1:], ORDERS_V2_URL]:  # best effort: other Orders builds
             try:
-                await http.delete(f"{u}/internal/retry_override", headers=TOKEN, timeout=1.0)
+                (await http.delete(f"{u}/internal/retry_override", headers=TOKEN, timeout=1.0)).raise_for_status()
             except httpx.HTTPError:
                 pass
     elif lever_id == "db_failover":

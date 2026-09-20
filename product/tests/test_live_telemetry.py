@@ -1,3 +1,4 @@
+import logging
 import urllib.error
 from datetime import datetime, timezone
 
@@ -10,6 +11,13 @@ from faultline_product.adapters import (
 from faultline_product.cli import main
 
 BUCKETS = [10, 100, 1000]
+
+
+@pytest.fixture(autouse=True)
+def isolate_cloud_persistence(monkeypatch):
+    monkeypatch.setattr("faultline_product.cli.load_repo_dotenv", lambda _: None)
+    monkeypatch.delenv("FAULTLINE_ELASTICSEARCH_URL", raising=False)
+    monkeypatch.delenv("FAULTLINE_ELASTICSEARCH_API_KEY", raising=False)
 
 
 def _hist(counts):
@@ -168,6 +176,92 @@ def test_fingerprint_matches_owner2_builder_and_omits_missing_counters():
     assert "svc.orders.retry_ratio" not in fingerprint.metrics()
 
 
+class RecordingWriter:
+    def __init__(self):
+        self.writes = []
+
+    def write(self, fingerprint, *, incident_id=None, clone_id=None):
+        self.writes.append((fingerprint, incident_id, clone_id))
+
+
+def test_live_source_persists_each_window_once_with_incident_metadata():
+    writer = RecordingWriter()
+    source = LiveTelemetrySource(
+        orders_url="http://orders",
+        payments_url="http://payments",
+        loadgen_url="http://loadgen",
+        http=_scripted_http([_snapshot(0), _snapshot(5)]),
+        writer=writer,
+        incident_id="incident-7",
+    )
+    source.snapshot()
+    source.snapshot()
+    start = datetime.fromtimestamp(0, timezone.utc)
+    end = datetime.fromtimestamp(5, timezone.utc)
+    assert source.window(start, end).window_start == start
+    assert source.window(start, end).window_start == start
+    assert [(item[1], item[2]) for item in writer.writes] == [("incident-7", None)]
+
+
+def test_persistence_failure_is_sanitized_and_retried_with_clone_metadata(caplog):
+    from unittest.mock import Mock
+
+    writer = Mock()
+    writer.write.side_effect = [RuntimeError("secret URL credential"), None, None]
+    source = LiveTelemetrySource(
+        orders_url="http://orders", payments_url="http://payments", loadgen_url="http://loadgen",
+        http=_scripted_http([_snapshot(0), _snapshot(5), _snapshot(10)]),
+        writer=writer, incident_id="incident-7", clone_id="clone-7",
+    )
+    source.snapshot()
+    source.snapshot()
+    first = source.latest()
+    assert first is not None
+    assert "RuntimeError" in caplog.text and "secret" not in caplog.text
+    assert source.latest() == first
+    source.latest()
+    assert writer.write.call_count == 2
+    source.snapshot()
+    assert source.latest().window_end > first.window_end
+    assert writer.write.call_count == 3
+    assert all(call.kwargs == {"incident_id": "incident-7", "clone_id": "clone-7"}
+               for call in writer.write.call_args_list)
+
+def test_persist_failure_is_logged_and_retried_without_stopping_polling(caplog):
+    class FailingWriter:
+        def __init__(self):
+            self.calls = 0
+
+        def write(self, fingerprint, *, incident_id=None, clone_id=None):
+            self.calls += 1
+            raise RuntimeError("es down")
+
+    writer = FailingWriter()
+    source = LiveTelemetrySource(
+        orders_url="http://orders",
+        payments_url="http://payments",
+        loadgen_url="http://loadgen",
+        http=_scripted_http([_snapshot(0), _snapshot(5)]),
+        writer=writer,
+    )
+    source.snapshot()
+    source.snapshot()
+    start = datetime.fromtimestamp(0, timezone.utc)
+    end = datetime.fromtimestamp(5, timezone.utc)
+
+    with caplog.at_level(logging.WARNING):
+        fingerprint = source.window(start, end)  # a down ES must not break reads
+
+    assert fingerprint.window_start == start
+    assert writer.calls == 1
+    assert "fingerprint persist failed" in caplog.text
+    assert not source._persisted_windows  # the window stays eligible for a retry
+
+    again = source.window(start, end)  # reads keep working and the write is retried
+    assert again == fingerprint
+    assert writer.calls == 2
+
+
 def test_window_and_series_use_snapshot_pairs():
     snapshots = [_snapshot(0), _snapshot(5), _snapshot(10)]
     source = _source(snapshots)
@@ -197,6 +291,51 @@ def test_wait_for_breach_and_timeout():
     assert fingerprint.slos[0].breached
     with pytest.raises(TimeoutError):
         source.wait_for_breach(timeout_s=0)
+
+
+def test_wait_for_breach_requires_sustained_breach():
+    # healthy, breached, healthy, breached, breached: one transient window must not count
+    source = _source(
+        [_snapshot(0), _snapshot(5, slow=True), _snapshot(10), _snapshot(15, slow=True), _snapshot(20, slow=True)]
+    )
+    source.snapshot()
+    source.snapshot()
+    assert source.latest().slos[0].breached
+    with pytest.raises(TimeoutError):
+        source.wait_for_breach(timeout_s=0.05, poll_s=0.01, sustain_s=10)
+    source.snapshot()  # healthy again: the breach clock must restart
+    source.snapshot()
+    source.snapshot()
+    fingerprint = source.wait_for_breach(timeout_s=1, poll_s=0.01, sustain_s=0.05)
+    assert fingerprint.slos[0].breached
+
+
+def test_connection_reset_is_unavailable_and_optional_v2_is_skipped(monkeypatch):
+    import http.client
+
+    from faultline_product.adapters import live_telemetry
+
+    def urlopen(request, timeout):
+        raise http.client.RemoteDisconnected("closed without response")
+
+    monkeypatch.setattr(live_telemetry.urllib.request, "urlopen", urlopen)
+    with pytest.raises(TelemetryUnavailable):
+        live_telemetry._get_json("http://orders-v2/stats", 3)
+
+    def http(url, timeout):
+        if "orders_v2" in url:
+            raise TelemetryUnavailable(url)
+        service = next(name for name in ("orders", "payments", "loadgen") if name in url)
+        return _snapshot(5)[service]
+
+    source = LiveTelemetrySource(
+        orders_url="http://orders",
+        payments_url="http://payments",
+        loadgen_url="http://loadgen",
+        orders_v2_url="http://orders_v2",
+        http=http,
+    )
+    assert "orders_v2" not in source.snapshot()
 
 
 def test_unavailable_http_propagates_and_healthz_is_false():

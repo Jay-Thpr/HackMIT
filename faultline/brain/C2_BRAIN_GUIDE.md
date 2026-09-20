@@ -71,7 +71,7 @@ Fingerprint (C1) ──window/series──▶ Triage(LLM) ─▶ TriageResult(C2
 - `hypotheses: list[Hypothesis]`
   - `Hypothesis(id, label, description, evidence: list[str])` — e.g. id `"H_meta"`, describes trigger + sustaining cause
 - `predictions: list[Prediction]` — one per hypothesis × experiment
-  - `Prediction(hypothesis_id, experiment_id, during: list[MetricExpectation], after_release: list[MetricExpectation], confirms_if: Confirmation)`
+  - `Prediction(hypothesis_id, experiment_id, during: list[MetricExpectation], after_release: list[MetricExpectation], confirms_if: Confirmation | null)`
   - `MetricExpectation(metric, direction: up|down|flat)`
   - `Confirmation(phase: during|after_release, metric, expect: within_baseline|up|down|flat)` ← the positive test the diagnosis must pass
 
@@ -94,7 +94,7 @@ errs = draft.problems(known_metrics=set(fp.metrics()),
 result = TriageResult(**draft.model_dump(), incident_id=incident_id)
 ```
 
-**`draft.problems(...)` catches (beyond schema):** unknown/malformed metric keys, predictions for unknown hypotheses/experiments, duplicate hypothesis ids, use of reserved `none_of_the_above`. Empty list = OK. Loop: re-ask with the errors until clean.
+**`draft.problems(...)` catches (beyond schema):** unknown/malformed metric keys, predictions for unknown hypotheses/experiments, duplicate hypothesis ids, use of reserved `none_of_the_above`, and an ambiguous hypothesis with no positive confirmation test. `confirms_if: null` is permitted for a diagnostic-only experiment, but not for every prediction of a hypothesis. Empty list = OK. Loop: re-ask with the errors until clean.
 
 **Design notes:**
 - Keep the prompt cheap — send the compressed fingerprint, not raw telemetry (Token Company angle). Log `usage` every call.

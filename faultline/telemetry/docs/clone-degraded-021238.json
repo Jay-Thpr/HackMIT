@@ -1,0 +1,1726 @@
+{
+  "incident_id": "o2-degraded-021238",
+  "label": "degraded",
+  "origin": "clone",
+  "clone_id": "o2-degraded-17",
+  "recipe": {
+    "action": "db_capacity",
+    "params": {
+      "capacity_qps": 40
+    },
+    "ttl_s": 240,
+    "settle_after_apply_s": 10
+  },
+  "prior_incident_labels": {
+    "demo-storm-001": "storm",
+    "duplicate": "storm",
+    "experiment": "storm",
+    "brain-fallback": "storm",
+    "live-14": "storm",
+    "demo-degraded-1": "degraded",
+    "live-storm-012057": "storm",
+    "live-storm-013228": "unknown",
+    "live-storm-015819": "storm"
+  },
+  "windows": [
+    {
+      "schema_version": "1",
+      "window_start": "2026-09-20T02:13:41Z",
+      "window_end": "2026-09-20T02:13:46Z",
+      "services": {
+        "gateway": {
+          "qps": 79.30669437975567,
+          "p50_ms": 2245.535714285714,
+          "p99_ms": 2494.910714285714,
+          "error_rate": 0.9889624724061811,
+          "retry_ratio": null,
+          "timeout_rate": null
+        },
+        "orders": {
+          "qps": 79.30669437975567,
+          "p50_ms": 2245.5257270693514,
+          "p99_ms": 2494.910514541387,
+          "error_rate": 0.9824175824175824,
+          "retry_ratio": 3.986754966887417,
+          "timeout_rate": 0.9966777408637874
+        },
+        "payments": {
+          "qps": 316.1763577259133,
+          "p50_ms": 1248.7302483069977,
+          "p99_ms": 1494.9746049661399,
+          "error_rate": 0.8637873754152824,
+          "retry_ratio": null,
+          "timeout_rate": null
+        }
+      },
+      "db": {
+        "qps": 316.1763577259133,
+        "query_p50_ms": 1154.30900621118,
+        "query_p99_ms": 1493.0861801242236,
+        "pool_busy_ratio": 0.9883531645281484
+      },
+      "edges": [
+        {
+          "src": "orders",
+          "dst": "payments",
+          "qps": 316.1763577259133,
+          "p99_ms": 598.9002433090025,
+          "error_rate": 0.9966777408637874
+        },
+        {
+          "src": "payments",
+          "dst": "db",
+          "qps": 316.1763577259133,
+          "p99_ms": 1493.0861801242236,
+          "error_rate": 0.8637873754152824
+        }
+      ],
+      "slos": [
+        {
+          "name": "checkout",
+          "metric": "svc.gateway.p99_ms",
+          "threshold": 1000.0,
+          "value": 2494.910714285714,
+          "breached": true
+        }
+      ],
+      "log_highlights": [],
+      "change_events": []
+    },
+    {
+      "schema_version": "1",
+      "window_start": "2026-09-20T02:13:46Z",
+      "window_end": "2026-09-20T02:13:51Z",
+      "services": {
+        "gateway": {
+          "qps": 71.69780845944892,
+          "p50_ms": 2245.8333333333335,
+          "p99_ms": 2494.9166666666665,
+          "error_rate": 1.0120481927710843,
+          "retry_ratio": null,
+          "timeout_rate": null
+        },
+        "orders": {
+          "qps": 71.00674524538195,
+          "p50_ms": 2244.0047961630694,
+          "p99_ms": 2494.8800959232613,
+          "error_rate": 0.9836065573770492,
+          "retry_ratio": 4.014598540145985,
+          "timeout_rate": 1.0054545454545454
+        },
+        "payments": {
+          "qps": 285.06357580262824,
+          "p50_ms": 1248.9724016441573,
+          "p99_ms": 1494.9794480328833,
+          "error_rate": 0.9012121212121212,
+          "retry_ratio": null,
+          "timeout_rate": null
+        }
+      },
+      "db": {
+        "qps": 285.06357580262824,
+        "query_p50_ms": 1149.3027071369975,
+        "query_p99_ms": 1492.98605414274,
+        "pool_busy_ratio": 0.9898483722991371
+      },
+      "edges": [
+        {
+          "src": "orders",
+          "dst": "payments",
+          "qps": 285.06357580262824,
+          "p99_ms": 598.8996036988111,
+          "error_rate": 1.0054545454545454
+        },
+        {
+          "src": "payments",
+          "dst": "db",
+          "qps": 285.06357580262824,
+          "p99_ms": 1492.98605414274,
+          "error_rate": 0.9012121212121212
+        }
+      ],
+      "slos": [
+        {
+          "name": "checkout",
+          "metric": "svc.gateway.p99_ms",
+          "threshold": 1000.0,
+          "value": 2494.9166666666665,
+          "breached": true
+        }
+      ],
+      "log_highlights": [],
+      "change_events": []
+    },
+    {
+      "schema_version": "1",
+      "window_start": "2026-09-20T02:13:53Z",
+      "window_end": "2026-09-20T02:13:58Z",
+      "services": {
+        "gateway": {
+          "qps": 81.40137136564657,
+          "p50_ms": 2241.902834008097,
+          "p99_ms": 2494.838056680162,
+          "error_rate": 0.9518304431599229,
+          "retry_ratio": null,
+          "timeout_rate": null
+        },
+        "orders": {
+          "qps": 82.02874224322382,
+          "p50_ms": 2240.872210953347,
+          "p99_ms": 2494.817444219067,
+          "error_rate": 0.9686888454011742,
+          "retry_ratio": 3.9388145315487573,
+          "timeout_rate": 0.9864077669902913
+        },
+        "payments": {
+          "qps": 323.09600195227733,
+          "p50_ms": 1248.0099502487562,
+          "p99_ms": 1494.960199004975,
+          "error_rate": 0.866504854368932,
+          "retry_ratio": null,
+          "timeout_rate": null
+        }
+      },
+      "db": {
+        "qps": 323.09600195227733,
+        "query_p50_ms": 1174.6949261400127,
+        "query_p99_ms": 1493.4938985228002,
+        "pool_busy_ratio": 0.9708511875247595
+      },
+      "edges": [
+        {
+          "src": "orders",
+          "dst": "payments",
+          "qps": 323.09600195227733,
+          "p99_ms": 598.908315565032,
+          "error_rate": 0.9864077669902913
+        },
+        {
+          "src": "payments",
+          "dst": "db",
+          "qps": 323.09600195227733,
+          "p99_ms": 1493.4938985228002,
+          "error_rate": 0.866504854368932
+        }
+      ],
+      "slos": [
+        {
+          "name": "checkout",
+          "metric": "svc.gateway.p99_ms",
+          "threshold": 1000.0,
+          "value": 2494.838056680162,
+          "breached": true
+        }
+      ],
+      "log_highlights": [],
+      "change_events": []
+    },
+    {
+      "schema_version": "1",
+      "window_start": "2026-09-20T02:14:00Z",
+      "window_end": "2026-09-20T02:14:05Z",
+      "services": {
+        "gateway": {
+          "qps": 78.38501388669687,
+          "p50_ms": 2242.7184466019417,
+          "p99_ms": 2494.854368932039,
+          "error_rate": 0.9590316573556797,
+          "retry_ratio": null,
+          "timeout_rate": null
+        },
+        "orders": {
+          "qps": 78.38501388669687,
+          "p50_ms": 2242.217898832685,
+          "p99_ms": 2494.8443579766536,
+          "error_rate": 0.9716981132075472,
+          "retry_ratio": 3.8864059590316575,
+          "timeout_rate": 0.9894585529468136
+        },
+        "payments": {
+          "qps": 304.63598506803794,
+          "p50_ms": 1248.1918997107039,
+          "p99_ms": 1494.9638379942141,
+          "error_rate": 0.8763775754671778,
+          "retry_ratio": null,
+          "timeout_rate": null
+        }
+      },
+      "db": {
+        "qps": 304.63598506803794,
+        "query_p50_ms": 1175.6211180124224,
+        "query_p99_ms": 1493.5124223602486,
+        "pool_busy_ratio": 0.9793860176414142
+      },
+      "edges": [
+        {
+          "src": "orders",
+          "dst": "payments",
+          "qps": 304.63598506803794,
+          "p99_ms": 598.9228379078197,
+          "error_rate": 0.9894585529468136
+        },
+        {
+          "src": "payments",
+          "dst": "db",
+          "qps": 304.63598506803794,
+          "p99_ms": 1493.5124223602486,
+          "error_rate": 0.8763775754671778
+        }
+      ],
+      "slos": [
+        {
+          "name": "checkout",
+          "metric": "svc.gateway.p99_ms",
+          "threshold": 1000.0,
+          "value": 2494.854368932039,
+          "breached": true
+        }
+      ],
+      "log_highlights": [],
+      "change_events": []
+    },
+    {
+      "schema_version": "1",
+      "window_start": "2026-09-20T02:14:05Z",
+      "window_end": "2026-09-20T02:14:10Z",
+      "services": {
+        "gateway": {
+          "qps": 76.67877189834887,
+          "p50_ms": 2239.864864864865,
+          "p99_ms": 2494.7972972972975,
+          "error_rate": 0.9844789356984479,
+          "retry_ratio": null,
+          "timeout_rate": null
+        },
+        "orders": {
+          "qps": 76.67877189834887,
+          "p50_ms": 2239.2533936651585,
+          "p99_ms": 2494.785067873303,
+          "error_rate": 0.9609544468546638,
+          "retry_ratio": 3.9866962305986697,
+          "timeout_rate": 0.9955506117908788
+        },
+        "payments": {
+          "qps": 305.69497089408264,
+          "p50_ms": 1247.350808700502,
+          "p99_ms": 1494.94701617401,
+          "error_rate": 0.882091212458287,
+          "retry_ratio": null,
+          "timeout_rate": null
+        }
+      },
+      "db": {
+        "qps": 305.69497089408264,
+        "query_p50_ms": 1162.4441132637853,
+        "query_p99_ms": 1493.2488822652756,
+        "pool_busy_ratio": 0.9853561609395188
+      },
+      "edges": [
+        {
+          "src": "orders",
+          "dst": "payments",
+          "qps": 305.69497089408264,
+          "p99_ms": 598.9009118541034,
+          "error_rate": 0.9955506117908788
+        },
+        {
+          "src": "payments",
+          "dst": "db",
+          "qps": 305.69497089408264,
+          "p99_ms": 1493.2488822652756,
+          "error_rate": 0.882091212458287
+        }
+      ],
+      "slos": [
+        {
+          "name": "checkout",
+          "metric": "svc.gateway.p99_ms",
+          "threshold": 1000.0,
+          "value": 2494.7972972972975,
+          "breached": true
+        }
+      ],
+      "log_highlights": [],
+      "change_events": []
+    },
+    {
+      "schema_version": "1",
+      "window_start": "2026-09-20T02:14:11Z",
+      "window_end": "2026-09-20T02:14:16Z",
+      "services": {
+        "gateway": {
+          "qps": 82.77849647182437,
+          "p50_ms": 2248.826291079812,
+          "p99_ms": 2494.976525821596,
+          "error_rate": 0.9321663019693655,
+          "retry_ratio": null,
+          "timeout_rate": null
+        },
+        "orders": {
+          "qps": 82.77849647182437,
+          "p50_ms": 2247.6415094339623,
+          "p99_ms": 2494.9528301886794,
+          "error_rate": 0.9953271028037384,
+          "retry_ratio": 3.938730853391685,
+          "timeout_rate": 0.9827777777777778
+        },
+        "payments": {
+          "qps": 326.0422180509494,
+          "p50_ms": 1249.5682210708117,
+          "p99_ms": 1494.9913644214162,
+          "error_rate": 0.8483333333333334,
+          "retry_ratio": null,
+          "timeout_rate": null
+        }
+      },
+      "db": {
+        "qps": 326.0422180509494,
+        "query_p50_ms": 1165.5145929339478,
+        "query_p99_ms": 1493.310291858679,
+        "pool_busy_ratio": 0.9851233826709535
+      },
+      "edges": [
+        {
+          "src": "orders",
+          "dst": "payments",
+          "qps": 326.0422180509494,
+          "p99_ms": 598.898631840796,
+          "error_rate": 0.9827777777777778
+        },
+        {
+          "src": "payments",
+          "dst": "db",
+          "qps": 326.0422180509494,
+          "p99_ms": 1493.310291858679,
+          "error_rate": 0.8494444444444444
+        }
+      ],
+      "slos": [
+        {
+          "name": "checkout",
+          "metric": "svc.gateway.p99_ms",
+          "threshold": 1000.0,
+          "value": 2494.976525821596,
+          "breached": true
+        }
+      ],
+      "log_highlights": [],
+      "change_events": []
+    },
+    {
+      "schema_version": "1",
+      "window_start": "2026-09-20T02:14:17Z",
+      "window_end": "2026-09-20T02:14:22Z",
+      "services": {
+        "gateway": {
+          "qps": 76.01634923400552,
+          "p50_ms": 2243.956043956044,
+          "p99_ms": 2494.879120879121,
+          "error_rate": 1.0340909090909092,
+          "retry_ratio": null,
+          "timeout_rate": null
+        },
+        "orders": {
+          "qps": 76.01634923400552,
+          "p50_ms": 2243.969298245614,
+          "p99_ms": 2494.879385964912,
+          "error_rate": 0.9764453961456103,
+          "retry_ratio": 4.075,
+          "timeout_rate": 1.0089235917456776
+        },
+        "payments": {
+          "qps": 309.76662312857246,
+          "p50_ms": 1248.224043715847,
+          "p99_ms": 1494.964480874317,
+          "error_rate": 0.9051868377021751,
+          "retry_ratio": null,
+          "timeout_rate": null
+        }
+      },
+      "db": {
+        "qps": 309.76662312857246,
+        "query_p50_ms": 1168.4665226781858,
+        "query_p99_ms": 1493.3693304535636,
+        "pool_busy_ratio": 0.9730261871594148
+      },
+      "edges": [
+        {
+          "src": "orders",
+          "dst": "payments",
+          "qps": 309.76662312857246,
+          "p99_ms": 598.943702843877,
+          "error_rate": 1.0089235917456776
+        },
+        {
+          "src": "payments",
+          "dst": "db",
+          "qps": 309.76662312857246,
+          "p99_ms": 1493.3693304535636,
+          "error_rate": 0.9046291132180703
+        }
+      ],
+      "slos": [
+        {
+          "name": "checkout",
+          "metric": "svc.gateway.p99_ms",
+          "threshold": 1000.0,
+          "value": 2494.879120879121,
+          "breached": true
+        }
+      ],
+      "log_highlights": [],
+      "change_events": []
+    },
+    {
+      "schema_version": "1",
+      "window_start": "2026-09-20T02:14:22Z",
+      "window_end": "2026-09-20T02:14:27Z",
+      "services": {
+        "gateway": {
+          "qps": 76.44857606551646,
+          "p50_ms": 2248.803827751196,
+          "p99_ms": 2494.976076555024,
+          "error_rate": 0.954337899543379,
+          "retry_ratio": null,
+          "timeout_rate": null
+        },
+        "orders": {
+          "qps": 76.274035937513,
+          "p50_ms": 2248.1927710843374,
+          "p99_ms": 2494.9638554216867,
+          "error_rate": 0.9952153110047847,
+          "retry_ratio": 3.929061784897025,
+          "timeout_rate": 0.9877693651718114
+        },
+        "payments": {
+          "qps": 299.5108596539412,
+          "p50_ms": 1249.4036970781158,
+          "p99_ms": 1494.9880739415623,
+          "error_rate": 0.8490675990675991,
+          "retry_ratio": null,
+          "timeout_rate": null
+        }
+      },
+      "db": {
+        "qps": 299.5108596539412,
+        "query_p50_ms": 1167.458432304038,
+        "query_p99_ms": 1493.3491686460807,
+        "pool_busy_ratio": 0.9996294669366507
+      },
+      "edges": [
+        {
+          "src": "orders",
+          "dst": "payments",
+          "qps": 299.6853997819447,
+          "p99_ms": 598.9446861404599,
+          "error_rate": 0.9877693651718114
+        },
+        {
+          "src": "payments",
+          "dst": "db",
+          "qps": 299.5108596539412,
+          "p99_ms": 1493.3491686460807,
+          "error_rate": 0.8484848484848485
+        }
+      ],
+      "slos": [
+        {
+          "name": "checkout",
+          "metric": "svc.gateway.p99_ms",
+          "threshold": 1000.0,
+          "value": 2494.976076555024,
+          "breached": true
+        }
+      ],
+      "log_highlights": [],
+      "change_events": []
+    },
+    {
+      "schema_version": "1",
+      "window_start": "2026-09-20T02:14:28Z",
+      "window_end": "2026-09-20T02:14:33Z",
+      "services": {
+        "gateway": {
+          "qps": 79.83720884811092,
+          "p50_ms": 2248.362445414847,
+          "p99_ms": 2494.967248908297,
+          "error_rate": 0.9956521739130435,
+          "retry_ratio": null,
+          "timeout_rate": null
+        },
+        "orders": {
+          "qps": 79.6636496984411,
+          "p50_ms": 2248.3695652173915,
+          "p99_ms": 2494.967391304348,
+          "error_rate": 0.9935205183585313,
+          "retry_ratio": 3.9760348583877994,
+          "timeout_rate": 1.0005479452054795
+        },
+        "payments": {
+          "qps": 316.5718889977268,
+          "p50_ms": 1249.3139407244785,
+          "p99_ms": 1494.9862788144897,
+          "error_rate": 0.8810307017543859,
+          "retry_ratio": null,
+          "timeout_rate": null
+        }
+      },
+      "db": {
+        "qps": 316.5718889977268,
+        "query_p50_ms": 1169.7396963123645,
+        "query_p99_ms": 1493.3947939262473,
+        "pool_busy_ratio": 0.9788086357402624
+      },
+      "edges": [
+        {
+          "src": "orders",
+          "dst": "payments",
+          "qps": 316.7454481473966,
+          "p99_ms": 598.9590210586226,
+          "error_rate": 1.0005479452054795
+        },
+        {
+          "src": "payments",
+          "dst": "db",
+          "qps": 316.5718889977268,
+          "p99_ms": 1493.3947939262473,
+          "error_rate": 0.8810307017543859
+        }
+      ],
+      "slos": [
+        {
+          "name": "checkout",
+          "metric": "svc.gateway.p99_ms",
+          "threshold": 1000.0,
+          "value": 2494.967248908297,
+          "breached": true
+        }
+      ],
+      "log_highlights": [],
+      "change_events": []
+    },
+    {
+      "schema_version": "1",
+      "window_start": "2026-09-20T02:14:34Z",
+      "window_end": "2026-09-20T02:14:39Z",
+      "services": {
+        "gateway": {
+          "qps": 77.90057138068242,
+          "p50_ms": 2247.7011494252874,
+          "p99_ms": 2494.9540229885056,
+          "error_rate": 0.9688195991091314,
+          "retry_ratio": null,
+          "timeout_rate": null
+        },
+        "orders": {
+          "qps": 78.24756724429348,
+          "p50_ms": 2247.1198156682026,
+          "p99_ms": 2494.942396313364,
+          "error_rate": 0.9908883826879271,
+          "retry_ratio": 3.940133037694013,
+          "timeout_rate": 0.9909960607765897
+        },
+        "payments": {
+          "qps": 308.6528206820357,
+          "p50_ms": 1249.2937853107344,
+          "p99_ms": 1494.9858757062148,
+          "error_rate": 0.8724002248454188,
+          "retry_ratio": null,
+          "timeout_rate": null
+        }
+      },
+      "db": {
+        "qps": 308.6528206820357,
+        "query_p50_ms": 1161.2595419847328,
+        "query_p99_ms": 1493.2251908396947,
+        "pool_busy_ratio": 0.989303191950249
+      },
+      "edges": [
+        {
+          "src": "orders",
+          "dst": "payments",
+          "qps": 308.30582481842464,
+          "p99_ms": 598.9084724799011,
+          "error_rate": 0.9909960607765897
+        },
+        {
+          "src": "payments",
+          "dst": "db",
+          "qps": 308.6528206820357,
+          "p99_ms": 1493.2251908396947,
+          "error_rate": 0.8724002248454188
+        }
+      ],
+      "slos": [
+        {
+          "name": "checkout",
+          "metric": "svc.gateway.p99_ms",
+          "threshold": 1000.0,
+          "value": 2494.9540229885056,
+          "breached": true
+        }
+      ],
+      "log_highlights": [],
+      "change_events": []
+    },
+    {
+      "schema_version": "1",
+      "window_start": "2026-09-20T02:14:40Z",
+      "window_end": "2026-09-20T02:14:45Z",
+      "services": {
+        "gateway": {
+          "qps": 85.11186032036758,
+          "p50_ms": 2246.384297520661,
+          "p99_ms": 2494.9276859504134,
+          "error_rate": 0.983739837398374,
+          "retry_ratio": null,
+          "timeout_rate": null
+        },
+        "orders": {
+          "qps": 85.11186032036758,
+          "p50_ms": 2245.8592132505178,
+          "p99_ms": 2494.9171842650103,
+          "error_rate": 0.9857433808553971,
+          "retry_ratio": 3.991869918699187,
+          "timeout_rate": 0.9959266802443992
+        },
+        "payments": {
+          "qps": 339.7554749374023,
+          "p50_ms": 1248.7159732922446,
+          "p99_ms": 1494.974319465845,
+          "error_rate": 0.8839103869653768,
+          "retry_ratio": null,
+          "timeout_rate": null
+        }
+      },
+      "db": {
+        "qps": 339.7554749374023,
+        "query_p50_ms": 1150.785153461813,
+        "query_p99_ms": 1493.0157030692362,
+        "pool_busy_ratio": 0.9799163300041157
+      },
+      "edges": [
+        {
+          "src": "orders",
+          "dst": "payments",
+          "qps": 339.7554749374023,
+          "p99_ms": 598.8865570051049,
+          "error_rate": 0.9959266802443992
+        },
+        {
+          "src": "payments",
+          "dst": "db",
+          "qps": 339.7554749374023,
+          "p99_ms": 1493.0157030692362,
+          "error_rate": 0.8839103869653768
+        }
+      ],
+      "slos": [
+        {
+          "name": "checkout",
+          "metric": "svc.gateway.p99_ms",
+          "threshold": 1000.0,
+          "value": 2494.9276859504134,
+          "breached": true
+        }
+      ],
+      "log_highlights": [],
+      "change_events": []
+    },
+    {
+      "schema_version": "1",
+      "window_start": "2026-09-20T02:14:46Z",
+      "window_end": "2026-09-20T02:14:51Z",
+      "services": {
+        "gateway": {
+          "qps": 79.10658176528374,
+          "p50_ms": 2249.4780793319414,
+          "p99_ms": 2494.989561586639,
+          "error_rate": 1.0504385964912282,
+          "retry_ratio": null,
+          "timeout_rate": null
+        },
+        "orders": {
+          "qps": 79.10658176528374,
+          "p50_ms": 2249.476987447699,
+          "p99_ms": 2494.989539748954,
+          "error_rate": 0.9979123173277662,
+          "retry_ratio": 4.06140350877193,
+          "timeout_rate": 1.011879049676026
+        },
+        "payments": {
+          "qps": 321.28374874847697,
+          "p50_ms": 1248.93219434063,
+          "p99_ms": 1494.9786438868127,
+          "error_rate": 0.8968682505399568,
+          "retry_ratio": null,
+          "timeout_rate": null
+        }
+      },
+      "db": {
+        "qps": 321.28374874847697,
+        "query_p50_ms": 1160.7142857142858,
+        "query_p99_ms": 1493.2142857142858,
+        "pool_busy_ratio": 0.9819360763040681
+      },
+      "edges": [
+        {
+          "src": "orders",
+          "dst": "payments",
+          "qps": 321.28374874847697,
+          "p99_ms": 598.8905325443787,
+          "error_rate": 1.011879049676026
+        },
+        {
+          "src": "payments",
+          "dst": "db",
+          "qps": 321.28374874847697,
+          "p99_ms": 1493.2142857142858,
+          "error_rate": 0.8968682505399568
+        }
+      ],
+      "slos": [
+        {
+          "name": "checkout",
+          "metric": "svc.gateway.p99_ms",
+          "threshold": 1000.0,
+          "value": 2494.989561586639,
+          "breached": true
+        }
+      ],
+      "log_highlights": [],
+      "change_events": []
+    },
+    {
+      "schema_version": "1",
+      "window_start": "2026-09-20T02:14:51Z",
+      "window_end": "2026-09-20T02:14:56Z",
+      "services": {
+        "gateway": {
+          "qps": 82.69675161490888,
+          "p50_ms": 2247.826086956522,
+          "p99_ms": 2494.9565217391305,
+          "error_rate": 0.9643605870020965,
+          "retry_ratio": null,
+          "timeout_rate": null
+        },
+        "orders": {
+          "qps": 82.69675161490888,
+          "p50_ms": 2247.282608695652,
+          "p99_ms": 2494.945652173913,
+          "error_rate": 0.9913978494623656,
+          "retry_ratio": 3.960167714884696,
+          "timeout_rate": 0.9915299100052938
+        },
+        "payments": {
+          "qps": 327.493005871201,
+          "p50_ms": 1249.330835117773,
+          "p99_ms": 1494.9866167023554,
+          "error_rate": 0.8729486500794071,
+          "retry_ratio": null,
+          "timeout_rate": null
+        }
+      },
+      "db": {
+        "qps": 327.493005871201,
+        "query_p50_ms": 1157.9620160701243,
+        "query_p99_ms": 1493.1592403214024,
+        "pool_busy_ratio": 0.9950642135263326
+      },
+      "edges": [
+        {
+          "src": "orders",
+          "dst": "payments",
+          "qps": 327.493005871201,
+          "p99_ms": 598.8971797884841,
+          "error_rate": 0.9915299100052938
+        },
+        {
+          "src": "payments",
+          "dst": "db",
+          "qps": 327.493005871201,
+          "p99_ms": 1493.1592403214024,
+          "error_rate": 0.8729486500794071
+        }
+      ],
+      "slos": [
+        {
+          "name": "checkout",
+          "metric": "svc.gateway.p99_ms",
+          "threshold": 1000.0,
+          "value": 2494.9565217391305,
+          "breached": true
+        }
+      ],
+      "log_highlights": [],
+      "change_events": []
+    },
+    {
+      "schema_version": "1",
+      "window_start": "2026-09-20T02:14:57Z",
+      "window_end": "2026-09-20T02:15:02Z",
+      "services": {
+        "gateway": {
+          "qps": 83.7071413073496,
+          "p50_ms": 2247.4849094567403,
+          "p99_ms": 2494.949698189135,
+          "error_rate": 0.9959919839679359,
+          "retry_ratio": null,
+          "timeout_rate": null
+        },
+        "orders": {
+          "qps": 83.37164174299149,
+          "p50_ms": 2246.4646464646466,
+          "p99_ms": 2494.929292929293,
+          "error_rate": 0.9900398406374502,
+          "retry_ratio": 3.977867203219316,
+          "timeout_rate": 1.0
+        },
+        "payments": {
+          "qps": 331.8090691501754,
+          "p50_ms": 1248.8543788187374,
+          "p99_ms": 1494.9770875763747,
+          "error_rate": 0.8816986855409504,
+          "retry_ratio": null,
+          "timeout_rate": null
+        }
+      },
+      "db": {
+        "qps": 331.8090691501754,
+        "query_p50_ms": 1163.7695978186775,
+        "query_p99_ms": 1493.2753919563736,
+        "pool_busy_ratio": 0.9826983191694059
+      },
+      "edges": [
+        {
+          "src": "orders",
+          "dst": "payments",
+          "qps": 331.6413193679963,
+          "p99_ms": 598.8970506399555,
+          "error_rate": 1.0
+        },
+        {
+          "src": "payments",
+          "dst": "db",
+          "qps": 331.8090691501754,
+          "p99_ms": 1493.2753919563736,
+          "error_rate": 0.8816986855409504
+        }
+      ],
+      "slos": [
+        {
+          "name": "checkout",
+          "metric": "svc.gateway.p99_ms",
+          "threshold": 1000.0,
+          "value": 2494.949698189135,
+          "breached": true
+        }
+      ],
+      "log_highlights": [],
+      "change_events": []
+    },
+    {
+      "schema_version": "1",
+      "window_start": "2026-09-20T02:15:03Z",
+      "window_end": "2026-09-20T02:15:08Z",
+      "services": {
+        "gateway": {
+          "qps": 76.47422340040649,
+          "p50_ms": 2245.901639344262,
+          "p99_ms": 2494.9180327868853,
+          "error_rate": 1.0023474178403755,
+          "retry_ratio": null,
+          "timeout_rate": null
+        },
+        "orders": {
+          "qps": 76.83325731308446,
+          "p50_ms": 2245.305164319249,
+          "p99_ms": 2494.9061032863847,
+          "error_rate": 0.9838709677419355,
+          "retry_ratio": 4.02803738317757,
+          "timeout_rate": 0.9994199535962877
+        },
+        "payments": {
+          "qps": 309.3077157720666,
+          "p50_ms": 1248.9831493317838,
+          "p99_ms": 1494.9796629866357,
+          "error_rate": 0.8781195589088798,
+          "retry_ratio": null,
+          "timeout_rate": null
+        }
+      },
+      "db": {
+        "qps": 309.3077157720666,
+        "query_p50_ms": 1162.3731459797034,
+        "query_p99_ms": 1493.247462919594,
+        "pool_busy_ratio": 0.987391914973427
+      },
+      "edges": [
+        {
+          "src": "orders",
+          "dst": "payments",
+          "qps": 309.4872327284056,
+          "p99_ms": 598.9139987445072,
+          "error_rate": 0.9994199535962877
+        },
+        {
+          "src": "payments",
+          "dst": "db",
+          "qps": 309.3077157720666,
+          "p99_ms": 1493.247462919594,
+          "error_rate": 0.8792803250145096
+        }
+      ],
+      "slos": [
+        {
+          "name": "checkout",
+          "metric": "svc.gateway.p99_ms",
+          "threshold": 1000.0,
+          "value": 2494.9180327868853,
+          "breached": true
+        }
+      ],
+      "log_highlights": [],
+      "change_events": []
+    },
+    {
+      "schema_version": "1",
+      "window_start": "2026-09-20T02:15:09Z",
+      "window_end": "2026-09-20T02:15:14Z",
+      "services": {
+        "gateway": {
+          "qps": 80.87350555111979,
+          "p50_ms": 2244.920993227991,
+          "p99_ms": 2494.89841986456,
+          "error_rate": 0.9486081370449678,
+          "retry_ratio": null,
+          "timeout_rate": null
+        },
+        "orders": {
+          "qps": 80.70032887970412,
+          "p50_ms": 2243.181818181818,
+          "p99_ms": 2494.8636363636365,
+          "error_rate": 0.9800884955752213,
+          "retry_ratio": 3.929184549356223,
+          "timeout_rate": 0.9874385581649372
+        },
+        "payments": {
+          "qps": 317.25966203351487,
+          "p50_ms": 1248.074807480748,
+          "p99_ms": 1494.961496149615,
+          "error_rate": 0.8777292576419214,
+          "retry_ratio": null,
+          "timeout_rate": null
+        }
+      },
+      "db": {
+        "qps": 317.25966203351487,
+        "query_p50_ms": 1160.859896219422,
+        "query_p99_ms": 1493.2171979243885,
+        "pool_busy_ratio": 0.9928533681083214
+      },
+      "edges": [
+        {
+          "src": "orders",
+          "dst": "payments",
+          "qps": 317.0864853620992,
+          "p99_ms": 598.8790869833437,
+          "error_rate": 0.9874385581649372
+        },
+        {
+          "src": "payments",
+          "dst": "db",
+          "qps": 317.25966203351487,
+          "p99_ms": 1493.2171979243885,
+          "error_rate": 0.8766375545851528
+        }
+      ],
+      "slos": [
+        {
+          "name": "checkout",
+          "metric": "svc.gateway.p99_ms",
+          "threshold": 1000.0,
+          "value": 2494.89841986456,
+          "breached": true
+        }
+      ],
+      "log_highlights": [],
+      "change_events": []
+    },
+    {
+      "schema_version": "1",
+      "window_start": "2026-09-20T02:15:14Z",
+      "window_end": "2026-09-20T02:15:19Z",
+      "services": {
+        "gateway": {
+          "qps": 84.13846974608845,
+          "p50_ms": 2246.0585585585586,
+          "p99_ms": 2494.9211711711714,
+          "error_rate": 0.9673202614379085,
+          "retry_ratio": null,
+          "timeout_rate": null
+        },
+        "orders": {
+          "qps": 84.32177795904289,
+          "p50_ms": 2245.4853273137696,
+          "p99_ms": 2494.9097065462756,
+          "error_rate": 0.9844789356984479,
+          "retry_ratio": 3.967391304347826,
+          "timeout_rate": 0.9912328767123287
+        },
+        "payments": {
+          "qps": 334.3541804289005,
+          "p50_ms": 1248.8808058198097,
+          "p99_ms": 1494.9776161163961,
+          "error_rate": 0.8700657894736842,
+          "retry_ratio": null,
+          "timeout_rate": null
+        }
+      },
+      "db": {
+        "qps": 334.3541804289005,
+        "query_p50_ms": 1162.3401053423627,
+        "query_p99_ms": 1493.2468021068473,
+        "pool_busy_ratio": 0.9744078842013502
+      },
+      "edges": [
+        {
+          "src": "orders",
+          "dst": "payments",
+          "qps": 334.53748864185496,
+          "p99_ms": 598.8967193195626,
+          "error_rate": 0.9912328767123287
+        },
+        {
+          "src": "payments",
+          "dst": "db",
+          "qps": 334.3541804289005,
+          "p99_ms": 1493.2468021068473,
+          "error_rate": 0.8700657894736842
+        }
+      ],
+      "slos": [
+        {
+          "name": "checkout",
+          "metric": "svc.gateway.p99_ms",
+          "threshold": 1000.0,
+          "value": 2494.9211711711714,
+          "breached": true
+        }
+      ],
+      "log_highlights": [],
+      "change_events": []
+    },
+    {
+      "schema_version": "1",
+      "window_start": "2026-09-20T02:15:20Z",
+      "window_end": "2026-09-20T02:15:25Z",
+      "services": {
+        "gateway": {
+          "qps": 82.75738496867231,
+          "p50_ms": 2246.5139442231075,
+          "p99_ms": 2494.930278884462,
+          "error_rate": 0.974757281553398,
+          "retry_ratio": null,
+          "timeout_rate": null
+        },
+        "orders": {
+          "qps": 82.43599706588135,
+          "p50_ms": 2246.5139442231075,
+          "p99_ms": 2494.930278884462,
+          "error_rate": 0.9862475442043221,
+          "retry_ratio": 3.957115009746589,
+          "timeout_rate": 0.9945812807881773
+        },
+        "payments": {
+          "qps": 325.7266394786384,
+          "p50_ms": 1248.8833746898263,
+          "p99_ms": 1494.9776674937966,
+          "error_rate": 0.8801184015786877,
+          "retry_ratio": null,
+          "timeout_rate": null
+        }
+      },
+      "db": {
+        "qps": 325.7266394786384,
+        "query_p50_ms": 1156.4833672776647,
+        "query_p99_ms": 1493.1296673455533,
+        "pool_busy_ratio": 0.9872028742305049
+      },
+      "edges": [
+        {
+          "src": "orders",
+          "dst": "payments",
+          "qps": 326.20872133282484,
+          "p99_ms": 598.9308707124011,
+          "error_rate": 0.9945812807881773
+        },
+        {
+          "src": "payments",
+          "dst": "db",
+          "qps": 325.7266394786384,
+          "p99_ms": 1493.1296673455533,
+          "error_rate": 0.8801184015786877
+        }
+      ],
+      "slos": [
+        {
+          "name": "checkout",
+          "metric": "svc.gateway.p99_ms",
+          "threshold": 1000.0,
+          "value": 2494.930278884462,
+          "breached": true
+        }
+      ],
+      "log_highlights": [],
+      "change_events": []
+    },
+    {
+      "schema_version": "1",
+      "window_start": "2026-09-20T02:15:26Z",
+      "window_end": "2026-09-20T02:15:31Z",
+      "services": {
+        "gateway": {
+          "qps": 75.06968756500338,
+          "p50_ms": 2246.6139954853275,
+          "p99_ms": 2494.9322799097067,
+          "error_rate": 1.0598086124401913,
+          "retry_ratio": null,
+          "timeout_rate": null
+        },
+        "orders": {
+          "qps": 75.24928011898665,
+          "p50_ms": 2246.6139954853275,
+          "p99_ms": 2494.9322799097067,
+          "error_rate": 0.9866369710467706,
+          "retry_ratio": 4.076372315035799,
+          "timeout_rate": 1.0140515222482436
+        },
+        "payments": {
+          "qps": 307.2828598653607,
+          "p50_ms": 1249.1530208921513,
+          "p99_ms": 1494.983060417843,
+          "error_rate": 0.9146697837521917,
+          "retry_ratio": null,
+          "timeout_rate": null
+        }
+      },
+      "db": {
+        "qps": 307.2828598653607,
+        "query_p50_ms": 1156.7567567567567,
+        "query_p99_ms": 1493.1351351351352,
+        "pool_busy_ratio": 0.9730447095999973
+      },
+      "edges": [
+        {
+          "src": "orders",
+          "dst": "payments",
+          "qps": 306.7440822034109,
+          "p99_ms": 598.9304615384615,
+          "error_rate": 1.0140515222482436
+        },
+        {
+          "src": "payments",
+          "dst": "db",
+          "qps": 307.2828598653607,
+          "p99_ms": 1493.1351351351352,
+          "error_rate": 0.9152542372881356
+        }
+      ],
+      "slos": [
+        {
+          "name": "checkout",
+          "metric": "svc.gateway.p99_ms",
+          "threshold": 1000.0,
+          "value": 2494.9322799097067,
+          "breached": true
+        }
+      ],
+      "log_highlights": [],
+      "change_events": []
+    },
+    {
+      "schema_version": "1",
+      "window_start": "2026-09-20T02:15:32Z",
+      "window_end": "2026-09-20T02:15:37Z",
+      "services": {
+        "gateway": {
+          "qps": 85.57107761594177,
+          "p50_ms": 2246.228448275862,
+          "p99_ms": 2494.924568965517,
+          "error_rate": 0.9317269076305221,
+          "retry_ratio": null,
+          "timeout_rate": null
+        },
+        "orders": {
+          "qps": 85.74290708906615,
+          "p50_ms": 2246.2203023758098,
+          "p99_ms": 2494.924406047516,
+          "error_rate": 0.9851063829787234,
+          "retry_ratio": 3.9519038076152304,
+          "timeout_rate": 0.9817444219066938
+        },
+        "payments": {
+          "qps": 338.84772100127947,
+          "p50_ms": 1249.0706319702601,
+          "p99_ms": 1494.9814126394053,
+          "error_rate": 0.8448275862068966,
+          "retry_ratio": null,
+          "timeout_rate": null
+        }
+      },
+      "db": {
+        "qps": 338.84772100127947,
+        "query_p50_ms": 1160.3163191948238,
+        "query_p99_ms": 1493.2063263838963,
+        "pool_busy_ratio": 0.9866676275170545
+      },
+      "edges": [
+        {
+          "src": "orders",
+          "dst": "payments",
+          "qps": 338.84772100127947,
+          "p99_ms": 598.9235457063712,
+          "error_rate": 0.9817444219066938
+        },
+        {
+          "src": "payments",
+          "dst": "db",
+          "qps": 338.84772100127947,
+          "p99_ms": 1493.2063263838963,
+          "error_rate": 0.8448275862068966
+        }
+      ],
+      "slos": [
+        {
+          "name": "checkout",
+          "metric": "svc.gateway.p99_ms",
+          "threshold": 1000.0,
+          "value": 2494.924568965517,
+          "breached": true
+        }
+      ],
+      "log_highlights": [],
+      "change_events": []
+    }
+  ],
+  "baseline": {
+    "schema_version": "1",
+    "window_start": "2026-09-20T02:13:18Z",
+    "window_end": "2026-09-20T02:13:23Z",
+    "services": {
+      "gateway": {
+        "qps": 83.4425818102918,
+        "p50_ms": 48.70909090909091,
+        "p99_ms": 96.05208333333331,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      },
+      "orders": {
+        "qps": 83.2691045092309,
+        "p50_ms": 48.52313167259786,
+        "p99_ms": 95.01315789473682,
+        "error_rate": 0.0,
+        "retry_ratio": 1.0,
+        "timeout_rate": 0.0
+      },
+      "payments": {
+        "qps": 83.2691045092309,
+        "p50_ms": 47.232142857142854,
+        "p99_ms": 94.73611111111109,
+        "error_rate": 0.0,
+        "retry_ratio": null,
+        "timeout_rate": null
+      }
+    },
+    "db": {
+      "qps": 83.2691045092309,
+      "query_p50_ms": 42.916666666666664,
+      "query_p99_ms": 93.6833333333333,
+      "pool_busy_ratio": 0.8053870334719687
+    },
+    "edges": [
+      {
+        "src": "orders",
+        "dst": "payments",
+        "qps": 83.2691045092309,
+        "p99_ms": 95.01315789473682,
+        "error_rate": 0.0
+      },
+      {
+        "src": "payments",
+        "dst": "db",
+        "qps": 83.2691045092309,
+        "p99_ms": 93.6833333333333,
+        "error_rate": 0.0
+      }
+    ],
+    "slos": [
+      {
+        "name": "checkout",
+        "metric": "svc.gateway.p99_ms",
+        "threshold": 1000.0,
+        "value": 96.05208333333331,
+        "breached": false
+      }
+    ],
+    "log_highlights": [],
+    "change_events": []
+  },
+  "similar": {
+    "top1_by_incident": {
+      "demo-degraded-1": 20
+    },
+    "top1_same_class": "20/20",
+    "mean_best_score_by_incident": {
+      "demo-degraded-1": 0.9921,
+      "live-storm-012057": 0.9737,
+      "live-storm-015819": 0.9693,
+      "live-14": 0.9904,
+      "live-storm-013228": 0.9818
+    },
+    "per_window": [
+      {
+        "window_start": "2026-09-20T02:13:41+00:00",
+        "top": [
+          [
+            "demo-degraded-1",
+            0.9913
+          ],
+          [
+            "demo-degraded-1",
+            0.9913
+          ],
+          [
+            "demo-degraded-1",
+            0.9913
+          ]
+        ]
+      },
+      {
+        "window_start": "2026-09-20T02:13:46+00:00",
+        "top": [
+          [
+            "demo-degraded-1",
+            0.9789
+          ],
+          [
+            "demo-degraded-1",
+            0.9789
+          ],
+          [
+            "demo-degraded-1",
+            0.9737
+          ]
+        ]
+      },
+      {
+        "window_start": "2026-09-20T02:13:53+00:00",
+        "top": [
+          [
+            "demo-degraded-1",
+            0.9926
+          ],
+          [
+            "demo-degraded-1",
+            0.9926
+          ],
+          [
+            "demo-degraded-1",
+            0.9916
+          ]
+        ]
+      },
+      {
+        "window_start": "2026-09-20T02:14:00+00:00",
+        "top": [
+          [
+            "demo-degraded-1",
+            0.9945
+          ],
+          [
+            "demo-degraded-1",
+            0.9945
+          ],
+          [
+            "demo-degraded-1",
+            0.9928
+          ]
+        ]
+      },
+      {
+        "window_start": "2026-09-20T02:14:05+00:00",
+        "top": [
+          [
+            "demo-degraded-1",
+            0.9926
+          ],
+          [
+            "demo-degraded-1",
+            0.9926
+          ],
+          [
+            "demo-degraded-1",
+            0.9879
+          ]
+        ]
+      },
+      {
+        "window_start": "2026-09-20T02:14:11+00:00",
+        "top": [
+          [
+            "demo-degraded-1",
+            0.9924
+          ],
+          [
+            "demo-degraded-1",
+            0.9924
+          ],
+          [
+            "live-14",
+            0.9916
+          ]
+        ]
+      },
+      {
+        "window_start": "2026-09-20T02:14:17+00:00",
+        "top": [
+          [
+            "demo-degraded-1",
+            0.9886
+          ],
+          [
+            "demo-degraded-1",
+            0.9886
+          ],
+          [
+            "demo-degraded-1",
+            0.9855
+          ]
+        ]
+      },
+      {
+        "window_start": "2026-09-20T02:14:22+00:00",
+        "top": [
+          [
+            "demo-degraded-1",
+            0.9946
+          ],
+          [
+            "demo-degraded-1",
+            0.9946
+          ],
+          [
+            "demo-degraded-1",
+            0.989
+          ]
+        ]
+      },
+      {
+        "window_start": "2026-09-20T02:14:28+00:00",
+        "top": [
+          [
+            "demo-degraded-1",
+            0.9944
+          ],
+          [
+            "demo-degraded-1",
+            0.9931
+          ],
+          [
+            "demo-degraded-1",
+            0.9931
+          ]
+        ]
+      },
+      {
+        "window_start": "2026-09-20T02:14:34+00:00",
+        "top": [
+          [
+            "demo-degraded-1",
+            0.9916
+          ],
+          [
+            "demo-degraded-1",
+            0.9916
+          ],
+          [
+            "demo-degraded-1",
+            0.9905
+          ]
+        ]
+      },
+      {
+        "window_start": "2026-09-20T02:14:40+00:00",
+        "top": [
+          [
+            "demo-degraded-1",
+            0.9936
+          ],
+          [
+            "demo-degraded-1",
+            0.9936
+          ],
+          [
+            "demo-degraded-1",
+            0.9917
+          ]
+        ]
+      },
+      {
+        "window_start": "2026-09-20T02:14:46+00:00",
+        "top": [
+          [
+            "demo-degraded-1",
+            0.9948
+          ],
+          [
+            "demo-degraded-1",
+            0.9948
+          ],
+          [
+            "demo-degraded-1",
+            0.9913
+          ]
+        ]
+      },
+      {
+        "window_start": "2026-09-20T02:14:51+00:00",
+        "top": [
+          [
+            "demo-degraded-1",
+            0.9929
+          ],
+          [
+            "demo-degraded-1",
+            0.9929
+          ],
+          [
+            "demo-degraded-1",
+            0.9923
+          ]
+        ]
+      },
+      {
+        "window_start": "2026-09-20T02:14:57+00:00",
+        "top": [
+          [
+            "demo-degraded-1",
+            0.997
+          ],
+          [
+            "demo-degraded-1",
+            0.997
+          ],
+          [
+            "demo-degraded-1",
+            0.9946
+          ]
+        ]
+      },
+      {
+        "window_start": "2026-09-20T02:15:03+00:00",
+        "top": [
+          [
+            "demo-degraded-1",
+            0.99
+          ],
+          [
+            "demo-degraded-1",
+            0.99
+          ],
+          [
+            "demo-degraded-1",
+            0.987
+          ]
+        ]
+      },
+      {
+        "window_start": "2026-09-20T02:15:09+00:00",
+        "top": [
+          [
+            "demo-degraded-1",
+            0.9946
+          ],
+          [
+            "demo-degraded-1",
+            0.9946
+          ],
+          [
+            "demo-degraded-1",
+            0.9946
+          ]
+        ]
+      },
+      {
+        "window_start": "2026-09-20T02:15:14+00:00",
+        "top": [
+          [
+            "demo-degraded-1",
+            0.9957
+          ],
+          [
+            "demo-degraded-1",
+            0.9957
+          ],
+          [
+            "demo-degraded-1",
+            0.9956
+          ]
+        ]
+      },
+      {
+        "window_start": "2026-09-20T02:15:20+00:00",
+        "top": [
+          [
+            "demo-degraded-1",
+            0.9938
+          ],
+          [
+            "demo-degraded-1",
+            0.9917
+          ],
+          [
+            "demo-degraded-1",
+            0.9917
+          ]
+        ]
+      },
+      {
+        "window_start": "2026-09-20T02:15:26+00:00",
+        "top": [
+          [
+            "demo-degraded-1",
+            0.9844
+          ],
+          [
+            "demo-degraded-1",
+            0.9844
+          ],
+          [
+            "demo-degraded-1",
+            0.9822
+          ]
+        ]
+      },
+      {
+        "window_start": "2026-09-20T02:15:32+00:00",
+        "top": [
+          [
+            "demo-degraded-1",
+            0.9943
+          ],
+          [
+            "demo-degraded-1",
+            0.9904
+          ],
+          [
+            "demo-degraded-1",
+            0.9904
+          ]
+        ]
+      }
+    ]
+  }
+}

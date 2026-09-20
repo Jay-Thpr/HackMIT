@@ -1,12 +1,15 @@
+import json
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from faultline_contracts import (
     NONE_OF_THE_ABOVE,
     WINDOW_S,
     ActionHandle,
+    ActionStatus,
     Actor,
     AuditEvent,
     AuditSink,
@@ -29,12 +32,21 @@ from .ports import (
     CanaryResult,
     CanaryStatus,
     CanaryTarget,
+    HypothesisInvestigation,
+    Investigation,
     PatchAdapter,
+    PatchCheckout,
     PatchProposal,
+    PatchVerification,
+    PatchVerifier,
+    SimilarIncidentFinder,
+    VerificationStatus,
 )
 from .renderer import TerminalRenderer
 
 BASELINE_S = 120
+MAX_TELEMETRY_LAG_S = 3 * WINDOW_S  # newest window may trail the clock by one window plus poll jitter
+CODE_SUPERSEDES = {"retry_cap"}  # levers whose job the durable code patch takes over
 
 
 class BudgetExceeded(RuntimeError):
@@ -47,6 +59,8 @@ class RunResult:
     diagnosis: str
     patch: PatchProposal | None
     canary: CanaryResult | None = None
+    verification: PatchVerification | None = None
+    investigations: list[HypothesisInvestigation] | None = None
 
 
 class Orchestrator:
@@ -62,18 +76,101 @@ class Orchestrator:
         clock: Callable[[], datetime] = utcnow,
         sleep: Callable[[float], None] = time.sleep,
         action_budget: int = 5,
+        verifier: PatchVerifier | None = None,
+        checkout: PatchCheckout | None = None,
+        max_revisions: int = 1,
+        investigation: Investigation | None = None,
+        investigation_gate: bool = False,
+        similar: SimilarIncidentFinder | None = None,
     ):
+        self._similar = similar
         self._levers, self._audit, self._patches = levers, audit, patches
         self._canary_deployer = canary_deployer
+        self._verifier = verifier
+        self._checkout = checkout
+        self._max_revisions = max_revisions
+        self._investigation = investigation
+        self._investigation_gate = investigation_gate
         self._renderer, self._telemetry, self._brain = renderer, telemetry, brain
         self._clock, self._sleep, self._action_budget = clock, sleep, action_budget
         self._actions = 0
         self._incident_id = ""
 
     def run(self, incident_id: str, now: datetime | None = None) -> RunResult:
+        """Run the incident; any failure Faultline cannot handle itself is audited and paged
+        before it propagates, so a person owns the incident even when the loop dies."""
         self._incident_id = incident_id
         now = now or self._clock()
         fp = self.detect(incident_id, now)
+        try:
+            return self._run(incident_id, fp, now)
+        except BudgetExceeded:
+            raise  # _apply already paged
+        except Exception as exc:  # noqa: BLE001 - the audit trail must end with a human owner
+            self._record(
+                incident_id, Stage.report, EventKind.refused, Actor.orchestrator,
+                f"incident loop aborted: {type(exc).__name__}",
+                {"aborted": True, "error": f"{type(exc).__name__}: {exc}", "actions_applied": self._actions},
+            )
+            self._record(
+                incident_id, Stage.report, EventKind.page_human, Actor.orchestrator,
+                "incident loop aborted; applied levers revert on their TTL; page human", {},
+            )
+            self._renderer.event("report", f"aborted ({type(exc).__name__}) — paged human")
+            raise
+
+    def resume(self, incident_id: str) -> int:
+        """Pick an incident back up after a restart: the action budget continues from the audit
+        log and any lever a previous run left applied is released (or left to its TTL if the
+        release does not land). Returns the number of actions already counted against the budget.
+        """
+        events = self._audit.query(incident_id)
+        fields = set(ActionHandle.model_fields)
+        applied = {
+            e.action_id: ActionHandle.model_validate({k: v for k, v in e.payload.items() if k in fields})
+            for e in events
+            if e.kind == EventKind.action_apply and e.action_id and "lever_id" in e.payload
+        }
+        released = {
+            e.action_id
+            for e in events
+            if e.kind == EventKind.action_undo and e.payload.get("status") in ("undone", "expired")
+        }
+        now = self._clock()
+        leftover = [h for aid, h in applied.items() if aid not in released and h.expires_at > now]
+        self._actions = len(applied)
+        self._incident_id = incident_id
+        still_active: list[str] = []
+        for handle in leftover:
+            try:
+                if self._levers.status(handle) != ActionStatus.active:
+                    continue
+                _, landed = self._release(
+                    incident_id, handle, Stage.mitigate, f"released {handle.lever_id} left over from a previous run"
+                )
+            except LeverError as exc:
+                landed = False
+                self._record(
+                    incident_id, Stage.mitigate, EventKind.refused, Actor.adapter,
+                    f"could not check {handle.lever_id} left over from a previous run: {exc}",
+                    {"lever_id": handle.lever_id, "expires_at": handle.expires_at.isoformat()},
+                    action_id=handle.action_id,
+                )
+            if not landed:
+                still_active.append(handle.lever_id)
+        self._record(
+            incident_id, Stage.mitigate, EventKind.mitigation, Actor.orchestrator,
+            f"resumed: {self._actions}/{self._action_budget} actions already applied, "
+            f"{len(leftover)} lever(s) found applied, {len(leftover) - len(still_active)} released",
+            {"resumed": True, "actions_applied": self._actions, "leftover": [h.lever_id for h in leftover],
+             "still_active": still_active},
+        )
+        self._renderer.event(
+            "resume", f"{self._actions}/{self._action_budget} actions used; {len(leftover)} leftover lever(s)"
+        )
+        return self._actions
+
+    def _run(self, incident_id: str, fp: Fingerprint, now: datetime) -> RunResult:
         triage = self.triage(incident_id, fp)
         experiment = self.plan(incident_id, triage)
         if experiment is None:
@@ -87,8 +184,21 @@ class Orchestrator:
             )
             self._renderer.event("report", f"ready: faultline report --incident {incident_id}")
             return RunResult(incident_id, "refused", None)
+        investigations, triage = self.investigate(incident_id, triage, fp, experiment, now)
+        if triage is None:
+            return RunResult(incident_id, NONE_OF_THE_ABOVE, None, investigations=investigations)
         baseline, during, after_release = self.experiment(incident_id, experiment, now)
         verdict = self.judge(incident_id, triage, experiment, baseline, during, after_release)
+        if not verdict.confirmed:
+            follow_up = self.confirmation_experiment(incident_id, triage, verdict, experiment)
+            if follow_up is not None:
+                experiment = follow_up
+                baseline, during, after_release = self.experiment(
+                    incident_id, experiment, self._clock()
+                )
+                verdict = self.judge(
+                    incident_id, triage, experiment, baseline, during, after_release
+                )
         if verdict.diagnosis == NONE_OF_THE_ABOVE or not verdict.confirmed:
             self._record(
                 incident_id,
@@ -98,16 +208,29 @@ class Orchestrator:
                 "diagnosis not confirmed",
                 {},
             )
-            return RunResult(incident_id, verdict.diagnosis, None)
+            return RunResult(incident_id, verdict.diagnosis, None, investigations=investigations)
         mitigation = self.mitigate(incident_id, triage, experiment, verdict)
         patch = self.patch(incident_id, verdict, triage)
-        canary = self.canary(incident_id, patch, mitigation)
-        report_ready = canary.status == CanaryStatus.passed
-        report_summary = (
-            "incident report ready"
-            if report_ready
-            else f"incident escalated: canary {canary.status.value}"
-        )
+        patch, verification, canary = self.ship(incident_id, patch, verdict, mitigation)
+        # A relief lever (e.g. db_failover) is still holding production up: the code patch does
+        # not cure the diagnosed cause, so the incident is mitigated, not resolved. A human must
+        # fix the dependency before the lever's TTL runs out. (PRD: human-gated remediation.)
+        relief_held = mitigation is not None and mitigation.lever_id not in CODE_SUPERSEDES
+        canary_ok = canary.status == CanaryStatus.passed
+        if canary_ok and relief_held:
+            self._record(
+                incident_id, Stage.report, EventKind.page_human, Actor.orchestrator,
+                f"{mitigation.lever_id} is holding production up for {mitigation.ttl_s}s; the diagnosed "
+                f"cause ({verdict.diagnosis}) needs a human fix before it expires",
+                {"lever_id": mitigation.lever_id, "expires_at": mitigation.expires_at.isoformat(),
+                 "diagnosis": verdict.diagnosis},
+                action_id=mitigation.action_id,
+            )
+            report_summary, report_label = "incident mitigated; human action required", "mitigated"
+        elif canary_ok:
+            report_summary, report_label = "incident report ready", "ready"
+        else:
+            report_summary, report_label = f"incident escalated: canary {canary.status.value}", "escalated"
         self._record(
             incident_id,
             Stage.report,
@@ -117,15 +240,17 @@ class Orchestrator:
             {
                 "diagnosis": verdict.diagnosis,
                 "patch_reference": patch.reference,
+                "clone_verification": verification.status.value,
                 "canary_status": canary.status.value,
                 "canary_detail": canary.detail,
+                "mitigation_held": mitigation.lever_id if relief_held else None,
+                "mitigation_expires_at": mitigation.expires_at.isoformat() if relief_held else None,
             },
         )
-        report_label = "ready" if report_ready else "escalated"
         self._renderer.event(
             "report", f"{report_label}: faultline report --incident {incident_id}"
         )
-        return RunResult(incident_id, verdict.diagnosis, patch, canary)
+        return RunResult(incident_id, verdict.diagnosis, patch, canary, verification, investigations)
 
     def detect(self, incident_id: str, now: datetime) -> Fingerprint:
         fp = self._telemetry.window(now - timedelta(seconds=WINDOW_S), now)
@@ -146,24 +271,64 @@ class Orchestrator:
     def triage(self, incident_id: str, fingerprint: Fingerprint) -> TriageResult:
         triage = self._brain.triage(incident_id, fingerprint)
         ids = [item.id for item in triage.hypotheses]
+        similar = self.similar_incidents(incident_id, fingerprint)
         self._record(
             incident_id,
             Stage.triage,
             EventKind.triage,
             Actor.llm,
             f"ambiguous: {' vs '.join(ids)}",
-            {"hypotheses": ids, "ambiguous": triage.ambiguous},
+            {"hypotheses": ids, "ambiguous": triage.ambiguous, "triage": triage.model_dump(mode="json"),
+             "similar_incidents": similar},
         )
         self._renderer.event("triage", f"ambiguous: {' vs '.join(ids)}")
+        if similar:
+            self._renderer.event("triage", "looks like " + ", ".join(
+                f"{s['incident_id']} ({s['score']:.2f}" + (f", was {s['diagnosis']}" if s["diagnosis"] else "") + ")"
+                for s in similar))
         source = self._brain.triage_source()
         if source:
             self._renderer.event("triage", f"source: {source}")
         return triage
 
+    def similar_incidents(self, incident_id: str, fingerprint: Fingerprint, limit: int = 3) -> list[dict]:
+        """Past production incidents whose breach fingerprint resembles this one, each with the
+        diagnosis its own audit trail recorded. Evidence for the report and the UI; never
+        changes what the math decides. Best-effort: an unreachable store yields []."""
+        if self._similar is None:
+            return []
+        try:
+            ranked = self._similar.find(fingerprint, exclude_incident_id=incident_id, limit=limit)
+        except Exception as exc:  # noqa: BLE001 - history is a nice-to-have, never a blocker
+            self._renderer.event("triage", f"similar-incident search unavailable ({type(exc).__name__})")
+            return []
+        out = []
+        for past_id, score in ranked:
+            verdict = next((e for e in reversed(self._audit.query(past_id)) if e.kind == EventKind.verdict), None)
+            out.append({"incident_id": past_id, "score": round(float(score), 4),
+                        "diagnosis": verdict.payload.get("diagnosis") if verdict else None,
+                        "confirmed": bool(verdict.payload.get("confirmed")) if verdict else None})
+        return out
+
     def plan(self, incident_id: str, triage: TriageResult) -> Experiment | None:
-        experiment = self._brain.plan(
-            triage, self._levers.catalog(), self._levers.estimate_blast_radius
-        )
+        catalog, blast_radius = self._levers.catalog(), self._levers.estimate_blast_radius
+        experiment = self._brain.plan(triage, catalog, blast_radius)
+        plan_scores = getattr(self._brain, "plan_scores", None)
+        if plan_scores is not None:
+            selected_id = experiment.id if experiment is not None else None
+            candidates = [
+                {**item, "selected": item["experiment_id"] == selected_id}
+                for item in plan_scores(triage, catalog, blast_radius)
+            ]
+            self._record(
+                incident_id,
+                Stage.experiment,
+                EventKind.triage,
+                Actor.math,
+                f"planner: {len(candidates)} candidates scored",
+                {"planner": True, "candidates": candidates},
+                experiment_id=selected_id,
+            )
         if experiment is None:
             self._record(
                 incident_id,
@@ -205,6 +370,126 @@ class Orchestrator:
             return None
         return experiment
 
+    def confirmation_experiment(
+        self,
+        incident_id: str,
+        triage: TriageResult,
+        verdict: Verdict,
+        previous: Experiment,
+    ) -> Experiment | None:
+        if not verdict.support:
+            return None
+        leader = max(verdict.support, key=lambda item: item.support).hypothesis_id
+        experiment = self._brain.confirmation_experiment(
+            triage,
+            leader,
+            self._levers.catalog(),
+            self._levers.estimate_blast_radius,
+            {previous.id},
+        )
+        if experiment is None:
+            return None
+        if experiment.blast_radius_pct > 50:
+            self._record(
+                incident_id,
+                Stage.experiment,
+                EventKind.refused,
+                Actor.orchestrator,
+                f"confirmation blast radius {experiment.blast_radius_pct:g}% exceeds 50%",
+                {"experiment_id": experiment.id, "blast_radius_pct": experiment.blast_radius_pct},
+            )
+            return None
+        self._renderer.event(
+            "plan", f"{experiment.id} selected to confirm {leader}, blast radius {experiment.blast_radius_pct:g}%"
+        )
+        return experiment
+
+    def investigate(
+        self,
+        incident_id: str,
+        triage: TriageResult,
+        production_incident: Fingerprint,
+        production_probe: Experiment,
+        now: datetime,
+    ) -> tuple[list[HypothesisInvestigation], TriageResult | None]:
+        """Stage 4a: one investigator per hypothesis, each in a clean clone, before production
+        is touched. Evidence is recorded per hypothesis. With ``investigation_gate`` on, a
+        hypothesis that fails to reproduce the production fingerprint is dropped; if none
+        survives, a human is paged and the production probe is not run.
+        """
+        if self._investigation is None:
+            return [], triage
+        self._renderer.event(
+            "investigate",
+            f"forking production into {len(triage.hypotheses)} clean clones, one per hypothesis",
+        )
+        healthy = [
+            fp
+            for fp in self._telemetry.series(now - timedelta(seconds=BASELINE_S), now)
+            if not any(slo.breached for slo in fp.slos)
+        ]
+        try:
+            results = self._investigation.investigate(
+                incident_id, triage, production_incident, healthy, production_probe
+            )
+        except Exception as exc:  # noqa: BLE001 - PRD: the clone lab never threatens the v5 loop
+            self._record(
+                incident_id, Stage.experiment, EventKind.refused, Actor.adapter,
+                f"clone investigation unavailable, continuing with the production probe: {exc}",
+                {"error": f"{type(exc).__name__}: {exc}"},
+            )
+            self._renderer.event("investigate", f"unavailable ({type(exc).__name__}) — continuing without clones")
+            return [], triage
+        for item in results:
+            self._record(
+                incident_id,
+                Stage.experiment,
+                EventKind.triage,
+                Actor.math,
+                f"clone investigation {item.hypothesis_id}: {item.detail}",
+                {
+                    "investigation": True,
+                    "hypothesis_id": item.hypothesis_id,
+                    "clone_id": item.clone_id,
+                    "recipe": item.recipe,
+                    "reproduced": item.reproduced,
+                    "recovered": item.recovered,
+                    "prediction_matches": item.prediction_matches,
+                    "prediction_total": item.prediction_total,
+                    "survives": item.survives,
+                    "evidence": item.evidence,
+                    "attempts": item.attempts,
+                },
+                experiment_id=production_probe.id,
+            )
+            verdict = "survives" if item.survives else "falsified"
+            self._renderer.event("investigate", f"{item.hypothesis_id} {verdict}: {item.detail}")
+        if not self._investigation_gate:
+            return results, triage
+        survivors = {item.hypothesis_id for item in results if item.reproduced}
+        if not survivors:
+            self._record(
+                incident_id, Stage.experiment, EventKind.page_human, Actor.orchestrator,
+                "no hypothesis reproduced the incident in a clone; page human",
+                {"hypotheses": [h.id for h in triage.hypotheses]},
+            )
+            self._renderer.event("investigate", "nothing reproduced — paged human")
+            return results, None
+        dropped = [h.id for h in triage.hypotheses if h.id not in survivors]
+        if dropped:
+            self._record(
+                incident_id, Stage.experiment, EventKind.refused, Actor.math,
+                f"dropped before production: {', '.join(dropped)} did not reproduce in a clone",
+                {"dropped": dropped, "survivors": sorted(survivors)},
+            )
+            triage = triage.model_copy(
+                update={
+                    "hypotheses": [h for h in triage.hypotheses if h.id in survivors],
+                    "predictions": [p for p in triage.predictions if p.hypothesis_id in survivors],
+                }
+            )
+        return results, triage
+
     def experiment(
         self, incident_id: str, experiment: Experiment, now: datetime
     ) -> tuple[list[Fingerprint], list[Fingerprint], list[Fingerprint]]:
@@ -242,30 +527,40 @@ class Orchestrator:
         self._sleep(experiment.hold_s)
         t = self._clock()
         during = self._telemetry.series(t - timedelta(seconds=experiment.hold_s), t)
-        released = self._levers.undo(action)
-        self._record(
-            incident_id,
-            Stage.experiment,
-            EventKind.action_undo,
-            Actor.adapter,
-            f"released {experiment.lever_id}",
-            released.model_dump(mode="json"),
-            action_id=action.action_id,
-            experiment_id=experiment.id,
+        released, landed = self._release(
+            incident_id, action, Stage.experiment, f"released {experiment.lever_id}", experiment.id
         )
         self._record(
             incident_id,
             Stage.experiment,
             EventKind.experiment_end,
             Actor.orchestrator,
-            "lever released; after-release observation started",
+            "lever released; after-release observation started"
+            if landed
+            else "lever still active; after-release observation is not a release",
             {"status": released.status.value},
             action_id=action.action_id,
             experiment_id=experiment.id,
         )
-        self._renderer.event("experiment", f"{experiment.lever_id} released")
+        if landed:
+            self._renderer.event("experiment", f"{experiment.lever_id} released")
         self._sleep(spec.default_watch_s)
-        after_release = self._telemetry.series(t, self._clock())
+        end = self._clock()
+        after_release = self._telemetry.series(t, end)
+        lag = max(_telemetry_lag_s(during, t), _telemetry_lag_s(after_release, end))
+        if lag > MAX_TELEMETRY_LAG_S:
+            self._record(
+                incident_id,
+                Stage.experiment,
+                EventKind.refused,
+                Actor.adapter,
+                f"telemetry is {lag:.0f}s stale; experiment phases cannot be aligned, verdict withheld",
+                {"stale_telemetry": True, "lag_s": lag, "max_lag_s": MAX_TELEMETRY_LAG_S},
+                action_id=action.action_id,
+                experiment_id=experiment.id,
+            )
+            self._renderer.event("observe", f"telemetry {lag:.0f}s stale — verdict withheld")
+            return baseline, [], []
         self._renderer.event(
             "observe", f"after-release window collected ({len(after_release)} windows)"
         )
@@ -312,6 +607,7 @@ class Orchestrator:
         )
         if (
             confirming
+            and confirming.confirms_if is not None
             and confirming.confirms_if.phase.value == "after_release"
             and confirming.confirms_if.expect.value == "within_baseline"
         ):
@@ -345,17 +641,59 @@ class Orchestrator:
                 experiment_id=experiment.id,
             )
             return action
-        else:
-            self._record(
-                incident_id,
-                Stage.mitigate,
-                EventKind.mitigation,
-                Actor.orchestrator,
-                "experiment lever released; durable fix required",
-                {"lever_id": experiment.lever_id},
-                experiment_id=experiment.id,
-            )
+        # The probe was diagnostic, not curative (H_db: the cap only lowered load). Hold the
+        # lever that directly relieves the diagnosed cause instead, so production is not left in
+        # the incident while the durable fix is written and verified.
+        relief = self._relief_experiment(triage, verdict.diagnosis, experiment)
+        if relief is not None:
+            spec = next(spec for spec in self._levers.catalog() if spec.id == relief.lever_id)
+            try:
+                action = self._apply(
+                    incident_id, relief.lever_id, relief.params, spec.max_ttl_s, Stage.mitigate, relief.id
+                )
+            except (LeverError, BudgetExceeded) as exc:
+                self._record(
+                    incident_id, Stage.mitigate, EventKind.refused, Actor.adapter,
+                    f"relief lever {relief.lever_id} unavailable: {exc}", {"lever_id": relief.lever_id},
+                )
+                action = None
+            if action is not None:
+                self._record(
+                    incident_id, Stage.mitigate, EventKind.action_apply, Actor.adapter,
+                    f"applied {relief.lever_id} as mitigation", action.model_dump(mode="json"),
+                    action_id=action.action_id, experiment_id=relief.id,
+                )
+                self._record(
+                    incident_id, Stage.mitigate, EventKind.mitigation, Actor.orchestrator,
+                    f"{relief.lever_id} held as mitigation while the durable fix is prepared",
+                    {"lever_id": relief.lever_id, "action_id": action.action_id, "ttl_s": spec.max_ttl_s},
+                    action_id=action.action_id, experiment_id=relief.id,
+                )
+                self._renderer.event("mitigate", f"{relief.lever_id} held (ttl {spec.max_ttl_s}s)")
+                return action
+        self._record(
+            incident_id,
+            Stage.mitigate,
+            EventKind.mitigation,
+            Actor.orchestrator,
+            "experiment lever released; durable fix required",
+            {"lever_id": experiment.lever_id},
+            experiment_id=experiment.id,
+        )
+        return None
+
+    def _relief_experiment(
+        self, triage: TriageResult, diagnosis: str, probe: Experiment
+    ) -> Experiment | None:
+        """The catalog lever that directly relieves the diagnosed cause (Brain's confirmation
+        experiment for that hypothesis), if it is not the probe we already ran."""
+        find = getattr(self._brain, "confirmation_experiment", None)
+        if find is None:
             return None
+        relief = find(triage, diagnosis, self._levers.catalog(), self._levers.estimate_blast_radius, set())
+        if relief is None or relief.blast_radius_pct > 50:
+            return None
+        return relief  # may be the probe itself (e.g. failover confirmed H_db): then it is re-held
 
     def patch(self, incident_id: str, verdict: Verdict, triage: TriageResult) -> PatchProposal:
         patch = self._patches.propose(incident_id, verdict, triage)
@@ -365,32 +703,151 @@ class Orchestrator:
             EventKind.patch_opened,
             Actor.adapter,
             patch.summary,
-            {"provider": patch.provider, "reference": patch.reference},
+            {
+                "provider": patch.provider, "reference": patch.reference,
+                "revision": patch.revision, "session_id": patch.session_id,
+            },
         )
         self._renderer.event("patch", f"{patch.provider} patch prepared")
         return patch
+
+    def ship(
+        self,
+        incident_id: str,
+        patch: PatchProposal,
+        verdict: Verdict,
+        mitigation: ActionHandle | None,
+    ) -> tuple[PatchProposal, PatchVerification, CanaryResult]:
+        """Stages 6b-7: checkout -> clone verification -> production canary, with measured
+        evidence sent back to the patch author for at most ``max_revisions`` revisions.
+
+        The mitigation is released only once, before the first canary attempt.
+        """
+        revisions = 0
+        while True:
+            context = self.checkout(incident_id, patch)
+            verification = self.verify_patch(incident_id, patch, verdict.diagnosis, context)
+            if verification.status == VerificationStatus.failed:
+                canary = self._refuse_canary(
+                    incident_id, f"patch failed clone verification: {verification.detail}"
+                )
+                evidence = _verification_evidence(verification)
+            else:
+                canary = self.canary(incident_id, patch, mitigation, context)
+                mitigation = None
+                if canary.status != CanaryStatus.regressed:
+                    return patch, verification, canary
+                evidence = _canary_evidence(canary)
+            evidence += "\n" + _diagnosis_evidence(verdict)
+            if revisions >= self._max_revisions:
+                return patch, verification, canary
+            revised = self.revise(incident_id, patch, evidence)
+            if revised is None:
+                return patch, verification, canary
+            patch, revisions = revised, revisions + 1
+
+    def checkout(self, incident_id: str, patch: PatchProposal) -> Path | None:
+        if self._checkout is None:
+            return None
+        try:
+            context = self._checkout.resolve(patch)
+        except CanaryPreparationError as exc:
+            self._record(
+                incident_id, Stage.patch, EventKind.refused, Actor.adapter,
+                f"could not check out {patch.reference}: {exc}", {"patch_reference": patch.reference},
+            )
+            self._renderer.event("patch", f"checkout failed: {exc}")
+            return None
+        if context is not None:
+            self._renderer.event("patch", f"checked out {patch.reference} -> {context}")
+        return context
+
+    def revise(self, incident_id: str, patch: PatchProposal, evidence: str) -> PatchProposal | None:
+        """Send the measured failure back to the patch author (the same Devin session)."""
+        self._renderer.event("patch", f"sending evidence back to {patch.provider} for a revision")
+        revised = self._patches.revise(incident_id, patch, evidence)
+        if revised is None:
+            self._record(
+                incident_id, Stage.patch, EventKind.page_human, Actor.orchestrator,
+                f"{patch.provider} patch cannot be revised automatically; page human",
+                {"patch_reference": patch.reference, "evidence_text": evidence},
+            )
+            self._renderer.event("patch", "no revision available — paged human")
+            return None
+        self._record(
+            incident_id, Stage.patch, EventKind.patch_opened, Actor.adapter, revised.summary,
+            {
+                "provider": revised.provider, "reference": revised.reference,
+                "revision": revised.revision, "session_id": revised.session_id,
+                "evidence_text": evidence,  # str; `evidence` is reserved for the object form (ES mapping)
+            },
+        )
+        self._renderer.event("patch", f"{revised.provider} revision {revised.revision} received")
+        return revised
+
+    def verify_patch(
+        self,
+        incident_id: str,
+        patch: PatchProposal,
+        diagnosis: str,
+        context: Path | None = None,
+    ) -> PatchVerification:
+        """Stage 6b (PRD v6): replay the reproduced incident against the patch in a clean clone.
+
+        Runs behind the v5 path: without a lab the result is ``skipped`` and the production
+        canary proceeds. A ``failed`` result refuses the canary and pages a human with evidence.
+        """
+        if self._verifier is None:
+            verification = PatchVerification(VerificationStatus.skipped, "no clone lab configured")
+        else:
+            self._renderer.event("verify", "replaying the reproduced incident against the patch in a clone")
+            verification = self._verifier.verify(incident_id, patch, diagnosis, context)
+        payload = {
+            "status": verification.status.value,
+            "clone_id": verification.clone_id,
+            "recipe": verification.recipe,
+            "evidence": verification.evidence,
+            "patch_reference": patch.reference,
+        }
+        if verification.status == VerificationStatus.failed:
+            self._record(
+                incident_id, Stage.patch, EventKind.refused, Actor.math,
+                f"patch failed clone verification: {verification.detail}", payload,
+            )
+            self._record(
+                incident_id, Stage.patch, EventKind.page_human, Actor.orchestrator,
+                "patch did not survive the replayed incident; page human", {},
+            )
+        else:
+            self._record(
+                incident_id, Stage.patch, EventKind.canary_update, Actor.math,
+                f"clone verification {verification.status.value}: {verification.detail}", payload,
+            )
+        self._renderer.event("verify", f"{verification.status.value}: {verification.detail}")
+        return verification
 
     def canary(
         self,
         incident_id: str,
         patch: PatchProposal,
         mitigation: ActionHandle | None = None,
+        context: Path | None = None,
     ) -> CanaryResult:
         try:
-            target = self._canary_deployer.prepare(patch)
+            target = self._canary_deployer.prepare(patch, context)
         except CanaryPreparationError as exc:
             return self._refuse_canary(incident_id, f"patch target unavailable: {exc}")
 
-        if mitigation is not None:
-            released_mitigation = self._levers.undo(mitigation)
-            self._record(
+        if mitigation is not None and mitigation.lever_id in CODE_SUPERSEDES:
+            # The patch replaces this lever's job (a bounded retry policy supersedes the retry
+            # cap), so judge v2 without it. A relief lever such as db_failover stays: it fixes
+            # the dependency, which no Orders patch can, and pulling it would blame the patch
+            # for the incident coming back.
+            self._release(
                 incident_id,
+                mitigation,
                 Stage.mitigate,
-                EventKind.action_undo,
-                Actor.adapter,
                 "released emergency mitigation before canary verification",
-                released_mitigation.model_dump(mode="json"),
-                action_id=mitigation.action_id,
             )
         try:
             canary = self._apply(
@@ -416,16 +873,11 @@ class Orchestrator:
         self._sleep(spec.default_watch_s)
         canary_end = self._clock()
         fingerprints = self._telemetry.series(canary_start, canary_end)
-        released = self._levers.undo(canary)
-        self._record(
-            incident_id,
-            Stage.canary,
-            EventKind.action_undo,
-            Actor.adapter,
-            "released canary_weight",
-            released.model_dump(mode="json"),
-            action_id=canary.action_id,
-        )
+        _, landed = self._release(incident_id, canary, Stage.canary, "released canary_weight")
+        measured = _canary_measurements(fingerprints, target)
+        if not landed:
+            detail = f"canary_weight release did not land; TTL {canary.ttl_s}s will revert it"
+            return CanaryResult(CanaryStatus.regressed, detail, target, measured)
         regression = self._canary_regression(fingerprints, target)
         if regression is not None:
             self._record(
@@ -434,7 +886,7 @@ class Orchestrator:
                 EventKind.refused,
                 Actor.orchestrator,
                 f"canary regression, auto-rolled back: {regression}",
-                {"reason": regression, "target": asdict(target)},
+                {"reason": regression, "target": asdict(target), "evidence": measured},
                 action_id=canary.action_id,
             )
             self._record(
@@ -446,18 +898,18 @@ class Orchestrator:
                 {},
             )
             self._renderer.event("canary", f"regression: {regression} — paged human")
-            return CanaryResult(CanaryStatus.regressed, regression, target)
+            return CanaryResult(CanaryStatus.regressed, regression, target, measured)
         self._record(
             incident_id,
             Stage.canary,
             EventKind.canary_update,
             Actor.orchestrator,
             "5% canary verified",
-            {"v2_weight": 0.05, "target": asdict(target)},
+            {"v2_weight": 0.05, "target": asdict(target), "evidence": measured},
             action_id=canary.action_id,
         )
         self._renderer.event("canary", "canary_weight v2=0.05 verified and released")
-        return CanaryResult(CanaryStatus.passed, "5% canary verified", target)
+        return CanaryResult(CanaryStatus.passed, "5% canary verified", target, measured)
 
     def _refuse_canary(
         self,
@@ -505,11 +957,13 @@ class Orchestrator:
         ]
         if not pairs:
             return f"missing {target.service_name} telemetry"
+        if not any(v2.qps for _, v2, _ in pairs):
+            return f"{target.service_name} served no traffic during canary"
+        # A service that never errored has no error counter yet, so error_rate is honestly
+        # None rather than 0; compare error rates only when both versions report them.
         v1_errors = [v1.error_rate for v1, _, _ in pairs if v1.error_rate is not None]
         v2_errors = [v2.error_rate for _, v2, _ in pairs if v2.error_rate is not None]
-        if not v1_errors or not v2_errors:
-            return "missing version-specific error rates"
-        if sum(v2_errors) / len(v2_errors) > sum(v1_errors) / len(v1_errors):
+        if v1_errors and v2_errors and sum(v2_errors) / len(v2_errors) > sum(v1_errors) / len(v1_errors):
             return "orders-v2 error rate exceeds orders-v1"
         thresholds = [slo.threshold for _, _, fp in pairs for slo in fp.slos if slo.name == "checkout"]
         v2_p99 = [v2.p99_ms for _, v2, _ in pairs if v2.p99_ms is not None]
@@ -541,6 +995,63 @@ class Orchestrator:
         self._actions += 1
         return self._levers.apply(lever_id, params, ttl_s)
 
+    def _release(
+        self,
+        incident_id: str,
+        handle: ActionHandle,
+        stage: Stage,
+        summary: str,
+        experiment_id: str | None = None,
+    ) -> tuple[ActionHandle, bool]:
+        """Undo, then re-read status(); retry once. A release that did not land is recorded,
+        a human is paged, and the TTL is left to revert it."""
+        released = self._levers.undo(handle)
+        landed = self._levers.status(handle) != ActionStatus.active
+        if not landed:
+            released = self._levers.undo(handle)
+            landed = self._levers.status(handle) != ActionStatus.active
+        if not landed:
+            released = released.model_copy(update={"status": ActionStatus.active})
+        self._record(
+            incident_id,
+            stage,
+            EventKind.action_undo,
+            Actor.adapter,
+            summary,
+            released.model_dump(mode="json"),
+            action_id=handle.action_id,
+            experiment_id=experiment_id,
+        )
+        if not landed:
+            detail = f"release of {handle.lever_id} did not land; TTL {handle.ttl_s}s will revert it"
+            self._record(
+                incident_id,
+                stage,
+                EventKind.refused,
+                Actor.adapter,
+                detail,
+                {
+                    "release_failed": True,
+                    "lever_id": handle.lever_id,
+                    "ttl_s": handle.ttl_s,
+                    "expires_at": handle.expires_at.isoformat(),
+                },
+                action_id=handle.action_id,
+                experiment_id=experiment_id,
+            )
+            self._record(
+                incident_id,
+                stage,
+                EventKind.page_human,
+                Actor.orchestrator,
+                f"{handle.lever_id} still active after release; page human",
+                {},
+                action_id=handle.action_id,
+                experiment_id=experiment_id,
+            )
+            self._renderer.event(stage.name, f"{detail} — paged human")
+        return released, landed
+
     def _record(
         self,
         incident_id: str,
@@ -565,3 +1076,75 @@ class Orchestrator:
                 experiment_id=experiment_id,
             )
         )
+
+
+def _telemetry_lag_s(windows: list[Fingerprint], now: datetime) -> float:
+    """Seconds between the clock and the newest window collected; 0 when nothing was collected
+    (the judge already treats an empty phase as insufficient telemetry)."""
+    if not windows:
+        return 0.0
+    return (now - max(fp.window_end for fp in windows)).total_seconds()
+
+
+def _mean(values: list[float]) -> float | None:
+    return round(sum(values) / len(values), 4) if values else None
+
+
+def _canary_measurements(fingerprints: list[Fingerprint], target: CanaryTarget) -> dict:
+    """What the canary actually measured, as numbers: the same facts `_canary_regression`
+    decides on, so the audit log and the patch author see the evidence, not just the verdict."""
+    thresholds = [slo.threshold for fp in fingerprints for slo in fp.slos if slo.name == "checkout"]
+    gateway = [fp.services["gateway"].p99_ms for fp in fingerprints
+               if fp.services.get("gateway") is not None and fp.services["gateway"].p99_ms is not None]
+    out: dict = {
+        "windows": len(fingerprints),
+        "breached_windows": sum(any(slo.breached for slo in fp.slos) for fp in fingerprints),
+        "checkout_slo_threshold_ms": min(thresholds) if thresholds else None,
+        "gateway_p99_ms_mean": _mean(gateway),
+        "gateway_p99_ms_max": max(gateway) if gateway else None,
+    }
+    if target.service_name:
+        v1 = [fp.services["orders"] for fp in fingerprints if fp.services.get("orders") is not None]
+        v2 = [fp.services[target.service_name] for fp in fingerprints if fp.services.get(target.service_name) is not None]
+        out.update({
+            "v2_service": target.service_name,
+            "v2_windows": len(v2),
+            "v2_qps_mean": _mean([s.qps for s in v2 if s.qps is not None]),
+            "v1_error_rate_mean": _mean([s.error_rate for s in v1 if s.error_rate is not None]),
+            "v2_error_rate_mean": _mean([s.error_rate for s in v2 if s.error_rate is not None]),
+            "v1_p99_ms_mean": _mean([s.p99_ms for s in v1 if s.p99_ms is not None]),
+            "v2_p99_ms_mean": _mean([s.p99_ms for s in v2 if s.p99_ms is not None]),
+        })
+    return out
+
+
+def _canary_evidence(canary: CanaryResult) -> str:
+    lines = [f"production canary regressed: {canary.detail}"]
+    if canary.evidence:
+        lines.append(f"measured during the 5% canary: {json.dumps(canary.evidence)}")
+    return "\n".join(lines)
+
+
+def _diagnosis_evidence(verdict: Verdict) -> str:
+    """The z-scores that confirmed the diagnosis, so the author knows which metrics the fix
+    must move and against what noise."""
+    seen: set[tuple[str, str, str]] = set()
+    rows = []
+    for o in verdict.observations:
+        key = (o.experiment_id, o.phase.value, o.metric)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append({"experiment": o.experiment_id, "phase": o.phase.value, "metric": o.metric,
+                     "baseline": round(o.baseline, 4), "measured": round(o.measured, 4), "sigma": round(o.sigma, 4),
+                     "z": round(o.z, 2), "direction": o.direction.value})
+    return f"diagnosis {verdict.diagnosis} (confirmed={verdict.confirmed}); measured observations: {json.dumps(rows)}"
+
+
+def _verification_evidence(verification: PatchVerification) -> str:
+    lines = [f"clone verification failed: {verification.detail}"]
+    if verification.recipe:
+        lines.append(f"replayed recipe: {json.dumps(verification.recipe)}")
+    if verification.evidence:
+        lines.append(f"measured: {json.dumps(verification.evidence)}")
+    return "\n".join(lines)

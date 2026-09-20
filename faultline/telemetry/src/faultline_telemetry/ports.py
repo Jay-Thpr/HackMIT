@@ -9,7 +9,9 @@ class ElasticsearchPort(Protocol):
 
     def index(self, *, index: str, document: dict[str, Any]) -> Any: ...
 
-    def search(self, *, index: str, query: dict[str, Any], sort: list[dict[str, str]]) -> dict[str, Any]: ...
+    def search(
+        self, *, index: str, query: dict[str, Any], sort: list[dict[str, str]], size: int = 10000
+    ) -> dict[str, Any]: ...
 
 
 @runtime_checkable

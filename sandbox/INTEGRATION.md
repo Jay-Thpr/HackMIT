@@ -4,6 +4,12 @@ Start the stack: `cd sandbox && docker compose up -d --build`. It's healthy abou
 `curl -s localhost:9901/healthz` or run `uv run python scripts/diag.py`. Stop with `docker compose down`.
 There are no volumes, so every `up` starts from a fresh DB.
 
+**The production project is shared.** `docker compose down` or `up --build` on `faultline-sandbox` kills every
+smoke, live-loop and benchmark run in flight; announce it first. Clones are the place for anything disruptive.
+
+Clone lab (C6, needed by investigators and the orchestrator): `uv run uvicorn services.lab.app:app --port 9910`
+in a second terminal (host process; it drives `docker compose`). See [Clone lab](#owner-34-clone-lab-c6-on-9910).
+
 ## Services and ports
 
 Host ports are bound to `127.0.0.1`. The Compose project is `faultline-sandbox`; containers are named
@@ -18,7 +24,8 @@ Host ports are bound to `127.0.0.1`. The Compose project is `faultline-sandbox`;
 | `db-primary`, `db-standby` | `:5432`, db `shop`, user `app` | none | Postgres 16 | nobody outside the sandbox |
 | `loadgen` | `loadgen:8000` | 8103 | open-loop client, `GET /stats` | telemetry reads `/stats`; bench changes the rate via :9900 |
 | `control` | `control:8000` | **9901** | operator levers (C3 targets) | **Faultline (Owner 4 adapter)** |
-| `faultctl` | `faultctl:8000` | **9900** | hidden fault controller (C5) | **bench/ and the demo script only** |
+| `faultctl` | `faultctl:8000` | **9900** | hidden fault controller (C5); answers only its own network and the host | **bench/ and the demo script only** |
+| lab manager (host process) | — | **9910** | clone lab (C6) | investigators (Owner 3), orchestrator (Owner 4) |
 
 `/internal/*` endpoints on orders and payments require the `X-Sandbox-Token` header. Only `control` and
 `faultctl` send it, and Faultline must not. Envoy admin (:9902) is deliberately not published on the host,
@@ -98,9 +105,59 @@ curl -s localhost:9901/admin/levers
   (:8103). Each returns cumulative counters, gauges, and histograms with fixed buckets (`buckets_ms`,
   where the last count is +Inf) plus `t` (unix seconds). Take the delta between two snapshots.
   `services/common/probe.py:row()` is a reference implementation of every derived number below.
-* Container stdout from orders, payments, loadgen, envoy and control.
-* Envoy stats at `envoy:9902/stats/prometheus`, reachable only inside the Compose network (e.g. from an
-  OTel collector container you add to this compose project).
+* Ordinary application logs from orders (including orders-v2), payments and loadgen are exported by
+  `services/common/telemetry.py` using the already-pinned Python OTel SDK and HTTP exporter. This is an
+  explicit logger/message allowlist, not a container-stdout receiver. No root logger, uvicorn access
+  logs, control, lab manager or faultctl logs are ingested. Unknown templates, SQL, exception details,
+  arbitrary extra attributes, runtime overrides and rate-change messages are excluded. Safe, numeric
+  workload warnings and startup messages retain their actual application text and rate limiting.
+  `FAULTLINE_OTEL_LOGS_ENABLED=false` disables this path; `OTEL_SDK_DISABLED=true` disables it as well.
+  Auto logging remains off (`OTEL_LOGS_EXPORTER=none`) to avoid a second unrestricted root handler.
+  Envoy logs are not collected. C1 `log_highlights` still come from Owner 2's canonical `/stats` builder;
+  these raw log records do not replace or alter that builder.
+* Envoy stats at `envoy:9902/stats/prometheus`, reachable only inside the Compose network (scraped by
+  the compose project's `otel-collector` every 5 s).
+* OTel auto-instrumentation: `payments`, `orders`, `orders-v2` and `loadgen` run under
+  `opentelemetry-instrument` (FastAPI + aiohttp-client + asyncpg) and ship OTLP http/protobuf to
+  `otel-collector` (`sandbox/otel/collector.yaml`). `control` and `faultctl` are **not** instrumented,
+  and `OTEL_PYTHON_EXCLUDED_URLS` plus collector `filter/fairness` keep `/internal/*`, `/admin/*`,
+  `/stats`, `/healthz`, `/rate` out of the telemetry; `transform/fairness` strips `db.statement` /
+  `db.query.text` (the hidden fault rides inside SQL). All signals carry both `deployment.environment`
+  (retained for PR27's `resource.attributes.deployment.environment` queries) and
+  `deployment.environment.name` (native environment convention): `production` or `clone-<slot>`.
+  `service.name` remains `orders`, `payments` or `loadgen`; orders-v2 uses `orders` plus `service.version=v2`.
+  The collector rechecks the log body allowlist and strips log/scope attributes and unapproved resource
+  attributes before every sink, including debug and tee. Raw exception details are never exported as logs.
+* Sink priority (collector contrib remains pinned at `0.160.0`):
+  * Nonempty `FAULTLINE_OTLP_ENDPOINT` → **B managed OTLP**, using `FAULTLINE_OTLP_API_KEY` and
+    `Authorization: ApiKey <encoded-key>`, for traces, metrics and logs. Use B's actual managed endpoint,
+    not its Elasticsearch/Kibana URL or a guessed `/_otlp` URL. TLS verification remains enabled. The
+    key needs the `apm` application's `event:write` privilege; a custom-index-only key is insufficient.
+  * B endpoint empty/unset, `FAULTLINE_ELASTICSEARCH_URL` nonempty → **legacy A Elasticsearch**,
+    using `FAULTLINE_ELASTICSEARCH_API_KEY` and the retained otel-mode exporter/template. A remains
+    authoritative for C1/C4 through Owner 2; the collector does not dual-write raw signals to A and B.
+  * Both endpoints empty/unset → **local debug**. An empty value is disabled, not an invalid sink path.
+  * A+B use `sink-elastic-otlp*.yaml`, intentionally equivalent to `sink-otlp*.yaml`: B wins. Explicit
+    suffix variants avoid needing a shell in the stock collector or exposing endpoint/key values in
+    process arguments. Missing/invalid B credentials do **not** silently route raw data to A; unset B's
+    endpoint explicitly to roll back. Old `sink*.yaml` and `otel_es_setup.py` remain available. Do not
+    apply the legacy raw-telemetry template to B's managed streams.
+  * SDKs still send all signals to `http://otel-collector:4318`; only collectors receive sink credentials.
+    `OTEL_SDK_DISABLED=true` disables service instrumentation on the next approved recreation.
+* Clone tee: the lab manager sets `FAULTLINE_OTEL_TEE=1`, so clone collectors also write all three
+  signals to `/tmp/otel/records.jsonl`. Every route (B, legacy A, local debug) retains this tee.
+  Each clone has its own directory; startup removes previous-slot `records*.jsonl` so stale records
+  cannot pass a fresh fairness check. `validate_lab.py fairness` scans log bodies/nested values as well
+  as traces/metrics and requires application log records. The optional indexed-trace check selects
+  `FAULTLINE_OBSERVABILITY_ELASTICSEARCH_URL/API_KEY` when B is enabled, otherwise A's variables.
+  Without query credentials it explicitly SKIPs indexing verification, never queries A for B records.
+  The tee proves local filtered output, not cloud indexing.
+* After changing OTel deps / `requirements.txt`, rebuild the shared app image or clones fail with
+  `opentelemetry-instrument: not found` (announce production recreates in chat first per the
+  shared-stack rule):
+  ```
+  cd sandbox && docker compose build --quiet payments && docker compose up -d --force-recreate
+  ```
 
 **Must NOT ingest:** anything from `faultctl` (its logs name the faults), the `io_profile` table, Envoy
 `*.fault.*` stats (shed is implemented with Envoy's fault filter, and the word trips the fairness
@@ -119,7 +176,7 @@ check), and `/internal/*`.
 | `svc.payments.qps`, `p50_ms`/`p99_ms`, `error_rate` | Δ`requests`; `request` histogram; Δ`errors`/Δ`requests` |
 | `db.qps` | Δ`db_queries_issued` / Δt (**issued, not completed**; see below) |
 | `db.query_p50_ms`, `query_p99_ms` | payments `db_query` histogram (issue → result, **includes pool wait**) |
-| `db.pool_busy_ratio` | Δ`db_busy_s` / (Δt × gauge `pool_size`) |
+| `db.pool_busy_ratio` | Δ`db_busy_s` / (Δt × gauge `pool_size`). During `db_failover` the gauge switches to the standby pool (16), so the ratio drops to ~0.2 at unchanged qps; expected, not a bug |
 | `edge.orders.payments.*` | qps Δ`attempts`/Δt; p99 from the `attempt` histogram; error_rate Δ(`attempt_timeouts`+`attempt_errors`)/Δ`attempts` |
 | `edge.payments.db.*` | qps Δ`db_queries_issued`/Δt; p99 from `db_query`; error_rate Δ`db_errors`/Δ`db_queries_issued` |
 | `edge.gateway.orders.*` | Envoy `cluster.orders_v1.upstream_rq_*` (and `orders_v2` during a canary) |
@@ -147,9 +204,48 @@ suppressed count:
 | orders | ERROR | `checkout failed: payments unavailable after <n> attempts` |
 | orders | INFO | `retry override set: max_retries=<n> for <t>s` / `retry override ttl expired, max_retries back to 3` |
 | payments | WARNING | `db connection pool exhausted, waited <t>ms for a connection` |
-| payments | WARNING | `slow query: SELECT process_payment(...) took <t>ms` |
-| payments | ERROR | `db connection error: …` / `db query failed: …` |
+| payments | WARNING | `slow database operation took <t>ms` |
+| payments | ERROR | `db connection error` / `db query failed` |
 | payments | INFO | `db target set to standby for <t>s` / `db target ttl expired, reverting to primary` |
+
+Only allowlisted workload templates above are exported; override/target messages remain local. Loadgen
+also emits rate-limited `checkout request failed: status <code>` and
+`checkout request timed out or connection unavailable`. Startup `generating <rps> req/s` and payments'
+`pool <primary|standby> ready (size=<n>)` provide healthy log coverage. Healthy orders may have no logs;
+there is no artificial per-request log traffic. Stack traces and arbitrary patched-service log templates
+are intentionally not collected until separately reviewed for fairness.
+
+### Local collector verification and approved cutover
+
+`uv run --frozen python -m unittest discover -s tests -v` runs isolated unit checks.
+`SANDBOX_OTEL_DOCKER_TESTS=1 uv run --frozen python -m unittest discover -s tests -v` also validates all
+8 A/B/tee combinations with `docker compose --env-file /dev/null config` and the pinned collector's
+`validate` subcommand. It launches only a temporary standalone collector and synthetic local HTTP sink;
+real orders/payments/loadgen functions run against mocks to exercise actual log emission. Malicious
+synthetic logs, a control-plane span and a prohibited metric must not survive filtering. It checks
+local tee output and downstream OTLP delivery, then removes the temporary collector. No real sandbox,
+clone, secret env file, cloud endpoint or fault controller is used by these tests.
+
+Deployment remains a separate, explicitly approved action:
+
+1. Coordinate a maintenance window with active sandbox/benchmark users. Supply B's managed endpoint
+   and ingestion key through the existing secret mechanism; keep A's variables unchanged. Never paste
+   `docker compose config` output containing live credentials into a report.
+2. Rebuild the shared app image before starting any updated clone or recreating workload services.
+   Recreate only the collector and instrumented workloads as needed, not the DB/control plane; do not
+   blindly run `compose down` or an unrestricted `up --build` during a live run.
+3. For PR32/patch compatibility, an orders-v2 checkout/image must contain the pinned OTel dependencies,
+   `opentelemetry-instrument`, and this application log module/wiring. Its command remains the same
+   instrumented wrapper, its SDK endpoint stays local, and it inherits the log kill switches. A patched
+   checkout predating instrumentation must be updated before its image is built; there is no uninstrumented
+   fallback. This change does not alter canary deployment, health/version checks or routing policy.
+4. After approval, check fresh traces, metrics and logs **indexed in B**, then verify native APM service
+   relationships and production/individual clone environment filtering. Successful OTLP HTTP responses
+   mean accepted for processing, not indexed; inspect data streams and Data Set Quality/indexing failures.
+   Run the clone fairness scenario only with permission to create a real clone. Unit/standalone results
+   are not a claim that production has been recreated or that B/APM has passed live acceptance.
+5. Rollback explicitly clears `FAULTLINE_OTLP_ENDPOINT` and recreates only the collector in an approved
+   window: A resumes if configured, otherwise local debug. Retain the tee and fairness filters throughout.
 
 **Reference magnitudes** (defaults, measured, per second):
 
@@ -167,7 +263,68 @@ suppressed count:
 ```bash
 uv run python scripts/validate.py storm      # ~3.5 min: World A physics and levers, PASS/FAIL per check
 uv run python scripts/validate.py degraded   # ~2.5 min: World B
+uv run python scripts/validate_lab.py all    # ~10 min: clone lab fairness, API, and all three reproductions
 ```
+
+## Owner 3/4: clone lab (C6) on :9910
+
+Exactly `contracts/README.md` § C6; `HttpCloneLab("http://localhost:9910")`. Measured behavior:
+
+* **A clone is the production compose file under another project** (`faultline-clone-<slot>`, slot 1–3), on its
+  own network, **without `faultctl`**. It is built only from `CloneSpec`: `retry_policy` → Orders' env,
+  `workload.rps` → loadgen's default rate, `patch_ref` → orders-v2 built from that checkout. `create()` returns
+  `ready` after a verified healthy 5 s window: **~9 s** (≈ 11 s with `patch_ref`, more on a cold image build).
+  `reset()` takes 8–15 s from any of the three incidents. `MAX_CLONES` = 3 → 4th `create` is 409.
+* **Endpoints** are host ports shifted by 1000 × slot, so the production adapters work unchanged:
+  slot 1 → gateway `:9080`, orders `:9101`, payments `:9102`, loadgen `:9103`, orders-v2 `:9104`, control `:10901`;
+  slot 2 → `:10080`, `:10101`–`:10104`, `:11901`; slot 3 → `:11080`, `:11101`–`:11104`, `:12901`. Always read them
+  from `CloneInfo.endpoints`, don't assume the scheme. `stats_urls` has `orders-v2` only when `patch_ref` is set.
+* **The clone's `control_url` is a full C3 service** (retry_cap, shed, db_failover, canary_weight, same TTL rules);
+  in a `patch_ref` clone `canary_weight` routes to the clone's orders-v2 (verified: weight 0.5 → v2 serves half).
+* **Lab actions** (all on `POST /clones/{id}/actions`, reverted by the manager at `ttl_s`; undo is idempotent):
+
+  | Action | What it physically does in the clone | Measured |
+  |---|---|---|
+  | `db_latency {extra_ms}` | every primary-DB query costs `extra_ms` more (same knob the hidden controller uses in production) | `800 / ttl 20` ignites a self-sustaining storm: after expiry 9/9 windows at retry 3.96×, db 327 q/s, p99 ~1490 ms |
+  | `db_capacity {capacity_qps}` | primary capacity through the pool limited to `capacity_qps` | `40` → retry 3.99×, p99 ~1490 ms within 10 s; retry cap doesn't heal, C3 `db_failover` does (p99 50 ms) |
+  | `cpu_limit {service, cpus}` | `docker update --cpus`; undo restores the original limit exactly | `payments 0.1` → incident that neither retry cap nor failover heals |
+  | `retry_policy {max_retries?, timeout_ms?}` | Orders' runtime override (both fields, one TTL) | applied to in-flight requests; `/stats` gauges `max_retries`, `attempt_timeout_ms` show it |
+  | `service_kill {service}` | `compose stop`, then `start` at expiry | payments answers again within ~3 s of expiry |
+  | `service_restart {service}` | `compose restart`, one-shot; handle returns `expired` | |
+
+  `db_latency` and `db_capacity` **add up** while both are active (a transient slowdown on top of a batch job).
+  `retry_policy` and the clone's C3 `retry_cap` share Orders' single override slot: the last write wins.
+* **Errors:** 400 bad params / ttl, 404 unknown clone or action, 409 at capacity, clone not `ready`, or
+  `orders-v2` named in a clone without `patch_ref`, 503 if Docker or the clone failed (the clone is torn down and
+  its `detail` says why; `create` then frees the slot).
+* **Fairness, verified by `validate_lab.py fairness`:** no `faultctl` container, `io_profile` cost 38/0, empty
+  payments table, production hostnames don't resolve, and production's `:9900` refuses clone traffic (403; the
+  fault controller only accepts its own network and the host, and clone networks don't masquerade). The manager
+  refuses to run compose/docker against any project it didn't create.
+* **Cost:** ~300 MB RAM and ~20 % of one CPU per healthy clone (7–8 containers). Production + 2 clones measured
+  fine on a MacBook; 3 is the hard cap.
+* **Reproduction recipes** the hero hypotheses map to: H_meta → `db_latency 800, ttl 20` then wait ≥ 10 s;
+  H_db → `db_capacity 40`; none-of-the-above control → `cpu_limit payments 0.1`. Whether and when to use them is
+  the investigators' call.
+* **Benchmark cells (measured in a clone, `scripts/sweep_lab.py sweep`; the same knobs the production fault
+  controller moves, so they transfer to C5 `storm`/`degrade_db` at the same `rps`).** Every cell reset cleanly (19/19).
+
+  | Load (rps) | World A: `db_latency` 400 or 800 ms × 10 or 20 s | World B: `db_capacity` 30 / 40 / 50 / 60 |
+  |---|---|---|
+  | 60 | valid: ignites, cap heals, stays healed (all 4 cells) | valid: incident at 4×, cap does not heal (30, 40, 60) |
+  | 80 | valid (all 4 cells) | valid (30, 40, 50, 60) |
+  | 100 | **not World A**: ignites but the cap does *not* heal (R ≈ μ, no headroom); reset 22–94 s | not measured |
+
+  Use `rps ≤ 80` for World A; `rps = 100` looks like a storm but behaves like World B, so it belongs in the
+  none-of-the-above/overload bucket if used at all. Reset after a valid cell: 7.8–8.8 s (storm), 9.8–13.8 s (degraded).
+* **Consumer paths verified (`sweep_lab.py concurrent|verify`):** two clones created at once → both ready in ~9 s wall,
+  distinct slots, both reproduce their world while the other runs, concurrent resets 12–13 s. The `LabPatchVerifier`
+  sequence (`patch_ref` clone → clone `canary_weight 1.0` → `db_latency 800/20` → `destroy` without `reset`) works: v2
+  takes 100 % of traffic, the storm reproduces on it, destroy leaves no containers.
+* **Patch verification:** `CloneSpec(patch_ref=<checkout root with sandbox/services/orders/app.py patched>)`
+  builds orders-v2 in the clone; then `canary_weight 1.0` via the clone's control sends it all traffic and the
+  reproduction recipes above are the stress variants.
+* The manager holds clone state in memory. If it restarts it removes any `faultline-clone-*` projects it finds.
 
 ## Tunables
 

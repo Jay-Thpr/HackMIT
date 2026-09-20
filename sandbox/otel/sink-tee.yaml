@@ -1,0 +1,14 @@
+# Tee sink for clones: keep local debug output AND write OTLP JSON batches to
+# /tmp/otel/records.jsonl so validate_lab.py fairness can read emitted records
+# instead of scraping process logs. confmap replaces lists, so the full
+# exporters list is restated per pipeline.
+exporters:
+  debug: {verbosity: basic}
+  file/leakcheck:
+    path: /tmp/otel/records.jsonl
+    rotation: {max_megabytes: 20, max_backups: 1}
+service:
+  pipelines:
+    traces:  {exporters: [debug, file/leakcheck]}
+    metrics: {exporters: [debug, file/leakcheck]}
+    logs:    {exporters: [debug, file/leakcheck]}

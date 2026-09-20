@@ -84,11 +84,7 @@
           "direction": "up"
         }
       ],
-      "confirms_if": {
-        "phase": "during",
-        "metric": "db.query_p50_ms",
-        "expect": "flat"
-      }
+      "confirms_if": null
     },
     {
       "hypothesis_id": "H_meta",
@@ -109,11 +105,7 @@
           "direction": "flat"
         }
       ],
-      "confirms_if": {
-        "phase": "during",
-        "metric": "db.query_p50_ms",
-        "expect": "flat"
-      }
+      "confirms_if": null
     },
     {
       "hypothesis_id": "H_db",
@@ -130,6 +122,10 @@
         {
           "metric": "svc.gateway.error_rate",
           "direction": "down"
+        },
+        {
+          "metric": "svc.gateway.p99_ms",
+          "direction": "down"
         }
       ],
       "after_release": [
@@ -140,7 +136,7 @@
       ],
       "confirms_if": {
         "phase": "during",
-        "metric": "db.query_p50_ms",
+        "metric": "svc.gateway.p99_ms",
         "expect": "down"
       }
     }

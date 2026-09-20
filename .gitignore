@@ -2,3 +2,6 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+.faultline/
+.env
+.DS_Store
