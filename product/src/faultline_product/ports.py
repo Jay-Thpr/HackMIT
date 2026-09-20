@@ -97,6 +97,7 @@ class HypothesisInvestigation:
     prediction_total: int | None
     detail: str
     evidence: dict | None = None  # similarity numbers etc., for the audit log / UI
+    attempts: list[dict] | None = None  # agent proposals tried, when an agent investigated
 
     @property
     def survives(self) -> bool:

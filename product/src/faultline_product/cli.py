@@ -96,6 +96,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="skip stage 4a (clone investigators) even when --lab-url is set",
     )
     watch.add_argument(
+        "--investigate-budget",
+        type=int,
+        default=3,
+        help="lab-action proposals each clone investigator agent may try per hypothesis",
+    )
+    watch.add_argument(
         "--investigate-gate",
         action="store_true",
         help="drop hypotheses that fail to reproduce in a clone before the production probe",
@@ -333,8 +339,32 @@ def _investigation(args, writer=None):
         return None
     from faultline_contracts.clone import HttpCloneLab
 
+    agent = None
+    brain = getattr(args, "brain", None) or (
+        "live" if getattr(args, "telemetry", "fixture") == "sandbox" else "fixture"
+    )
+    if brain == "live":
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if api_key:
+            try:
+                from openai import OpenAI
+            except ImportError as exc:
+                raise RuntimeError("install with: uv sync --extra llm") from exc
+            from faultline_brain import InvestigatorAgent
+
+            agent = InvestigatorAgent(
+                OpenAI(api_key=api_key), model=getattr(args, "openai_model", DEFAULT_MODEL)
+            )
+        else:
+            from faultline_brain import SeedInvestigator
+
+            agent = SeedInvestigator()
     return LabInvestigation(
-        HttpCloneLab(lab_url), writer=writer, max_clones=getattr(args, "max_clones", 1)
+        HttpCloneLab(lab_url),
+        writer=writer,
+        max_clones=getattr(args, "max_clones", 1),
+        agent=agent,
+        budget=getattr(args, "investigate_budget", 3),
     )
 
 

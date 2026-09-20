@@ -44,12 +44,14 @@ WORLDS = {
 
 
 class LiveLoop:
-    def __init__(self, verbose: bool, baseline_s: int, cli_timeout_s: int) -> None:
+    def __init__(self, verbose: bool, baseline_s: int, cli_timeout_s: int,
+                 lab_url: str | None = None, max_clones: int = 1, investigate_budget: int = 3) -> None:
         self.s = Sampler(verbose)
         self.fc = HttpFaultController(FAULT_URL, timeout_s=150)
         self.ctl = httpx.Client(base_url=CONTROL_URL, timeout=10)
         self.report = Report(started_at=datetime.now(timezone.utc).isoformat())
         self.baseline_s, self.cli_timeout_s = baseline_s, cli_timeout_s
+        self.lab_url, self.max_clones, self.investigate_budget = lab_url, max_clones, investigate_budget
         self.step = "setup"
 
     def check(self, name: str, ok: bool, detail: str = "") -> bool:
@@ -87,9 +89,13 @@ class LiveLoop:
         proc: subprocess.Popen | None = None
 
         def start_cli() -> subprocess.Popen:
-            cmd = ["uv", "run", "faultline", "--audit-log", str(audit_path), "watch", "--incident", incident,
+            uv_run = ["uv", "run"] + (["--extra", "llm"] if self.lab_url else [])
+            cmd = uv_run + ["faultline", "--audit-log", str(audit_path), "watch", "--incident", incident,
                    "--telemetry", "sandbox", "--levers", "sandbox", "--brain", "live",
                    "--detect-timeout", str(self.baseline_s + spec["develop_s"] + 120)]
+            if self.lab_url:
+                cmd += ["--lab-url", self.lab_url, "--max-clones", str(self.max_clones),
+                        "--investigate-budget", str(self.investigate_budget)]
             log = open(cli_log, "w")
             p = subprocess.Popen(cmd, cwd=PRODUCT, stdout=log, stderr=subprocess.STDOUT, text=True)
             print(f"  started: {' '.join(cmd[2:])}  (log {cli_log.name})", flush=True)
@@ -209,6 +215,9 @@ def main() -> None:
                     help="start `faultline watch` before injection (continuous watch) or after (late operator)")
     ap.add_argument("--baseline-s", type=int, default=130, help="healthy seconds to let watch accrue (orchestrator BASELINE_S=120)")
     ap.add_argument("--cli-timeout-s", type=int, default=420)
+    ap.add_argument("--lab-url", help="C6 clone manager; enables clone investigation in the watch run")
+    ap.add_argument("--max-clones", type=int, default=1)
+    ap.add_argument("--investigate-budget", type=int, default=3)
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
     try:
@@ -218,7 +227,9 @@ def main() -> None:
         print(f"sandbox not reachable ({e!r})")
         sys.exit(2)
     RUNS.mkdir(exist_ok=True)
-    report = LiveLoop(not args.quiet, args.baseline_s, args.cli_timeout_s).run(args.worlds, args.start_watch)
+    report = LiveLoop(not args.quiet, args.baseline_s, args.cli_timeout_s,
+                      lab_url=args.lab_url, max_clones=args.max_clones,
+                      investigate_budget=args.investigate_budget).run(args.worlds, args.start_watch)
     out = RUNS / f"live-{'-'.join(args.worlds)}-{args.start_watch}-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.json"
     from smoke_sandbox import write_report
     write_report(report, out)
