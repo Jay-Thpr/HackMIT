@@ -1,7 +1,7 @@
 export type NodeKind = 'service' | 'datastore' | 'queue' | 'external'
 export type Health = 'healthy' | 'degraded' | 'unknown'
 export type EnvironmentLifecycle = 'unknown' | 'starting' | 'ready' | 'investigating' | 'destroying' | 'archived'
-export type EnvironmentOutcome = 'confirmed' | 'ruled-out' | 'fix-verified' | 'fix-superseded' | 'fix-failed'
+export type EnvironmentOutcome = 'confirmed' | 'ruled-out' | 'fix-verified' | 'fix-superseded' | 'fix-failed' | 'abstained' | 'observer'
 export type IncidentLifecycle = 'monitoring' | 'detected' | 'starting' | 'investigating' | 'confirming' | 'cleanup' | 'complete'
 export type Position = [number, number, number]
 
@@ -11,6 +11,9 @@ export interface Entity {
   kind: NodeKind
   instrumented: boolean
   instances?: number
+  // Tenants served by this node. Arc 3 confines blame to a subset of tenants, so the
+  // inspector needs to say which ones a degraded worker or shard actually serves.
+  tenants?: string[]
 }
 
 export interface Relationship {
@@ -51,8 +54,8 @@ export interface WorkspaceEvent {
   id: string
   sequence: number
   at: number
-  kind: 'baseline' | 'detect' | 'reason' | 'clone' | 'lifecycle' | 'action' | 'observe' | 'undo' | 'verdict' | 'archive'
-  actor: 'model' | 'math' | 'adapter' | 'investigator-a' | 'investigator-b' | 'orchestrator'
+  kind: 'baseline' | 'detect' | 'reason' | 'clone' | 'observer' | 'lifecycle' | 'action' | 'observe' | 'undo' | 'verdict' | 'archive'
+  actor: 'model' | 'math' | 'adapter' | 'investigator-a' | 'investigator-b' | 'orchestrator' | 'elastic'
   environmentId: string
   title: string
   detail: string
@@ -71,8 +74,20 @@ export interface WorkspaceEvent {
   testResult?: { caseId?: string; checkId: string; passed: boolean; expected: string; observed: string }
   undoId?: string
   undoStatus?: 'active' | 'undone' | 'expired' | 'unknown'
-  environment?: { label: string; color: string; hypothesisId: string }
+  // An observer layer carries no hypothesis of its own, so hypothesisId is optional.
+  environment?: { label: string; color: string; hypothesisId?: string }
   readings?: Record<string, NodeReading>
+  // A read-only responder's conclusion, in the shape its own schema returns: metric keys
+  // copied verbatim as evidence, the competing explanations it kept, and what it advises.
+  evidence?: string[]
+  hypotheses?: string[]
+  recommendation?: string
+  // Set when a responder declined to name a cause because the evidence could not
+  // distinguish the candidates. An abstention is not a wrong answer.
+  abstained?: boolean
+  // How far the measured response sat from the noise band, so a marginal separation
+  // renders as a margin rather than reading identically to an obvious one.
+  separation?: { z: number; sigma: number }
 }
 
 export interface Scenario {
@@ -144,6 +159,9 @@ export interface WorkspaceState {
   verdict?: string
   diagnosis?: string
   confirmed?: boolean
+  // Where the read-only responder stood at this cursor, so both walkthroughs can be
+  // shown side by side without a second view.
+  observer?: { environmentId: string; diagnosis?: string; abstained: boolean }
 }
 
 export function deriveTopology(input: {
@@ -194,10 +212,16 @@ export function replay(scenario: Scenario, time: number): WorkspaceState {
   let verdict: string | undefined
   let diagnosis: string | undefined
   let confirmed: boolean | undefined
+  let observer: WorkspaceState['observer']
   for (const event of visibleEvents(scenario, time)) {
     if (event.phase) phase = event.phase
     const explicit = event.incident !== undefined  // live scenarios state the incident phase; derived transitions below defer to it
     if (event.kind === 'detect' && !explicit) lifecycle = 'detected'
+    if (event.kind === 'observer' && event.environment && !environments.some(env => env.id === event.environmentId)) {
+      // A read-only responder joins the same stack so both walkthroughs share one timeline.
+      // It builds nothing, so it does not move the incident lifecycle or the cleanup state.
+      environments.push({ id: event.environmentId, ...event.environment, createdAt: event.at, lifecycle: event.lifecycle ?? 'ready', lifecycleAt: event.at, level: nextLevel++, nodes: structuredClone(event.readings ?? scenario.baseline), outcome: 'observer' })
+    }
     if (event.kind === 'clone' && event.environment && !environments.some(env => env.id === event.environmentId)) {
       environments.push({ id: event.environmentId, ...event.environment, createdAt: event.at, lifecycle: event.lifecycle ?? (scenario.live ? 'unknown' : 'starting'), lifecycleAt: event.at, level: nextLevel++, nodes: Object.fromEntries(scenario.topology.nodes.map(node => [node.id, { health: 'unknown' }])) })
       if (cleanup !== 'not-started') cleanup = 'in-progress'  // a later clone (sequential investigators, patch verification) after an earlier teardown
@@ -220,6 +244,11 @@ export function replay(scenario: Scenario, time: number): WorkspaceState {
     if (event.kind === 'undo') {
       const action = actions.find(item => item.id === event.undoId && item.environmentId === event.environmentId)
       if (action) action.status = isConfirmedUndo(event) ? 'reverted' : event.undoStatus === 'active' ? 'release-failed' : 'awaiting-reversion'
+    }
+    if (event.actor === 'elastic' && (event.kind === 'reason' || event.kind === 'verdict')) {
+      observer = { environmentId: event.environmentId, diagnosis: event.diagnosis, abstained: event.abstained === true }
+      const layer = environments.find(env => env.id === event.environmentId)
+      if (layer) layer.outcome = event.abstained === true ? 'abstained' : 'observer'
     }
     if (event.kind === 'verdict' && event.environmentId === 'production') {
       verdict = event.title
@@ -257,11 +286,11 @@ export function replay(scenario: Scenario, time: number): WorkspaceState {
     for (const env of verified.slice(0, -1)) env.outcome = 'fix-superseded'
     winner = verified.at(-1)?.id ?? environments.find(env => env.outcome === 'confirmed')?.id
   }
-  return { environments, actions, phase, lifecycle, cleanup, winner, verdict, diagnosis, confirmed }
+  return { environments, actions, phase, lifecycle, cleanup, winner, verdict, diagnosis, confirmed, observer }
 }
 
 export const environmentLifecycleLabel: Record<EnvironmentLifecycle, string> = { unknown: 'Readiness not recorded', starting: 'Starting', ready: 'Ready', investigating: 'Investigating', destroying: 'Removing', archived: 'Archived' }
-export const environmentOutcomeLabel: Record<EnvironmentOutcome, string> = { confirmed: 'Confirmed cause', 'ruled-out': 'Ruled out', 'fix-verified': 'Fix verified', 'fix-superseded': 'Earlier revision · superseded', 'fix-failed': 'Fix failed' }
+export const environmentOutcomeLabel: Record<EnvironmentOutcome, string> = { confirmed: 'Confirmed cause', 'ruled-out': 'Ruled out', 'fix-verified': 'Fix verified', 'fix-superseded': 'Earlier revision · superseded', 'fix-failed': 'Fix failed', abstained: 'Declined to name a cause', observer: 'Read-only responder' }
 
 /** Archived clones stay in the scene at this presence so the investigation can be reviewed;
  *  the clone that carried the confirmed cause or the verified fix stays at full presence. */

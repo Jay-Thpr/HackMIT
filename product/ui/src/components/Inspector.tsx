@@ -7,7 +7,7 @@ import { suiteChecks } from '../suite'
 import { deriveNodeRecovery } from '../recovery'
 import { useWorkspace } from '../store'
 
-const actorLabel: Record<WorkspaceEvent['actor'], string> = { model: 'Model proposal', math: 'Measured evaluation', adapter: 'Tool execution', 'investigator-a': 'Investigator A', 'investigator-b': 'Investigator B', orchestrator: 'Orchestrator' }
+const actorLabel: Record<WorkspaceEvent['actor'], string> = { model: 'Model proposal', math: 'Measured evaluation', adapter: 'Tool execution', 'investigator-a': 'Investigator A', 'investigator-b': 'Investigator B', orchestrator: 'Orchestrator', elastic: 'Read-only telemetry responder' }
 
 function TraceStep({ event, selected, onSelect, live }: { event: WorkspaceEvent; selected: boolean; onSelect: () => void; live?: boolean }) {
   return <div className={`trace-step ${selected ? 'expanded' : ''}`}>
