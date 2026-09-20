@@ -34,6 +34,7 @@ observable output without reading hidden fault state.
 | `store.py` | Elasticsearch C1 fingerprint window/series reads |
 | `ambiguity.py` | Label-free canonical metric exports for passive ambiguity checks |
 | `tokens.py` | OpenAI-token measurement: raw public snapshots versus compressed C1 evidence per incident |
+| `memory.py` | Operator-facing semantic incident-memory retrieval using Elastic's managed Jina embeddings; never diagnosis/verdict input |
 
 ## Elastic Cloud
 
@@ -44,6 +45,18 @@ write on `faultline-*` and read on `_query`) in the repo-root `.env` — see
 `load_repo_dotenv` without overriding real environment variables. Leave the URL
 unset to skip Elasticsearch persistence entirely. For local development, point
 the URL at `http://localhost:9200` with no API key.
+
+## Jina semantic incident memory
+
+`faultline-incident-memory` is a deliberately separate index for curated,
+human-readable incident reports. Its `content` field is Elasticsearch
+`semantic_text` configured with the Elastic Inference Service endpoint
+`.jina-embeddings-v3`: Elasticsearch calls Jina while indexing and while
+querying, so Faultline never handles a separate Jina credential or vector.
+
+`ElasticsearchIncidentMemory.search()` always requires an explicit environment
+filter. This memory is operator-facing context only: it cannot provide C1
+metrics, select an experiment, or affect the C2 math verdict.
 
 ## Read-only Elastic diagnostics (`scripts/es_doctor.py`)
 
