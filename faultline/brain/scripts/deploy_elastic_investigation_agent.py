@@ -63,6 +63,41 @@ def require(*names: str) -> str:
     return value.rstrip("/") if any(name.endswith("_URL") for name in names) else value
 
 
+def ensure_inference_endpoint(
+    elasticsearch_url: str,
+    api_key: str,
+    endpoint: dict[str, Any],
+) -> str:
+    """Create the OpenAI endpoint once, or reuse an exact service/model match.
+
+    Elastic's create inference API rejects a second PUT for an existing ID.
+    Recreating it would also be destructive for callers using that ID, so an
+    incompatible existing endpoint fails closed instead.
+    """
+    endpoint_url = f"{elasticsearch_url}/_inference/chat_completion/{INFERENCE_ID}"
+    try:
+        existing = request("GET", endpoint_url, api_key)
+    except HTTPError as error:
+        if error.code != 404:
+            raise
+        request("PUT", endpoint_url, api_key, endpoint)
+        return "created"
+
+    rows = existing.get("endpoints", []) if isinstance(existing, dict) else []
+    if len(rows) != 1 or not isinstance(rows[0], dict):
+        raise SystemExit("existing inference endpoint returned an unexpected schema")
+    current = rows[0]
+    wanted = endpoint.get("service_settings", {})
+    if (
+        current.get("inference_id") != INFERENCE_ID
+        or current.get("task_type") != "chat_completion"
+        or current.get("service") != endpoint.get("service")
+        or current.get("service_settings", {}).get("model_id") != wanted.get("model_id")
+    ):
+        raise SystemExit("existing inference endpoint does not match the requested service/model")
+    return "reused"
+
+
 def fixture_boundary_check(root: Path) -> None:
     for name in ("fingerprint_storm.json", "fingerprint_degraded_db.json"):
         evidence = fixture_evidence(Fingerprint.model_validate_json((root / "contracts" / "fixtures" / name).read_text()))
@@ -111,7 +146,7 @@ def main() -> None:
     elastic_api_key = require("ELASTIC_AGENT_BUILDER_API_KEY", "ELASTIC_API_KEY")
     endpoint = openai_inference_definition(require("OPENAI_API_KEY"), require("OPENAI_MODEL"))
 
-    request("PUT", f"{elasticsearch_url}/_inference/chat_completion/{INFERENCE_ID}", elastic_api_key, endpoint)
+    endpoint_status = ensure_inference_endpoint(elasticsearch_url, elastic_api_key, endpoint)
     if args.role == "explanation":
         available = request("GET", f"{kibana_url}/api/agent_builder/tools", elastic_api_key)
         ids = {tool["id"] for tool in available.get("results", [])}
@@ -134,7 +169,7 @@ def main() -> None:
     else:
         assert_proposal_boundary(deployed, args.role)
     print(
-        f"registered {agent_id}; runtime requests must explicitly select inference "
+        f"registered {agent_id}; inference endpoint {endpoint_status}; runtime requests must explicitly select inference "
         f"endpoint {INFERENCE_ID}; live inference not verified"
     )
 
