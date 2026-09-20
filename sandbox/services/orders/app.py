@@ -30,16 +30,21 @@ VERSION = os.environ.get("SERVICE_VERSION", "v1")
 PAYMENTS_URL = os.environ.get("PAYMENTS_URL", "http://envoy:8081/pay")
 DEFAULT_MAX_RETRIES = int(os.environ.get("ORDERS_MAX_RETRIES", "3"))
 ATTEMPT_TIMEOUT_S = float(os.environ.get("ORDERS_ATTEMPT_TIMEOUT_MS", "500")) / 1000.0
-BACKOFF_BASE_S = float(os.environ.get("ORDERS_BACKOFF_BASE_MS", "100")) / 1000.0
-BACKOFF_MAX_S = float(os.environ.get("ORDERS_BACKOFF_MAX_MS", "2000")) / 1000.0
+BACKOFF_BASE_S = float(os.environ.get("ORDERS_BACKOFF_BASE_MS", "25")) / 1000.0
+BACKOFF_MAX_S = float(os.environ.get("ORDERS_BACKOFF_MAX_MS", "200")) / 1000.0
+# Whole-request deadline: retries and backoff must fit inside it, so a checkout never takes
+# longer than one attempt timeout or this budget, whichever is larger.
+REQUEST_DEADLINE_S = float(os.environ.get("ORDERS_REQUEST_DEADLINE_MS", "900")) / 1000.0
+MIN_ATTEMPT_S = 0.05
 # Retries allowed per request on average (0.2 -> retries <= 20% of requests over time).
 RETRY_BUDGET_RATIO = float(os.environ.get("ORDERS_RETRY_BUDGET_RATIO", "0.2"))
 # Burst allowance: tokens accumulated while healthy, so a short blip can still be retried.
 RETRY_BUDGET_BURST = float(os.environ.get("ORDERS_RETRY_BUDGET_BURST", "20"))
 
 stats = Stats("orders", counters=("requests", "attempts", "retries", "ok", "errors", "attempt_timeouts", "attempt_errors",
-                                  "budget_exhausted"),
+                                  "budget_exhausted", "deadline_exceeded"),
               hists=("request", "attempt", "backoff"))
+_ERR = {"error": "payments unavailable"}
 _override: dict[str, Any] = {"max_retries": None, "timeout_s": None, "expires": 0.0}
 _session: aiohttp.ClientSession | None = None
 _in_flight = 0
@@ -98,11 +103,15 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
-async def _attempt(order_id: str) -> tuple[bool, str]:
+def request_deadline_s() -> float:
+    return max(REQUEST_DEADLINE_S, attempt_timeout_s())
+
+
+async def _attempt(order_id: str, timeout_s: float) -> tuple[bool, str]:
     t0 = time.monotonic()
     try:
         async with _session.post(PAYMENTS_URL, json={"order_id": order_id, "amount_cents": 1000},
-                                 timeout=aiohttp.ClientTimeout(total=attempt_timeout_s())) as r:
+                                 timeout=aiohttp.ClientTimeout(total=timeout_s)) as r:
             await r.read()
             ok = r.status == 200
             outcome = "ok" if ok else f"status {r.status}"
@@ -132,7 +141,8 @@ async def checkout():
                 delay = backoff_s(attempt - 1)
                 stats.observe("backoff", delay * 1000)
                 await asyncio.sleep(delay)
-            ok, outcome = await _attempt(order_id)
+            remaining = request_deadline_s() - (time.monotonic() - t0)
+            ok, outcome = await _attempt(order_id, min(attempt_timeout_s(), max(remaining, MIN_ATTEMPT_S)))
             if ok:
                 stats.inc("ok")
                 return {"order_id": order_id, "attempts": attempt, "version": VERSION}
@@ -148,13 +158,17 @@ async def checkout():
             if attempt >= limit:
                 stats.inc("errors")
                 rlog.log(logging.ERROR, "failed", "checkout failed: payments unavailable after %d attempts", attempt)
-                return JSONResponse({"error": "payments unavailable", "attempts": attempt}, status_code=503)
+                return JSONResponse({**_ERR, "attempts": attempt}, status_code=503)
+            if request_deadline_s() - (time.monotonic() - t0) < MIN_ATTEMPT_S + BACKOFF_BASE_S:
+                stats.inc("errors")
+                stats.inc("deadline_exceeded")
+                rlog.log(logging.ERROR, "deadline", "checkout failed: request deadline exceeded after %d attempts", attempt)
+                return JSONResponse({**_ERR, "attempts": attempt, "reason": "deadline exceeded"}, status_code=503)
             if not _budget_take():
                 stats.inc("errors")
                 stats.inc("budget_exhausted")
                 rlog.log(logging.ERROR, "budget", "checkout failed: retry budget exhausted after %d attempts", attempt)
-                return JSONResponse({"error": "payments unavailable", "attempts": attempt,
-                                     "reason": "retry budget exhausted"}, status_code=503)
+                return JSONResponse({**_ERR, "attempts": attempt, "reason": "retry budget exhausted"}, status_code=503)
     finally:
         _in_flight -= 1
         stats.observe("request", (time.monotonic() - t0) * 1000)
@@ -165,7 +179,7 @@ async def get_stats():
     stats.gauges.update(max_retries=max_retries(), attempt_timeout_ms=attempt_timeout_s() * 1000,
                         in_flight=_in_flight, version=VERSION, retry_budget=round(_retry_budget, 3),
                         retry_budget_ratio=RETRY_BUDGET_RATIO, backoff_base_ms=BACKOFF_BASE_S * 1000,
-                        backoff_max_ms=BACKOFF_MAX_S * 1000)
+                        backoff_max_ms=BACKOFF_MAX_S * 1000, request_deadline_ms=request_deadline_s() * 1000)
     return stats.snapshot()
 
 
