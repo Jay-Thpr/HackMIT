@@ -17,6 +17,7 @@ Reads KIBANA_URL / FAULTLINE_ELASTICSEARCH_API_KEY from the environment
 dashboard URL.
 """
 
+import argparse
 import json
 import os
 import sys
@@ -190,11 +191,20 @@ def build_ndjson() -> str:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--kibana-url", default=None, help="Override $KIBANA_URL")
+    parser.add_argument(
+        "--api-key-env",
+        default="FAULTLINE_ELASTICSEARCH_API_KEY",
+        help="Name of the env var holding the API key (default: FAULTLINE_ELASTICSEARCH_API_KEY)",
+    )
+    args = parser.parse_args()
+
     load_repo_dotenv(Path(__file__))
-    kibana_url = os.environ.get("KIBANA_URL", "").rstrip("/")
-    api_key = os.environ.get("FAULTLINE_ELASTICSEARCH_API_KEY")
+    kibana_url = (args.kibana_url or os.environ.get("KIBANA_URL", "")).rstrip("/")
+    api_key = os.environ.get(args.api_key_env)
     if not kibana_url or not api_key:
-        print("KIBANA_URL and FAULTLINE_ELASTICSEARCH_API_KEY must be set", file=sys.stderr)
+        print(f"KIBANA_URL and {args.api_key_env} must be set", file=sys.stderr)
         return 2
 
     client = httpx.Client(

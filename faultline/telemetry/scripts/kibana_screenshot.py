@@ -13,6 +13,7 @@ every request; if Kibana still redirects to a cloud login page, the script
 prints what it sees and exits non-zero.
 """
 
+import argparse
 import os
 import sys
 from pathlib import Path
@@ -23,11 +24,20 @@ PNG_PATH = Path(__file__).resolve().parents[1] / "docs" / "kibana-traces-product
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--kibana-url", default=None, help="Override $KIBANA_URL")
+    parser.add_argument(
+        "--api-key-env",
+        default="FAULTLINE_ELASTICSEARCH_API_KEY",
+        help="Name of the env var holding the API key (default: FAULTLINE_ELASTICSEARCH_API_KEY)",
+    )
+    args = parser.parse_args()
+
     load_repo_dotenv(Path(__file__))
-    kibana_url = os.environ.get("KIBANA_URL", "").rstrip("/")
-    api_key = os.environ.get("FAULTLINE_ELASTICSEARCH_API_KEY")
+    kibana_url = (args.kibana_url or os.environ.get("KIBANA_URL", "")).rstrip("/")
+    api_key = os.environ.get(args.api_key_env)
     if not kibana_url or not api_key:
-        print("KIBANA_URL and FAULTLINE_ELASTICSEARCH_API_KEY must be set", file=sys.stderr)
+        print(f"KIBANA_URL and {args.api_key_env} must be set", file=sys.stderr)
         return 2
 
     from playwright.sync_api import sync_playwright
