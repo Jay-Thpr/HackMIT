@@ -120,6 +120,50 @@ test('node selection reveals scoped activity and closing returns to an unclutter
   await expect(page.getByRole('button', { name: 'Open evidence', exact: true })).toBeVisible()
 })
 
+for (const viewport of [{ width: 1512, height: 982 }, { width: 480, height: 844 }]) {
+  test(`expanded map keeps node evidence visible and clickable at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport)
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Expand map', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Exit expanded map', exact: true })).toBeVisible()
+    await expect(page.locator('.workspace-grid')).toHaveCSS('position', 'fixed')
+    for (const node of ['primary-db', 'orders-api']) {
+      if (viewport.width < 850) {
+        await page.getByRole('button', { name: 'Find an entity', exact: true }).click()
+        await page.locator('.entity-picker').getByRole('button', { name: node, exact: true }).click()
+      } else {
+        await page.getByRole('button', { name: `Inspect ${node} in Production`, exact: true }).click()
+      }
+      await expect(page.getByRole('button', { name: 'Close evidence', exact: true })).toHaveAttribute('aria-expanded', 'true')
+      await expect(page.locator('.selected-entity strong')).toHaveText(node)
+      await page.getByRole('tab', { name: 'Evidence', exact: true }).click({ timeout: 4000 })
+      await expect(page.getByRole('tab', { name: 'Evidence', exact: true })).toHaveAttribute('aria-selected', 'true')
+      const bounds = await page.locator('.inspector').boundingBox()
+      expect(bounds).not.toBeNull()
+      expect(bounds!.x).toBeGreaterThanOrEqual(0)
+      expect(bounds!.y).toBeGreaterThanOrEqual(0)
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width)
+      expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport.height)
+      await page.getByRole('button', { name: 'Close entity inspector', exact: true }).click()
+      await expect(page.locator('.inspector')).toHaveCount(0)
+      await page.getByRole('button', { name: 'Fit whole system', exact: true }).click()
+    }
+    await page.getByRole('button', { name: 'Open evidence', exact: true }).click()
+    await page.getByRole('tab', { name: /Decision trace/ }).click()
+    await page.getByRole('button', { name: 'Close evidence', exact: true }).click()
+    await expect(page.locator('.inspector')).toHaveCount(0)
+    await page.getByRole('button', { name: 'Open evidence', exact: true }).click()
+    await page.getByRole('button', { name: 'Exit expanded map', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Expand map', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Expand map', exact: true }).click()
+    await page.getByRole('tab', { name: 'Evidence', exact: true }).click()
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('button', { name: 'Expand map', exact: true })).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  })
+}
+
 test('layer focus isolates a clone and all layers restores the overview', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByTestId('topology-stage')).toHaveAttribute('data-isolated-layer', 'all')
