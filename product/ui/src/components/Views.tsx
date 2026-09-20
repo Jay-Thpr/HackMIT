@@ -160,6 +160,7 @@ export function ReplayLibrary({ scenario }: { scenario: Scenario }) {
 
 export function ElasticLineage() {
   const { set } = useWorkspace()
+  const [surface, setSurface] = useState<'timeline' | 'clone' | 'memory'>('timeline')
   const stages = [
     ['01', 'OpenTelemetry', 'Traces, metrics, and logs enter through one standard collector.'],
     ['02', 'Elastic Cloud', 'Raw signals remain inspectable beside the structured incident record.'],
@@ -167,6 +168,30 @@ export function ElasticLineage() {
     ['04', 'Retrieve', 'Bounded ES|QL tools and Jina memory surface only scoped context.'],
     ['05', 'Decide', 'OpenAI explains the evidence; the noise-model judge owns the verdict.'],
   ]
+  const querySurfaces = {
+    timeline: {
+      label: 'Incident timeline',
+      tool: 'faultline.incident_timeline',
+      purpose: 'Shows the observed sequence without asking the agent to sift through every log line.',
+      parameters: ['incident_id: INC-042', 'environment: production', 'start / end: bounded UTC window'],
+      query: `FROM faultline-fingerprints\n| WHERE incident_id == ?incident_id\n  AND environment == ?environment\n  AND window_start >= TO_DATETIME(?start)\n  AND window_start < TO_DATETIME(?end)\n| KEEP window_start, services.orders.qps,\n       services.orders.retry_ratio, db.query_p99_ms\n| SORT window_start ASC\n| LIMIT 200`,
+    },
+    clone: {
+      label: 'Clone comparison',
+      tool: 'faultline.clone_vs_production',
+      purpose: 'Checks whether an isolated experiment resembles production before its result is trusted.',
+      parameters: ['incident_id: INC-042', 'clone_id: clone-db', 'same bounded UTC window'],
+      query: `FROM faultline-fingerprints\n| WHERE incident_id == ?incident_id\n  AND (environment == "production"\n       OR clone_id == ?clone_id)\n| STATS windows = COUNT(*),\n        retry_mean = AVG(services.orders.retry_ratio),\n        db_p99_mean = AVG(db.query_p99_ms)\n  BY environment, clone_id\n| LIMIT 2`,
+    },
+    memory: {
+      label: 'Semantic memory',
+      tool: 'faultline.semantic_incident_memory',
+      purpose: 'Finds a related operator report when its wording differs from the current incident.',
+      parameters: ['observed query text only', 'environment: production', 'bounded historical window'],
+      query: `FROM faultline-incident-memory METADATA _score\n| WHERE environment == ?environment\n  AND incident_id != ?incident_id\n  AND created_at >= TO_DATETIME(?start)\n  AND created_at < TO_DATETIME(?end)\n  AND MATCH(content, ?query_text)\n| KEEP incident_id, diagnosis, content, _score\n| SORT _score DESC\n| LIMIT 10`,
+    },
+  } as const
+  const selectedSurface = querySurfaces[surface]
   return <div className="elastic-lineage-view">
     <section className="elastic-intro">
       <div className="elastic-kicker">
@@ -184,6 +209,15 @@ export function ElasticLineage() {
       </div>)}
     </section>
     <section className="elastic-guardrail"><span>WHY THIS MATTERS</span><p>Historical similarity can add context. It cannot name a cause, select a production action, or override the measured confirmation test.</p></section>
+    <section className="query-surface" aria-labelledby="query-surface-title">
+      <div className="query-surface-heading"><div><span className="overline">INSPECT THE RETRIEVAL</span><h3 id="query-surface-title">The agent sees reviewed tools, not open-ended search.</h3></div><span className="query-readonly">Read-only · bounded</span></div>
+      <div className="query-tabs" role="tablist" aria-label="Elastic tool examples">{(Object.keys(querySurfaces) as (keyof typeof querySurfaces)[]).map(key => <button key={key} role="tab" aria-selected={surface === key} onClick={() => setSurface(key)}>{querySurfaces[key].label}</button>)}</div>
+      <div className="query-detail">
+        <div className="tool-call-card"><span className="overline">AGENT BUILDER TOOL CALL</span><strong>{selectedSurface.tool}</strong><p>{selectedSurface.purpose}</p><div className="tool-parameters"><span>Required inputs</span>{selectedSurface.parameters.map(parameter => <code key={parameter}>{parameter}</code>)}</div><small>Only these named values can change. The query structure is fixed in Faultline.</small></div>
+        <div className="query-code"><div><span>ES|QL</span><span>Reviewed query template</span></div><pre><code>{selectedSurface.query}</code></pre></div>
+      </div>
+      <p className="query-caption">The full system also has fixed tools for audit context and similar incidents. Semantic memory is context only; the measurement judge still makes the verdict.</p>
+    </section>
     <div className="elastic-actions"><button className="primary-button" onClick={() => set({ view: 'investigation' })}>See the investigation <ArrowRight size={14} /></button><button className="text-button" onClick={() => set({ view: 'explanation' })}>Read the decision trace <ArrowRight size={14} /></button></div>
     <p className="page-source-note">Design preview. This page explains the intended evidence flow; it does not query Elastic Cloud.</p>
   </div>

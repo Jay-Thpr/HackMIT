@@ -59,7 +59,33 @@ Live `/stats` → C1 fingerprints are built by Owner 2's canonical
 window boundaries); Product only adds the polling loop, breach wait, and the optional
 `orders_v2` canary service on top, so the judge's baselines match what lands in Elasticsearch.
 
-Show any recorded incident in the UI (`product/ui`, built with `npm run build`):
+## One local app
+
+Build and serve the Product API and investigation workspace together from one command:
+
+```bash
+uv run faultline app
+# http://127.0.0.1:8010/
+```
+
+The command installs the UI dependencies only when they are missing, builds the React workspace,
+then serves the compiled UI and read-only Product API from the same origin. It uses local audit
+records by default and never starts Docker, a clone lab, a fault controller, or a cloud client.
+
+Bring local evidence into that same app with paths you control:
+
+```bash
+uv run faultline --audit-log state/faultline-audit.jsonl app \
+  --fingerprints-log state/fingerprints.jsonl \
+  --comparison-dir ../runs/comparisons
+```
+
+Use `--with-elasticsearch` only when you intentionally want the local viewer to read configured
+Elasticsearch evidence. `--skip-ui-build` is available when the current `product/ui/dist` should
+be served unchanged.
+
+The lower-level `ui` command remains useful when you have already built the frontend and only want
+to serve the API:
 
 ```bash
 uv run faultline ui --port 8010 --extra-audit-log ../integration/runs/audit-demo-storm-2.jsonl
