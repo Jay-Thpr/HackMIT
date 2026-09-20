@@ -266,7 +266,9 @@ export function replay(scenario: Scenario, time: number): WorkspaceState {
       if (archived) {
         archived.lifecycle = 'archived'
         archived.lifecycleAt = event.at
-        cleanup = environments.every(env => env.id === 'production' || env.lifecycle === 'archived') ? 'complete' : 'in-progress'
+        // An observer layer is never torn down - it built nothing - so it must not hold the
+        // cleanup state open. Only clones count toward a finished investigation.
+        cleanup = environments.every(env => env.id === 'production' || isObserverEnvironment(env) || env.lifecycle === 'archived') ? 'complete' : 'in-progress'
         if (!explicit) lifecycle = cleanup === 'complete' ? 'complete' : 'cleanup'
       }
     }

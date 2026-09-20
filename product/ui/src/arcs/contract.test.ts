@@ -94,3 +94,37 @@ describe('the six arcs, as specified', () => {
     }
   })
 })
+
+describe('what the report says at the end of playback', () => {
+  it('reaches an end state the report is reachable from, in every arc', () => {
+    for (const id of ARC_IDS) {
+      const scenario = arc(id)
+      const state = replay(scenario, scenario.duration)
+      // Either the investigation completed, or it is a recorded run that has played out.
+      expect(state.lifecycle === 'complete' || scenario.complete === true, id).toBe(true)
+      // An observer layer builds nothing, so it must never hold the cleanup state open.
+      if (state.environments.some(env => env.id !== 'production' && env.outcome !== 'observer' && env.outcome !== 'abstained')) {
+        expect(state.cleanup, id).toBe('complete')
+      }
+    }
+  })
+
+  it('distinguishes a confirmation, an unresolved run and a correct no-incident', () => {
+    expect(replay(arc('storm-severe'), 100).confirmed).toBe(true)
+    // hot-key must remain unresolved: not confirmed, and not a no-incident either.
+    const hot = replay(arc('hot-key'), arc('hot-key').duration)
+    expect(hot.confirmed).not.toBe(true)
+    expect(hot.diagnosis).not.toBe('no_incident')
+    expect(arc('hot-key').report?.outcome).toBe('abstained')
+    // benign-spike is the correct-no-incident case, which is not a failure.
+    expect(arc('benign-spike').report?.outcome).toBe('no_incident')
+  })
+
+  it('gives every unresolved arc a verdict detail, since the report shows it as the reason', () => {
+    for (const id of ['hot-key'] as const) {
+      const verdict = arc(id).events.filter(e => e.kind === 'verdict' && e.environmentId === 'production').at(-1)
+      expect(verdict, id).toBeDefined()
+      expect(verdict!.detail.length, id).toBeGreaterThan(20)
+    }
+  })
+})

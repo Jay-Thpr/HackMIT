@@ -50,6 +50,18 @@ function IncidentReport({ scenario, workspace, close }: { scenario: Scenario; wo
   const fixClone = workspace.environments.find(env => env.outcome === 'fix-verified' || env.outcome === 'fix-failed')
   const productionActions = shown.filter(event => event.kind === 'action' && event.environmentId === 'production').length
   const hypothesis = scenario.hypotheses.find(item => item.id === workspace.diagnosis)
+  // Three outcomes, not two. An abstention is a run that did not resolve; a healthy control
+  // resolved correctly by finding nothing. Both must be distinguishable from a confirmation.
+  const outcome = workspace.confirmed ? 'confirmed'
+    : scenario.report?.outcome === 'no_incident' || workspace.diagnosis === 'no_incident' ? 'no_incident'
+    : 'unresolved'
+  const headline = outcome === 'confirmed' ? (verdict?.title ?? workspace.verdict ?? 'Cause confirmed')
+    : outcome === 'no_incident' ? 'No incident: nothing was wrong'
+    : 'No cause confirmed'
+  const because = outcome === 'confirmed' ? null
+    : outcome === 'no_incident'
+      ? 'The breach never met the sustained detection gate, so no hypothesis was raised and nothing was changed in production.'
+      : (verdict?.detail ?? 'No hypothesis passed a test it could have failed, so measurement did not name a cause. A human was paged.')
   const facts: [string, string][] = [
     ['Diagnosis', workspace.diagnosis ? `${hypothesis?.title ?? workspace.diagnosis}${workspace.confirmed ? ' · confirmed' : ' · not confirmed'}` : 'No verdict yet'],
     ['Confirmed in', confirmedClone ? `${confirmedClone.label}, then production` : 'Production'],
@@ -60,8 +72,9 @@ function IncidentReport({ scenario, workspace, close }: { scenario: Scenario; wo
   ]
   if (report?.mitigationHeld) facts.push(['Mitigation held', `${report.mitigationHeld} is holding production up; a human must fix the cause before its TTL ends`])
   return <div className="report-dialog">
-    <div className="report-dialog-heading"><FileText size={18} /><div><h2 id="dialog-title">{verdict?.title ?? workspace.verdict ?? 'Investigation complete'}</h2><p className="dialog-subtitle">{report?.outcome ?? 'Scripted example · simulated outcome'} · {scenario.live ? `audit log · ${scenario.id}` : scenario.incident}</p></div></div>
+    <div className="report-dialog-heading"><FileText size={18} /><div><h2 id="dialog-title">{headline}</h2><p className="dialog-subtitle">{report?.outcome ?? 'Scripted example · simulated outcome'} · {scenario.live ? `audit log · ${scenario.id}` : scenario.incident}</p></div></div>
     {winner && <p className="report-winner" data-environment={winner.id}><strong>{winner.label}</strong> is emphasised in the workspace: {winner.outcome === 'fix-verified' ? 'the patched clone survived the replayed incident.' : 'its reproduction matched the cause production confirmed.'}</p>}
+    {because && <p className="report-outcome" data-outcome={outcome}><strong>{outcome === 'no_incident' ? 'Correctly found no incident.' : 'This investigation did not resolve.'}</strong> {because}</p>}
     <dl className="report-dialog-facts">{facts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
     {verdict?.result && <p className="report-dialog-evidence">{verdict.result}</p>}
     <div className="report-dialog-actions">
