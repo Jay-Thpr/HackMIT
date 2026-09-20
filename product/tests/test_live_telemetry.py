@@ -1,3 +1,4 @@
+import logging
 import urllib.error
 from datetime import datetime, timezone
 
@@ -193,6 +194,41 @@ def test_live_source_persists_each_window_once_with_incident_metadata():
     assert source.window(start, end).window_start == start
     assert source.window(start, end).window_start == start
     assert [(item[1], item[2]) for item in writer.writes] == [("incident-7", None)]
+
+
+def test_persist_failure_is_logged_and_retried_without_stopping_polling(caplog):
+    class FailingWriter:
+        def __init__(self):
+            self.calls = 0
+
+        def write(self, fingerprint, *, incident_id=None, clone_id=None):
+            self.calls += 1
+            raise RuntimeError("es down")
+
+    writer = FailingWriter()
+    source = LiveTelemetrySource(
+        orders_url="http://orders",
+        payments_url="http://payments",
+        loadgen_url="http://loadgen",
+        http=_scripted_http([_snapshot(0), _snapshot(5)]),
+        writer=writer,
+    )
+    source.snapshot()
+    source.snapshot()
+    start = datetime.fromtimestamp(0, timezone.utc)
+    end = datetime.fromtimestamp(5, timezone.utc)
+
+    with caplog.at_level(logging.WARNING):
+        fingerprint = source.window(start, end)  # a down ES must not break reads
+
+    assert fingerprint.window_start == start
+    assert writer.calls == 1
+    assert "fingerprint persist failed" in caplog.text
+    assert not source._persisted_windows  # the window stays eligible for a retry
+
+    again = source.window(start, end)  # reads keep working and the write is retried
+    assert again == fingerprint
+    assert writer.calls == 2
 
 
 def test_window_and_series_use_snapshot_pairs():

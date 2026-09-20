@@ -135,6 +135,7 @@ def _verifier(lab, telemetry, levers, context=Path("/tmp/patched")):
         clock=clock,
         settle_s=10,
         healthy_windows=2,
+        recipe_store=None,  # never read the live-run recipes.jsonl on the developer's machine
     )
 
 

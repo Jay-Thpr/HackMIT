@@ -249,10 +249,10 @@ class LiveTelemetrySource:
             self._writer.write(
                 fingerprint, incident_id=self._incident_id, clone_id=self._clone_id
             )
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - ES persistence must never break detection
+            log.warning("fingerprint persist failed: %s", exc)
             with self._lock:
                 self._persisted_windows.discard(identity)
-            raise
 
     def _run(self, period_s: float) -> None:
         while not self._stop.is_set():
