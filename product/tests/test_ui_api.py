@@ -7,7 +7,7 @@ from faultline_product.api import create_app
 from faultline_product.ui_scenario import scenario_from_incident
 
 AUDIT = Path(__file__).parent / "data" / "audit-demo-storm-2.jsonl"
-KINDS = {"baseline", "detect", "reason", "clone", "action", "observe", "undo", "verdict", "archive"}
+KINDS = {"baseline", "detect", "reason", "clone", "lifecycle", "action", "observe", "undo", "verdict", "archive"}
 ACTORS = {"model", "math", "adapter", "investigator-a", "investigator-b", "orchestrator"}
 
 
@@ -35,7 +35,10 @@ def test_scenario_from_a_real_run_matches_the_ui_model():
 
     # clones appear as environments before the production probe, with test columns
     clones = [e for e in events if e["kind"] == "clone"]
-    assert {e["environmentId"] for e in clones} == {"clone-h_db", "clone-h_meta", "verify-1", "verify-2"}
+    # H_meta's investigation aborted before its clone was recorded: no environment is invented for it
+    assert {e["environmentId"] for e in clones} == {"clone-h_db", "verify-1", "verify-2"}
+    assert any(e["title"].startswith("H_meta: not investigated") for e in events)
+    assert events[-1]["incident"] == "complete"  # the report event closes the incident lifecycle
     first_prod_action = min(a["at"] for a in actions)
     assert all(c["at"] < first_prod_action for c in clones if c["environmentId"].startswith("clone-"))
     tests = [e["testResult"] for e in events if e.get("testResult")]
@@ -44,6 +47,18 @@ def test_scenario_from_a_real_run_matches_the_ui_model():
 
     verdict = next(e for e in events if e["kind"] == "verdict")
     assert verdict["actor"] == "math" and "H_meta confirmed" in verdict["title"] and "z " in verdict["result"]
+
+    # every clone has a recorded lifecycle: starting -> ready -> ... -> destroying -> archive
+    for env in {c["environmentId"] for c in clones}:
+        mine = [e for e in events if e["environmentId"] == env]
+        kinds = [(e["kind"], e.get("lifecycle")) for e in mine]
+        assert kinds[0] == ("clone", "starting") and ("lifecycle", "ready") in kinds
+        assert kinds[-2:] == [("lifecycle", "destroying"), ("archive", None)]
+        assert mine[-1]["at"] == mine[-2]["at"] + 3
+    # investigation clones are gone before production is touched; the verify clone after the verdict
+    archived = {e["environmentId"]: e["at"] for e in events if e["kind"] == "archive"}
+    assert all(archived[c] <= first_prod_action + 3 for c in archived if c.startswith("clone-"))
+    assert all(archived[c] > verdict["at"] for c in archived if c.startswith("verify-"))
     reason = next(e for e in events if e["kind"] == "reason")
     assert reason["actor"] == "model"
 

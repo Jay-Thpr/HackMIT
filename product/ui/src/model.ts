@@ -56,6 +56,7 @@ export interface WorkspaceEvent {
   targetId?: string
   phase?: string
   lifecycle?: EnvironmentLifecycle
+  incident?: IncidentLifecycle  // live scenarios state the incident phase explicitly (e.g. the report event)
   causeId?: string
   tool?: string
   args?: Record<string, string | number>
@@ -178,10 +179,12 @@ export function replay(scenario: Scenario, time: number): WorkspaceState {
   let confirmed: boolean | undefined
   for (const event of visibleEvents(scenario, time)) {
     if (event.phase) phase = event.phase
+    if (event.incident) lifecycle = event.incident
     if (event.kind === 'detect') lifecycle = 'detected'
     if (event.kind === 'clone' && event.environment && !environments.some(env => env.id === event.environmentId)) {
       environments.push({ id: event.environmentId, ...event.environment, createdAt: event.at, lifecycle: event.lifecycle ?? (scenario.live ? 'unknown' : 'starting'), lifecycleAt: event.at, level: nextLevel++, nodes: Object.fromEntries(scenario.topology.nodes.map(node => [node.id, { health: 'unknown' }])) })
       if (lifecycle === 'monitoring' || lifecycle === 'detected') lifecycle = 'starting'
+      else if (cleanup !== 'not-started') { lifecycle = 'starting'; cleanup = 'in-progress' }  // a later clone (e.g. patch verification) after an earlier cleanup
     }
     const environment = environments.find(env => env.id === event.environmentId)
     if (environment && event.readings) environment.nodes = { ...environment.nodes, ...structuredClone(event.readings) }
@@ -193,7 +196,8 @@ export function replay(scenario: Scenario, time: number): WorkspaceState {
     if (event.kind === 'action' && event.action) {
       actions.push({ ...event.action, start: event.at, environmentId: event.environmentId, targetId: event.targetId, status: 'active' })
       if (environment && environment.id !== 'production') { environment.lifecycle = 'investigating'; environment.lifecycleAt = event.at }
-      if (cleanup === 'not-started') lifecycle = event.environmentId === 'production' ? 'confirming' : 'investigating'
+      if (event.environmentId === 'production') lifecycle = 'confirming'  // real runs destroy the investigation clones before probing production
+      else if (cleanup === 'not-started' || lifecycle === 'starting') lifecycle = 'investigating'
     }
     if (event.kind === 'undo') {
       const action = actions.find(item => item.id === event.undoId && item.environmentId === event.environmentId)
