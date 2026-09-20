@@ -7,7 +7,7 @@ import { useLayout } from './use-layout'
 import { Inspector } from './components/Inspector'
 import { MetricChart } from './components/MetricChart'
 import { Timeline } from './components/Timeline'
-import { ExperimentLab, Observability, ReplayLibrary } from './components/Views'
+import { ElasticLineage, ExperimentLab, Observability, ReplayLibrary } from './components/Views'
 import { Explanation } from './components/Explanation'
 import { Dialogs } from './components/Dialogs'
 
@@ -18,6 +18,7 @@ const navigation: { view: View; label: string; icon: typeof Activity }[] = [
   { view: 'investigation', label: 'Agent workspace', icon: Network },
   { view: 'experiments', label: 'Clone experiments', icon: FlaskConical },
   { view: 'replay', label: 'Incident replay', icon: Layers3 },
+  { view: 'elastic', label: 'Evidence lineage', icon: GitBranch },
 ]
 const viewTitles: Record<View, { eyebrow: string; title: string; subtitle: string }> = {
   explanation: { eyebrow: 'UNDERSTAND THE INCIDENT', title: 'Why this incident?', subtitle: 'The symptoms, the possible causes, and the tests that tell them apart.' },
@@ -25,6 +26,7 @@ const viewTitles: Record<View, { eyebrow: string; title: string; subtitle: strin
   observability: { eyebrow: 'SYSTEM OBSERVABILITY', title: 'Observability', subtitle: 'Metrics, dependencies, and context at the same moment in time.' },
   experiments: { eyebrow: 'THE CLONE LAB', title: 'Clone experiments', subtitle: 'Inspect what each isolated copy is testing, or draft a new test without running it.' },
   replay: { eyebrow: 'THE EVIDENCE LIBRARY', title: 'Incident replay', subtitle: 'Choose a recorded demo to watch again. Playback never reruns infrastructure actions.' },
+  elastic: { eyebrow: 'BUILT WITH ELASTIC', title: 'Evidence lineage', subtitle: 'How telemetry becomes a bounded, inspectable decision.' },
 }
 const lifecycleSteps: { id: IncidentLifecycle; label: string; title: string; detail: string }[] = [
   { id: 'monitoring', label: 'Normal system', title: 'Healthy reference system', detail: 'Monitored services are at baseline. Play the demo to follow an incident from its first symptoms to cleanup.' },
@@ -150,6 +152,7 @@ export default function App() {
           {view === 'observability' && <Observability scenario={scenario} environment={environment} />}
           {view === 'experiments' && <ExperimentLab scenario={scenario} workspace={workspace} />}
           {view === 'replay' && <ReplayLibrary scenario={scenario} />}
+          {view === 'elastic' && <ElasticLineage />}
           <div className="panel page-timeline"><Timeline scenario={scenario} /></div>
         </>}
         <footer className="page-footer"><span><Mark />Faultline <span>·</span> The model proposes. Measurement decides.</span><span>{scenario.live ? 'Real audit log · readings from Elasticsearch' : <>Interactive design prototype <ArrowDownRight size={12} /></>}</span></footer>

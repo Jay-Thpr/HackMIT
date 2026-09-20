@@ -34,6 +34,22 @@ input,textarea,select{color:var(--ink)}
 .panel{background:var(--paper);border:1px solid var(--border);border-radius:10px;overflow:hidden;box-shadow:0 2px 3px #2f261f02}
 .panel-title{display:flex;align-items:center;justify-content:space-between;padding:18px 20px;gap:14px}
 .panel-title h3{font-size:13px;font-weight:550;margin-top:5px}
+.elastic-lineage-view{max-width:980px;padding:14px 0 50px}
+.elastic-intro{max-width:620px;margin:18px 0 42px}
+.elastic-attribution{display:inline-flex;align-items:center;gap:8px;margin-bottom:22px;color:#6e665c;font-size:10px;font-weight:600;letter-spacing:.4px}
+.elastic-attribution img{width:17px;height:17px;border-radius:4px}
+.elastic-intro h2{font-size:31px;font-weight:480;letter-spacing:-1.2px;line-height:1.12;margin:9px 0 12px;color:#312821}
+.elastic-intro p{font-size:12px;line-height:1.8;color:#6e665c;max-width:580px}
+.elastic-pipeline{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:0;border-top:1px solid #ddd5cb;border-bottom:1px solid #ddd5cb}
+.elastic-stage{position:relative;min-height:190px;padding:22px 20px 20px;border-left:1px solid #e7dfd5;display:flex;flex-direction:column;gap:17px;background:#fffcf7}
+.elastic-stage:first-child{border-left:0}.elastic-stage:nth-child(2){background:#f8f5ef}
+.elastic-stage-number{font-family:var(--mono);font-size:10px;color:#9a9086;letter-spacing:.6px}
+.elastic-stage h3{font-size:13px;font-weight:570;color:#433a32;margin-bottom:7px}.elastic-stage p{font-size:10px;line-height:1.7;color:#71685f}
+.elastic-connector{position:absolute;right:-5px;top:45px;width:9px;height:9px;border-radius:50%;background:#aa4c3f;border:2px solid #fffcf7;z-index:1}
+.elastic-guardrail{display:grid;grid-template-columns:160px minmax(0,1fr);gap:18px;padding:22px 0;border-bottom:1px solid #e3dcd3}
+.elastic-guardrail span{font-family:var(--mono);font-size:10px;color:#88796d;letter-spacing:.9px}.elastic-guardrail p{font-size:11px;color:#625950;line-height:1.75;max-width:600px}
+.elastic-actions{display:flex;align-items:center;gap:19px;margin-top:24px}
+@media(max-width:800px){.elastic-pipeline{grid-template-columns:1fr}.elastic-stage{min-height:0;border-left:0;border-top:1px solid #e7dfd5}.elastic-stage:first-child{border-top:0}.elastic-connector{top:auto;right:auto;bottom:-5px;left:24px}.elastic-guardrail{grid-template-columns:1fr;gap:8px}.elastic-intro h2{font-size:26px}}
 .skip-link{position:fixed;left:16px;top:-70px;z-index:300;background:#453d35;color:white;padding:10px;border-radius:4px}
 .skip-link:focus{top:12px}
 

@@ -95,3 +95,32 @@ export function ReplayLibrary({ scenario }: { scenario: Scenario }) {
     </section>
   </div>
 }
+
+export function ElasticLineage() {
+  const { set } = useWorkspace()
+  const stages = [
+    ['01', 'OpenTelemetry', 'Traces, metrics, and logs enter through one standard collector.'],
+    ['02', 'Elastic Cloud', 'Raw signals remain inspectable beside the structured incident record.'],
+    ['03', 'Evidence', 'C1 fingerprints and C4 audit events keep each decision reproducible.'],
+    ['04', 'Retrieve', 'Bounded ES|QL tools and Jina memory surface only scoped context.'],
+    ['05', 'Decide', 'OpenAI explains the evidence; the noise-model judge owns the verdict.'],
+  ]
+  return <div className="elastic-lineage-view">
+    <section className="elastic-intro">
+      <div className="elastic-attribution"><img src="https://www.elastic.co/favicon.ico" alt="Elastic" /><span>Built with Elastic</span></div>
+      <span className="overline">THE EVIDENCE LINEAGE</span>
+      <h2>From noisy telemetry to a decision you can inspect.</h2>
+      <p>Elastic is the evidence layer: it keeps the raw signal, the incident record, and the bounded retrieval path connected. Faultline’s judge still decides from measured change.</p>
+    </section>
+    <section className="elastic-pipeline" aria-label="Faultline and Elastic evidence pipeline">
+      {stages.map(([number, title, detail], index) => <div className="elastic-stage" key={title}>
+        <span className="elastic-stage-number">{number}</span>
+        <div><h3>{title}</h3><p>{detail}</p></div>
+        {index < stages.length - 1 && <span className="elastic-connector" aria-hidden="true" />}
+      </div>)}
+    </section>
+    <section className="elastic-guardrail"><span>WHY THIS MATTERS</span><p>Historical similarity can add context. It cannot name a cause, select a production action, or override the measured confirmation test.</p></section>
+    <div className="elastic-actions"><button className="primary-button" onClick={() => set({ view: 'investigation' })}>See the investigation <ArrowRight size={14} /></button><button className="text-button" onClick={() => set({ view: 'explanation' })}>Read the decision trace <ArrowRight size={14} /></button></div>
+    <p className="page-source-note">Design preview. This page explains the intended evidence flow; it does not query Elastic Cloud.</p>
+  </div>
+}
